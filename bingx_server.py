@@ -9,8 +9,8 @@ import sys
 app = Flask(__name__)
 
 # 🔐 Load API key from environment
-BINGX_API_KEY = os.getenv("BOM_BINGX_API_KEY")
-BINGX_API_SECRET = os.getenv("BOM_BINGX_API_SECRET")
+BINGX_API_KEY = os.getenv("BINGX_API_KEY")
+BINGX_API_SECRET = os.getenv("BINGX_API_SECRET")
 
 if not BINGX_API_KEY or not BINGX_API_SECRET:
     print("❌ Thiếu API KEY hoặc SECRET", file=sys.stderr)
