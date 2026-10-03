@@ -543,3 +543,65 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+
+.conversion-section {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.conversion-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.conversion-list {
+  display: grid;
+  gap: 10px;
+}
+
+.conversion-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(280px, 1.7fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+}
+
+.conversion-factor {
+  display: grid;
+  grid-template-columns: auto minmax(100px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.conversion-factor .ant-input-number {
+  width: 100%;
+}
+
+.conversion-example {
+  margin-top: 12px;
+}
+
+@media (max-width: 760px) {
+  .conversion-heading {
+    flex-direction: column;
+  }
+
+  .conversion-row {
+    grid-template-columns: 1fr;
+  }
+
+  .conversion-factor {
+    grid-template-columns: auto minmax(90px, 1fr) auto;
+  }
+}

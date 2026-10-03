@@ -28,6 +28,74 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
+def migrate_legacy_items(connection: sqlite3.Connection) -> None:
+    table = connection.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'items'
+        """
+    ).fetchone()
+
+    if table is None:
+        return
+
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(items)").fetchall()
+    }
+
+    if "default_unit_id" in columns and "smallest_unit_id" in columns:
+        return
+
+    if "unit_id" not in columns:
+        return
+
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute(
+        """
+        CREATE TABLE items_v2 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            item_group_id INTEGER NOT NULL,
+            default_unit_id INTEGER NOT NULL,
+            smallest_unit_id INTEGER NOT NULL,
+            note TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1
+                CHECK (is_active IN (0, 1)),
+            FOREIGN KEY (item_group_id) REFERENCES item_groups(id),
+            FOREIGN KEY (default_unit_id) REFERENCES units(id),
+            FOREIGN KEY (smallest_unit_id) REFERENCES units(id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO items_v2 (
+            id,
+            name,
+            item_group_id,
+            default_unit_id,
+            smallest_unit_id,
+            note,
+            is_active
+        )
+        SELECT
+            id,
+            name,
+            item_group_id,
+            unit_id,
+            unit_id,
+            note,
+            is_active
+        FROM items
+        """
+    )
+    connection.execute("DROP TABLE items")
+    connection.execute("ALTER TABLE items_v2 RENAME TO items")
+    connection.execute("PRAGMA foreign_keys = ON")
+
+
 def init_db() -> None:
     with connect() as connection:
         connection.execute(
@@ -66,21 +134,67 @@ def init_db() -> None:
             )
             """
         )
+
+        migrate_legacy_items(connection)
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                item_type TEXT NOT NULL
-                    CHECK (item_type IN ('material', 'direct_sale')),
                 item_group_id INTEGER NOT NULL,
-                unit_id INTEGER NOT NULL,
+                default_unit_id INTEGER NOT NULL,
+                smallest_unit_id INTEGER NOT NULL,
                 note TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
                 FOREIGN KEY (item_group_id) REFERENCES item_groups(id),
-                FOREIGN KEY (unit_id) REFERENCES units(id)
+                FOREIGN KEY (default_unit_id) REFERENCES units(id),
+                FOREIGN KEY (smallest_unit_id) REFERENCES units(id)
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS item_unit_conversions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                quantity_in_smallest_unit REAL NOT NULL
+                    CHECK (quantity_in_smallest_unit > 0),
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY (unit_id) REFERENCES units(id),
+                UNIQUE (item_id, unit_id)
+            )
+            """
+        )
+
+        legacy_items_without_conversions = connection.execute(
+            """
+            SELECT id, smallest_unit_id
+            FROM items
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM item_unit_conversions AS c
+                WHERE c.item_id = items.id
+            )
+            """
+        ).fetchall()
+
+        for item in legacy_items_without_conversions:
+            connection.execute(
+                """
+                INSERT INTO item_unit_conversions (
+                    item_id,
+                    unit_id,
+                    quantity_in_smallest_unit,
+                    is_active
+                )
+                VALUES (?, ?, 1, 1)
+                """,
+                (item["id"], item["smallest_unit_id"]),
+            )
+
         connection.commit()

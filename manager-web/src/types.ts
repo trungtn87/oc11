@@ -18,7 +18,6 @@ export type BackupStatus = {
   reason: string | null;
 };
 
-
 export type Supplier = {
   id: number;
   name: string;
@@ -34,7 +33,6 @@ export type Supplier = {
 
 export type SupplierInput = Omit<Supplier, "id" | "can_delete">;
 
-
 export type Unit = {
   id: number;
   name: string;
@@ -43,26 +41,40 @@ export type Unit = {
 
 export type UnitInput = Omit<Unit, "id">;
 
+export type ItemUnitConversion = {
+  id: number;
+  unit_id: number;
+  unit_name: string;
+  quantity_in_smallest_unit: number;
+  is_active: boolean;
+};
 
-export type ItemType = "material" | "direct_sale";
+export type ItemUnitConversionInput = {
+  unit_id: number;
+  quantity_in_smallest_unit: number;
+  is_active: boolean;
+};
 
 export type InventoryItem = {
   id: number;
   name: string;
-  item_type: ItemType;
   item_group_id: number;
   item_group_name: string;
-  unit_id: number;
-  unit_name: string;
+  default_unit_id: number;
+  default_unit_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
   note: string | null;
   is_active: boolean;
+  conversions: ItemUnitConversion[];
 };
 
 export type InventoryItemInput = {
   name: string;
-  item_type: ItemType;
   item_group_id: number;
-  unit_id: number;
+  default_unit_id: number;
+  smallest_unit_id: number;
   note: string | null;
   is_active: boolean;
+  conversions: ItemUnitConversionInput[];
 };

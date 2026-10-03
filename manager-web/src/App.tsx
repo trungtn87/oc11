@@ -5,6 +5,7 @@ import {
   Col,
   Form,
   Input,
+  InputNumber,
   Layout,
   Menu,
   message,
@@ -19,34 +20,12 @@ import {
   Tag,
   Typography
 } from "antd";
-import type { MenuProps, TableProps } from "antd";
-
-import {
-  createInventoryItem,
-  createItemGroup,
-  createSupplier,
-  createUnit,
-  deleteSupplier,
-  getBackupStatus,
-  getInventoryItems,
-  getItemGroups,
-  getSuppliers,
-  getUnits,
-  runBackup,
-  selectBackupFolder,
-  updateInventoryItem,
-  updateItemGroup,
-  updateSupplier,
-  updateUnit,
-  useLocalBackupFolder
-} from "./api";
 import type {
   BackupStatus,
   InventoryItem,
   InventoryItemInput,
   ItemGroup,
   ItemGroupInput,
-  ItemType,
   Supplier,
   SupplierInput,
   Unit,
@@ -85,14 +64,18 @@ type UnitForm = {
 
 type InventoryItemForm = {
   name: string;
-  item_type: ItemType;
   item_group_id: number;
-  unit_id: number;
+  default_unit_id: number;
+  smallest_unit_id: number;
   note?: string;
   is_active: boolean;
 };
 
-type ItemTypeFilter = "all" | ItemType;
+type ConversionDraft = {
+  unit_id: number;
+  quantity_in_smallest_unit: number | null;
+  is_active: boolean;
+};
 
 const menuItems: MenuProps["items"] = [
   { key: "dashboard", label: "Tổng quan" },
@@ -325,10 +308,10 @@ function InventoryItemsPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [typeFilter, setTypeFilter] = useState<ItemTypeFilter>("all");
   const [groupFilter, setGroupFilter] = useState<number | "all">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [conversions, setConversions] = useState<ConversionDraft[]>([]);
   const [form] = Form.useForm<InventoryItemForm>();
   const [messageApi, messageContext] = message.useMessage();
 
@@ -370,28 +353,80 @@ function InventoryItemsPage() {
         (statusFilter === "active" && item.is_active) ||
         (statusFilter === "inactive" && !item.is_active);
 
-      const matchesType =
-        typeFilter === "all" || item.item_type === typeFilter;
-
       const matchesGroup =
         groupFilter === "all" || item.item_group_id === groupFilter;
 
-      return matchesSearch && matchesStatus && matchesType && matchesGroup;
+      return matchesSearch && matchesStatus && matchesGroup;
     });
-  }, [items, search, statusFilter, typeFilter, groupFilter]);
+  }, [items, search, statusFilter, groupFilter]);
 
   const activeGroups = groups.filter((group) => group.is_active);
   const activeUnits = units.filter((unit) => unit.is_active);
 
+  const unitLabel = (unitId: number) =>
+    units.find((unit) => unit.id === unitId)?.name ?? "đơn vị";
+
+  const ensureSmallestRow = (
+    rows: ConversionDraft[],
+    smallestUnitId: number
+  ): ConversionDraft[] => {
+    const withoutSmallest = rows.filter((row) => row.unit_id !== smallestUnitId);
+    return [
+      ...withoutSmallest,
+      {
+        unit_id: smallestUnitId,
+        quantity_in_smallest_unit: 1,
+        is_active: true
+      }
+    ];
+  };
+
+  const ensureDefaultRow = (
+    rows: ConversionDraft[],
+    defaultUnitId: number,
+    smallestUnitId: number
+  ): ConversionDraft[] => {
+    if (defaultUnitId === smallestUnitId) {
+      return ensureSmallestRow(rows, smallestUnitId);
+    }
+
+    if (rows.some((row) => row.unit_id === defaultUnitId)) {
+      return rows.map((row) =>
+        row.unit_id === defaultUnitId ? { ...row, is_active: true } : row
+      );
+    }
+
+    return [
+      ...rows,
+      {
+        unit_id: defaultUnitId,
+        quantity_in_smallest_unit: null,
+        is_active: true
+      }
+    ];
+  };
+
   const openCreate = () => {
+    const firstGroup = activeGroups[0]?.id;
+    const firstUnit = activeUnits[0]?.id;
+
     setEditingItem(null);
     form.resetFields();
     form.setFieldsValue({
-      item_type: "material",
-      is_active: true,
-      item_group_id: activeGroups[0]?.id,
-      unit_id: activeUnits[0]?.id
+      item_group_id: firstGroup,
+      default_unit_id: firstUnit,
+      smallest_unit_id: firstUnit,
+      is_active: true
     });
+    setConversions(
+      firstUnit
+        ? [{
+            unit_id: firstUnit,
+            quantity_in_smallest_unit: 1,
+            is_active: true
+          }]
+        : []
+    );
     setModalOpen(true);
   };
 
@@ -399,31 +434,151 @@ function InventoryItemsPage() {
     setEditingItem(item);
     form.setFieldsValue({
       name: item.name,
-      item_type: item.item_type,
       item_group_id: item.item_group_id,
-      unit_id: item.unit_id,
+      default_unit_id: item.default_unit_id,
+      smallest_unit_id: item.smallest_unit_id,
       note: item.note ?? "",
       is_active: item.is_active
     });
+    setConversions(
+      item.conversions.map((conversion) => ({
+        unit_id: conversion.unit_id,
+        quantity_in_smallest_unit: conversion.quantity_in_smallest_unit,
+        is_active: conversion.is_active
+      }))
+    );
     setModalOpen(true);
   };
 
   const closeModal = () => {
     setModalOpen(false);
     setEditingItem(null);
+    setConversions([]);
     form.resetFields();
+  };
+
+  const handleSmallestUnitChange = (smallestUnitId: number) => {
+    const defaultUnitId = form.getFieldValue("default_unit_id") as number | undefined;
+    let next: ConversionDraft[] = [
+      {
+        unit_id: smallestUnitId,
+        quantity_in_smallest_unit: 1,
+        is_active: true
+      }
+    ];
+
+    if (defaultUnitId) {
+      next = ensureDefaultRow(next, defaultUnitId, smallestUnitId);
+    }
+
+    setConversions(next);
+  };
+
+  const handleDefaultUnitChange = (defaultUnitId: number) => {
+    const smallestUnitId = form.getFieldValue("smallest_unit_id") as number | undefined;
+    if (!smallestUnitId) {
+      return;
+    }
+
+    setConversions((rows) =>
+      ensureDefaultRow(rows, defaultUnitId, smallestUnitId)
+    );
+  };
+
+  const addConversion = () => {
+    const used = new Set(conversions.map((row) => row.unit_id));
+    const available = activeUnits.find((unit) => !used.has(unit.id));
+
+    if (!available) {
+      messageApi.info("Không còn đơn vị nào để thêm quy đổi.");
+      return;
+    }
+
+    setConversions((rows) => [
+      ...rows,
+      {
+        unit_id: available.id,
+        quantity_in_smallest_unit: null,
+        is_active: true
+      }
+    ]);
+  };
+
+  const updateConversion = (
+    index: number,
+    patch: Partial<ConversionDraft>
+  ) => {
+    setConversions((rows) =>
+      rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row
+      )
+    );
+  };
+
+  const removeConversion = (index: number) => {
+    const defaultUnitId = form.getFieldValue("default_unit_id") as number | undefined;
+    const smallestUnitId = form.getFieldValue("smallest_unit_id") as number | undefined;
+    const row = conversions[index];
+
+    if (
+      row.unit_id === defaultUnitId ||
+      row.unit_id === smallestUnitId
+    ) {
+      messageApi.warning("Không thể xóa đơn vị mặc định hoặc đơn vị nhỏ nhất.");
+      return;
+    }
+
+    setConversions((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
   };
 
   const saveItem = async () => {
     try {
       const values = await form.validateFields();
+      const normalized = ensureDefaultRow(
+        ensureSmallestRow(conversions, values.smallest_unit_id),
+        values.default_unit_id,
+        values.smallest_unit_id
+      );
+
+      const invalid = normalized.find(
+        (row) =>
+          row.quantity_in_smallest_unit === null ||
+          row.quantity_in_smallest_unit <= 0
+      );
+
+      if (invalid) {
+        messageApi.error(
+          `Nhập hệ số quy đổi cho ${unitLabel(invalid.unit_id)}.`
+        );
+        return;
+      }
+
+      const duplicate = normalized.find(
+        (row, index) =>
+          normalized.findIndex((candidate) => candidate.unit_id === row.unit_id) !== index
+      );
+
+      if (duplicate) {
+        messageApi.error("Một đơn vị chỉ được khai báo một lần.");
+        return;
+      }
+
       const payload: InventoryItemInput = {
         name: values.name.trim(),
-        item_type: values.item_type,
         item_group_id: values.item_group_id,
-        unit_id: values.unit_id,
+        default_unit_id: values.default_unit_id,
+        smallest_unit_id: values.smallest_unit_id,
         note: values.note?.trim() || null,
-        is_active: values.is_active
+        is_active: values.is_active,
+        conversions: normalized.map((row) => ({
+          unit_id: row.unit_id,
+          quantity_in_smallest_unit: row.quantity_in_smallest_unit as number,
+          is_active:
+            row.unit_id === values.default_unit_id ||
+            row.unit_id === values.smallest_unit_id
+              ? true
+              : row.is_active
+        }))
       };
 
       setSaving(true);
@@ -447,9 +602,6 @@ function InventoryItemsPage() {
     }
   };
 
-  const itemTypeLabel = (value: ItemType) =>
-    value === "material" ? "Nguyên vật liệu" : "Hàng bán trực tiếp";
-
   const columns: TableProps<InventoryItem>["columns"] = [
     {
       title: "Tên hàng hóa",
@@ -458,27 +610,22 @@ function InventoryItemsPage() {
       render: (name: string) => <Text strong>{name}</Text>
     },
     {
-      title: "Loại",
-      dataIndex: "item_type",
-      key: "item_type",
-      width: 170,
-      render: (value: ItemType) => (
-        <Tag color={value === "material" ? "blue" : "purple"}>
-          {itemTypeLabel(value)}
-        </Tag>
-      )
-    },
-    {
-      title: "Nhóm",
+      title: "Nhóm hàng hóa",
       dataIndex: "item_group_name",
       key: "item_group_name",
-      width: 170
+      width: 180
     },
     {
-      title: "Đơn vị",
-      dataIndex: "unit_name",
-      key: "unit_name",
-      width: 120
+      title: "Đơn vị mặc định",
+      dataIndex: "default_unit_name",
+      key: "default_unit_name",
+      width: 160
+    },
+    {
+      title: "Đơn vị nhỏ nhất",
+      dataIndex: "smallest_unit_name",
+      key: "smallest_unit_name",
+      width: 160
     },
     {
       title: "Trạng thái",
@@ -505,16 +652,18 @@ function InventoryItemsPage() {
   ];
 
   const missingMasterData = activeGroups.length === 0 || activeUnits.length === 0;
+  const selectedSmallestUnitId = form.getFieldValue("smallest_unit_id") as number | undefined;
+  const selectedDefaultUnitId = form.getFieldValue("default_unit_id") as number | undefined;
 
   return (
     <>
       {messageContext}
       <div className="page-heading">
         <div>
-          <Title level={2}>Hàng hóa / Nguyên vật liệu</Title>
+          <Title level={2}>Hàng hóa</Title>
           <Text type="secondary">
-            Quản lý những thứ thực sự nhập và theo dõi trong kho. Món trong thực đơn
-            được quản lý riêng.
+            Dữ liệu cơ bản của hàng hóa, nhóm và quy đổi đơn vị. Giá nhập, giá bán,
+            cost và tồn kho được quản lý ở nghiệp vụ riêng.
           </Text>
         </div>
 
@@ -544,17 +693,6 @@ function InventoryItemsPage() {
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           className="search-box"
-        />
-
-        <Select<ItemTypeFilter>
-          value={typeFilter}
-          onChange={setTypeFilter}
-          className="status-filter"
-          options={[
-            { value: "all", label: "Tất cả loại" },
-            { value: "material", label: "Nguyên vật liệu" },
-            { value: "direct_sale", label: "Hàng bán trực tiếp" }
-          ]}
         />
 
         <Select<number | "all">
@@ -596,7 +734,7 @@ function InventoryItemsPage() {
 
       <Modal
         open={modalOpen}
-        width={680}
+        width={780}
         title={editingItem ? "Sửa hàng hóa" : "Thêm hàng hóa"}
         okText="Lưu"
         cancelText="Hủy"
@@ -617,23 +755,10 @@ function InventoryItemsPage() {
               { max: 150, message: "Tên hàng hóa tối đa 150 ký tự." }
             ]}
           >
-            <Input placeholder="Ví dụ: Ốc hương, bơ lạt, bia Tiger lon..." autoFocus />
+            <Input placeholder="Ví dụ: Ốc hương, Bia Tiger..." autoFocus />
           </Form.Item>
 
           <div className="item-form-grid">
-            <Form.Item
-              label="Loại"
-              name="item_type"
-              rules={[{ required: true, message: "Chọn loại hàng hóa." }]}
-            >
-              <Select
-                options={[
-                  { value: "material", label: "Nguyên vật liệu" },
-                  { value: "direct_sale", label: "Hàng bán trực tiếp" }
-                ]}
-              />
-            </Form.Item>
-
             <Form.Item
               label="Nhóm hàng hóa"
               name="item_group_id"
@@ -650,24 +775,44 @@ function InventoryItemsPage() {
               />
             </Form.Item>
 
+            <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
+              <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+            </Form.Item>
+
             <Form.Item
-              label="Đơn vị tính"
-              name="unit_id"
-              rules={[{ required: true, message: "Chọn đơn vị tính." }]}
+              label="Đơn vị mặc định"
+              name="default_unit_id"
+              tooltip="Phiếu nhập và các chức năng sẽ mặc định chọn đơn vị này, nhưng người dùng có thể đổi đơn vị."
+              rules={[{ required: true, message: "Chọn đơn vị mặc định." }]}
             >
               <Select
                 showSearch
                 optionFilterProp="label"
+                onChange={handleDefaultUnitChange}
                 options={units.map((unit) => ({
                   value: unit.id,
                   label: unit.is_active ? unit.name : `${unit.name} (ngừng sử dụng)`,
-                  disabled: !unit.is_active && editingItem?.unit_id !== unit.id
+                  disabled: !unit.is_active && editingItem?.default_unit_id !== unit.id
                 }))}
               />
             </Form.Item>
 
-            <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
-              <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+            <Form.Item
+              label="Đơn vị nhỏ nhất"
+              name="smallest_unit_id"
+              tooltip="Tồn kho, định lượng và cost sẽ quy đổi về đơn vị này; số lượng sẽ hiển thị theo đơn vị nhỏ nhất."
+              rules={[{ required: true, message: "Chọn đơn vị nhỏ nhất." }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                onChange={handleSmallestUnitChange}
+                options={units.map((unit) => ({
+                  value: unit.id,
+                  label: unit.is_active ? unit.name : `${unit.name} (ngừng sử dụng)`,
+                  disabled: !unit.is_active && editingItem?.smallest_unit_id !== unit.id
+                }))}
+              />
             </Form.Item>
           </div>
 
@@ -676,26 +821,111 @@ function InventoryItemsPage() {
             name="note"
             rules={[{ max: 500, message: "Ghi chú tối đa 500 ký tự." }]}
           >
-            <TextArea
-              rows={3}
-              maxLength={500}
-              showCount
-              placeholder="Ghi chú không bắt buộc..."
-            />
+            <TextArea rows={3} maxLength={500} showCount placeholder="Không bắt buộc..." />
           </Form.Item>
         </Form>
 
+        <div className="conversion-section">
+          <div className="conversion-heading">
+            <div>
+              <Text strong>Quy đổi đơn vị</Text>
+              <div>
+                <Text type="secondary">
+                  Mỗi đơn vị được quy đổi về đơn vị nhỏ nhất. Đơn vị nhỏ nhất luôn = 1.
+                </Text>
+              </div>
+            </div>
+            <Button onClick={addConversion}>+ Thêm quy đổi</Button>
+          </div>
+
+          <div className="conversion-list">
+            {conversions.map((row, index) => {
+              const isSmallest = row.unit_id === selectedSmallestUnitId;
+              const isDefault = row.unit_id === selectedDefaultUnitId;
+              const usedByOtherRows = new Set(
+                conversions
+                  .filter((_, rowIndex) => rowIndex !== index)
+                  .map((candidate) => candidate.unit_id)
+              );
+
+              return (
+                <div className="conversion-row" key={`${row.unit_id}-${index}`}>
+                  <Select
+                    value={row.unit_id}
+                    disabled={isSmallest || isDefault}
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={(unitId) =>
+                      updateConversion(index, { unit_id: unitId })
+                    }
+                    options={units.map((unit) => ({
+                      value: unit.id,
+                      label: unit.name,
+                      disabled:
+                        usedByOtherRows.has(unit.id) ||
+                        (!unit.is_active && unit.id !== row.unit_id)
+                    }))}
+                  />
+
+                  <div className="conversion-factor">
+                    <Text type="secondary">1 {unitLabel(row.unit_id)} =</Text>
+                    <InputNumber
+                      min={0.000001}
+                      step="any"
+                      value={row.quantity_in_smallest_unit}
+                      disabled={isSmallest}
+                      onChange={(value) =>
+                        updateConversion(index, {
+                          quantity_in_smallest_unit:
+                            typeof value === "number" ? value : null
+                        })
+                      }
+                    />
+                    <Text>{selectedSmallestUnitId ? unitLabel(selectedSmallestUnitId) : ""}</Text>
+                  </div>
+
+                  <Switch
+                    checked={row.is_active}
+                    disabled={isSmallest || isDefault}
+                    onChange={(checked) =>
+                      updateConversion(index, { is_active: checked })
+                    }
+                  />
+
+                  <Button
+                    danger
+                    disabled={isSmallest || isDefault}
+                    onClick={() => removeConversion(index)}
+                  >
+                    Xóa
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+
+          {selectedDefaultUnitId &&
+            selectedSmallestUnitId &&
+            selectedDefaultUnitId !== selectedSmallestUnitId && (
+              <div className="conversion-example">
+                <Text type="secondary">
+                  Ví dụ: nếu đơn vị mặc định là thùng và đơn vị nhỏ nhất là lon,
+                  khai báo 1 thùng = 24 lon.
+                </Text>
+              </div>
+            )}
+        </div>
+
         <div className="item-cost-note">
           <Text type="secondary">
-            Giá vốn và tồn kho không nhập tại đây. Hệ thống sẽ tính từ Phiếu nhập
-            và biến động kho ở các module tiếp theo.
+            Giá nhập, giá bán, giá vốn và số lượng tồn không lưu tại đây.
           </Text>
         </div>
 
         {editingItem && (
           <div className="item-delete-note">
             <Text type="secondary">
-              Hàng hóa không xóa; khi không còn sử dụng hãy chuyển sang trạng thái Ngừng.
+              Hàng hóa không xóa; khi không còn dùng hãy chuyển sang trạng thái Ngừng sử dụng.
             </Text>
           </div>
         )}
