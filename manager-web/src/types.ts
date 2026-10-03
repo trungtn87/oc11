@@ -33,3 +33,12 @@ export type Supplier = {
 };
 
 export type SupplierInput = Omit<Supplier, "id" | "can_delete">;
+
+
+export type Unit = {
+  id: number;
+  name: string;
+  is_active: boolean;
+};
+
+export type UnitInput = Omit<Unit, "id">;

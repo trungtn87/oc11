@@ -24,14 +24,17 @@ import type { MenuProps, TableProps } from "antd";
 import {
   createItemGroup,
   createSupplier,
+  createUnit,
   deleteSupplier,
   getBackupStatus,
   getItemGroups,
   getSuppliers,
+  getUnits,
   runBackup,
   selectBackupFolder,
   updateItemGroup,
   updateSupplier,
+  updateUnit,
   useLocalBackupFolder
 } from "./api";
 import type {
@@ -39,7 +42,9 @@ import type {
   ItemGroup,
   ItemGroupInput,
   Supplier,
-  SupplierInput
+  SupplierInput,
+  Unit,
+  UnitInput
 } from "./types";
 
 const { Header, Content, Sider } = Layout;
@@ -66,6 +71,11 @@ type SupplierForm = {
 };
 
 type SupplierMode = "create" | "view" | "edit";
+
+type UnitForm = {
+  name: string;
+  is_active: boolean;
+};
 
 const menuItems: MenuProps["items"] = [
   { key: "dashboard", label: "Tổng quan" },
@@ -527,6 +537,222 @@ function ItemGroupsPage() {
   );
 }
 
+
+
+function UnitsPage() {
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
+  const [form] = Form.useForm<UnitForm>();
+  const [messageApi, messageContext] = message.useMessage();
+
+  const loadUnits = async () => {
+    try {
+      setLoading(true);
+      setUnits(await getUnits());
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không tải được đơn vị tính."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadUnits();
+  }, []);
+
+  const filteredUnits = useMemo(() => {
+    const keyword = search.trim().toLocaleLowerCase("vi");
+
+    return units.filter((unit) => {
+      const matchesSearch =
+        !keyword || unit.name.toLocaleLowerCase("vi").includes(keyword);
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active" && unit.is_active) ||
+        (statusFilter === "inactive" && !unit.is_active);
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [units, search, statusFilter]);
+
+  const openCreate = () => {
+    setEditingUnit(null);
+    form.resetFields();
+    form.setFieldsValue({ is_active: true });
+    setModalOpen(true);
+  };
+
+  const openEdit = (unit: Unit) => {
+    setEditingUnit(unit);
+    form.setFieldsValue({
+      name: unit.name,
+      is_active: unit.is_active
+    });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingUnit(null);
+    form.resetFields();
+  };
+
+  const saveUnit = async () => {
+    try {
+      const values = await form.validateFields();
+      const payload: UnitInput = {
+        name: values.name.trim(),
+        is_active: values.is_active
+      };
+
+      setSaving(true);
+
+      if (editingUnit) {
+        await updateUnit(editingUnit.id, payload);
+        messageApi.success("Đã cập nhật đơn vị tính.");
+      } else {
+        await createUnit(payload);
+        messageApi.success("Đã thêm đơn vị tính.");
+      }
+
+      closeModal();
+      await loadUnits();
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const columns: TableProps<Unit>["columns"] = [
+    {
+      title: "Tên đơn vị",
+      dataIndex: "name",
+      key: "name",
+      render: (name: string) => <Text strong>{name}</Text>
+    },
+    {
+      title: "Trạng thái",
+      dataIndex: "is_active",
+      key: "is_active",
+      width: 170,
+      render: (isActive: boolean) =>
+        isActive ? (
+          <Tag color="success">Đang sử dụng</Tag>
+        ) : (
+          <Tag>Ngừng sử dụng</Tag>
+        )
+    },
+    {
+      title: "Thao tác",
+      key: "action",
+      width: 110,
+      render: (_, unit) => (
+        <Button type="link" onClick={() => openEdit(unit)}>
+          Sửa
+        </Button>
+      )
+    }
+  ];
+
+  return (
+    <>
+      {messageContext}
+      <div className="page-heading">
+        <div>
+          <Title level={2}>Đơn vị tính</Title>
+          <Text type="secondary">
+            Quản lý đơn vị sử dụng cho hàng hóa và nguyên vật liệu.
+          </Text>
+        </div>
+
+        <Button type="primary" size="large" onClick={openCreate}>
+          + Thêm đơn vị
+        </Button>
+      </div>
+
+      <div className="toolbar">
+        <Input.Search
+          allowClear
+          placeholder="Tìm đơn vị tính..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="search-box"
+        />
+
+        <Select<StatusFilter>
+          value={statusFilter}
+          onChange={setStatusFilter}
+          className="status-filter"
+          options={[
+            { value: "all", label: "Tất cả trạng thái" },
+            { value: "active", label: "Đang sử dụng" },
+            { value: "inactive", label: "Ngừng sử dụng" }
+          ]}
+        />
+      </div>
+
+      <div className="table-card">
+        <Table<Unit>
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filteredUnits}
+          pagination={false}
+          locale={{ emptyText: "Chưa có đơn vị tính." }}
+        />
+      </div>
+
+      <Modal
+        open={modalOpen}
+        title={editingUnit ? "Sửa đơn vị tính" : "Thêm đơn vị tính"}
+        okText="Lưu"
+        cancelText="Hủy"
+        confirmLoading={saving}
+        onCancel={closeModal}
+        onOk={() => void saveUnit()}
+      >
+        <Form<UnitForm>
+          form={form}
+          layout="vertical"
+          initialValues={{ is_active: true }}
+          className="group-form"
+        >
+          <Form.Item
+            label="Tên đơn vị"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên đơn vị tính." },
+              { max: 100, message: "Tên đơn vị tối đa 100 ký tự." }
+            ]}
+          >
+            <Input placeholder="Ví dụ: kg, con, chai, lon..." autoFocus />
+          </Form.Item>
+
+          <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
+            <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+          </Form.Item>
+        </Form>
+
+        {editingUnit && (
+          <Space>
+            <Text type="secondary">Đơn vị tính không có chức năng xóa.</Text>
+          </Space>
+        )}
+      </Modal>
+    </>
+  );
+}
 
 function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -1107,6 +1333,10 @@ function App() {
 
     if (page === "item-groups") {
       return <ItemGroupsPage />;
+    }
+
+    if (page === "units") {
+      return <UnitsPage />;
     }
 
     if (page === "suppliers") {

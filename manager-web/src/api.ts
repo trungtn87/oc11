@@ -3,7 +3,9 @@ import type {
   ItemGroup,
   ItemGroupInput,
   Supplier,
-  SupplierInput
+  SupplierInput,
+  Unit,
+  UnitInput
 } from "./types";
 
 type ApiErrorPayload = {
@@ -105,5 +107,27 @@ export function updateSupplier(
 export function deleteSupplier(id: number): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(`/api/suppliers/${id}`, {
     method: "DELETE"
+  });
+}
+
+
+export function getUnits(): Promise<Unit[]> {
+  return request<Unit[]>("/api/units");
+}
+
+export function createUnit(payload: UnitInput): Promise<Unit> {
+  return request<Unit>("/api/units", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateUnit(
+  id: number,
+  payload: UnitInput
+): Promise<Unit> {
+  return request<Unit>(`/api/units/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
   });
 }
