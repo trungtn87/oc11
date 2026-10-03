@@ -5,6 +5,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .backup import backup_database
+from .backup_routes import router as backup_router
 from .database import init_db
 from .item_groups import router as item_groups_router
 
@@ -12,6 +14,7 @@ from .item_groups import router as item_groups_router
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    backup_database(reason="startup")
     yield
 
 
@@ -22,6 +25,7 @@ app = FastAPI(
 )
 
 app.include_router(item_groups_router)
+app.include_router(backup_router)
 
 
 @app.get("/api/health")
