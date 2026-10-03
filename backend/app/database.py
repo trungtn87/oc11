@@ -41,4 +41,19 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS suppliers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT,
+                address TEXT,
+                note TEXT,
+                bank_name TEXT,
+                bank_account_number TEXT,
+                bank_account_name TEXT,
+                payment_qr_image TEXT
+            )
+            """
+        )
         connection.commit()

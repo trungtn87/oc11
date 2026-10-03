@@ -1,7 +1,9 @@
 import type {
   BackupStatus,
   ItemGroup,
-  ItemGroupInput
+  ItemGroupInput,
+  Supplier,
+  SupplierInput
 } from "./types";
 
 type ApiErrorPayload = {
@@ -75,5 +77,33 @@ export function selectBackupFolder(): Promise<BackupStatus> {
 export function useLocalBackupFolder(): Promise<BackupStatus> {
   return request<BackupStatus>("/api/backup/use-local-folder", {
     method: "POST"
+  });
+}
+
+
+export function getSuppliers(): Promise<Supplier[]> {
+  return request<Supplier[]>("/api/suppliers");
+}
+
+export function createSupplier(payload: SupplierInput): Promise<Supplier> {
+  return request<Supplier>("/api/suppliers", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSupplier(
+  id: number,
+  payload: SupplierInput
+): Promise<Supplier> {
+  return request<Supplier>(`/api/suppliers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteSupplier(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/suppliers/${id}`, {
+    method: "DELETE"
   });
 }

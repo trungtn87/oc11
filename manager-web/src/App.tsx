@@ -23,17 +23,23 @@ import type { MenuProps, TableProps } from "antd";
 
 import {
   createItemGroup,
+  createSupplier,
+  deleteSupplier,
   getBackupStatus,
   getItemGroups,
+  getSuppliers,
   runBackup,
   selectBackupFolder,
   updateItemGroup,
+  updateSupplier,
   useLocalBackupFolder
 } from "./api";
 import type {
   BackupStatus,
   ItemGroup,
-  ItemGroupInput
+  ItemGroupInput,
+  Supplier,
+  SupplierInput
 } from "./types";
 
 const { Header, Content, Sider } = Layout;
@@ -47,6 +53,19 @@ type GroupForm = {
   note?: string;
   is_active: boolean;
 };
+
+type SupplierForm = {
+  name: string;
+  phone?: string;
+  address?: string;
+  note?: string;
+  bank_name?: string;
+  bank_account_number?: string;
+  bank_account_name?: string;
+  payment_qr_image?: string | null;
+};
+
+type SupplierMode = "create" | "view" | "edit";
 
 const menuItems: MenuProps["items"] = [
   { key: "dashboard", label: "Tổng quan" },
@@ -508,6 +527,385 @@ function ItemGroupsPage() {
   );
 }
 
+
+function SuppliersPage() {
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [mode, setMode] = useState<SupplierMode>("view");
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
+  const [qrPreview, setQrPreview] = useState<string | null>(null);
+  const [form] = Form.useForm<SupplierForm>();
+  const [messageApi, messageContext] = message.useMessage();
+
+  const loadSuppliers = async () => {
+    try {
+      setLoading(true);
+      setSuppliers(await getSuppliers());
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không tải được nhà cung cấp."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadSuppliers();
+  }, []);
+
+  const filteredSuppliers = useMemo(() => {
+    const keyword = search.trim().toLocaleLowerCase("vi");
+    if (!keyword) {
+      return suppliers;
+    }
+
+    return suppliers.filter((supplier) =>
+      supplier.name.toLocaleLowerCase("vi").includes(keyword)
+    );
+  }, [suppliers, search]);
+
+  const openCreate = () => {
+    setSelectedSupplier(null);
+    setMode("create");
+    setQrPreview(null);
+    form.resetFields();
+    setModalOpen(true);
+  };
+
+  const openView = (supplier: Supplier) => {
+    setSelectedSupplier(supplier);
+    setMode("view");
+    setQrPreview(supplier.payment_qr_image);
+    form.setFieldsValue({
+      name: supplier.name,
+      phone: supplier.phone ?? undefined,
+      address: supplier.address ?? undefined,
+      note: supplier.note ?? undefined,
+      bank_name: supplier.bank_name ?? undefined,
+      bank_account_number: supplier.bank_account_number ?? undefined,
+      bank_account_name: supplier.bank_account_name ?? undefined,
+      payment_qr_image: supplier.payment_qr_image
+    });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setSelectedSupplier(null);
+    setQrPreview(null);
+    form.resetFields();
+  };
+
+  const cleanOptional = (value?: string | null) => {
+    const cleaned = value?.trim() ?? "";
+    return cleaned || null;
+  };
+
+  const saveSupplier = async () => {
+    try {
+      const values = await form.validateFields();
+      setSaving(true);
+
+      const payload: SupplierInput = {
+        name: values.name.trim(),
+        phone: cleanOptional(values.phone),
+        address: cleanOptional(values.address),
+        note: cleanOptional(values.note),
+        bank_name: cleanOptional(values.bank_name),
+        bank_account_number: cleanOptional(values.bank_account_number),
+        bank_account_name: cleanOptional(values.bank_account_name),
+        payment_qr_image: values.payment_qr_image ?? qrPreview
+      };
+
+      const saved =
+        mode === "edit" && selectedSupplier
+          ? await updateSupplier(selectedSupplier.id, payload)
+          : await createSupplier(payload);
+
+      await loadSuppliers();
+      setSelectedSupplier(saved);
+      setMode("view");
+      setQrPreview(saved.payment_qr_image);
+      form.setFieldsValue({
+        name: saved.name,
+        phone: saved.phone ?? undefined,
+        address: saved.address ?? undefined,
+        note: saved.note ?? undefined,
+        bank_name: saved.bank_name ?? undefined,
+        bank_account_number: saved.bank_account_number ?? undefined,
+        bank_account_name: saved.bank_account_name ?? undefined,
+        payment_qr_image: saved.payment_qr_image
+      });
+      messageApi.success(
+        mode === "edit" ? "Đã cập nhật nhà cung cấp." : "Đã thêm nhà cung cấp."
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    if (!selectedSupplier || !selectedSupplier.can_delete) {
+      return;
+    }
+
+    Modal.confirm({
+      title: "Xóa nhà cung cấp?",
+      content: `Nhà cung cấp "${selectedSupplier.name}" sẽ bị xóa khỏi danh sách.`,
+      okText: "Xóa",
+      cancelText: "Hủy",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await deleteSupplier(selectedSupplier.id);
+          closeModal();
+          await loadSuppliers();
+          messageApi.success("Đã xóa nhà cung cấp.");
+        } catch (error) {
+          messageApi.error(
+            error instanceof Error ? error.message : "Không xóa được nhà cung cấp."
+          );
+        }
+      }
+    });
+  };
+
+  const onQrFile = (file: File | undefined) => {
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      messageApi.error("Vui lòng chọn file ảnh.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      setQrPreview(result);
+      form.setFieldValue("payment_qr_image", result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeQr = () => {
+    setQrPreview(null);
+    form.setFieldValue("payment_qr_image", null);
+  };
+
+  const columns: TableProps<Supplier>["columns"] = [
+    {
+      title: "Tên nhà cung cấp",
+      dataIndex: "name",
+      key: "name",
+      render: (name: string) => <Text strong>{name}</Text>
+    }
+  ];
+
+  const modalTitle =
+    mode === "create"
+      ? "Thêm nhà cung cấp"
+      : mode === "edit"
+        ? "Sửa nhà cung cấp"
+        : "Thông tin nhà cung cấp";
+
+  return (
+    <>
+      {messageContext}
+      <div className="page-heading">
+        <div>
+          <Title level={2}>Nhà cung cấp</Title>
+          <Text type="secondary">
+            Danh sách tối giản; bấm vào tên để xem đầy đủ thông tin.
+          </Text>
+        </div>
+
+        <Button type="primary" size="large" onClick={openCreate}>
+          + Thêm nhà cung cấp
+        </Button>
+      </div>
+
+      <div className="toolbar">
+        <Input.Search
+          allowClear
+          placeholder="Tìm theo tên nhà cung cấp..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="search-box"
+        />
+      </div>
+
+      <div className="table-card">
+        <Table<Supplier>
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filteredSuppliers}
+          pagination={false}
+          locale={{ emptyText: "Chưa có nhà cung cấp." }}
+          onRow={(supplier) => ({
+            onClick: () => openView(supplier),
+            className: "supplier-row"
+          })}
+        />
+      </div>
+
+      <Modal
+        open={modalOpen}
+        width={760}
+        title={modalTitle}
+        onCancel={closeModal}
+        footer={
+          mode === "view" ? (
+            <div className="supplier-modal-footer">
+              <div>
+                {selectedSupplier && (
+                  <Button
+                    danger
+                    disabled={!selectedSupplier.can_delete}
+                    onClick={confirmDelete}
+                  >
+                    Xóa
+                  </Button>
+                )}
+              </div>
+              <Space>
+                <Button onClick={closeModal}>Đóng</Button>
+                <Button type="primary" onClick={() => setMode("edit")}>
+                  Sửa
+                </Button>
+              </Space>
+            </div>
+          ) : (
+            <Space>
+              <Button
+                onClick={() => {
+                  if (selectedSupplier) {
+                    openView(selectedSupplier);
+                  } else {
+                    closeModal();
+                  }
+                }}
+              >
+                Hủy
+              </Button>
+              <Button
+                type="primary"
+                loading={saving}
+                onClick={() => void saveSupplier()}
+              >
+                Lưu
+              </Button>
+            </Space>
+          )
+        }
+      >
+        <Form<SupplierForm>
+          form={form}
+          layout="vertical"
+          disabled={mode === "view"}
+          className="supplier-form"
+        >
+          <Form.Item
+            label="Tên nhà cung cấp"
+            name="name"
+            rules={[
+              {
+                required: true,
+                whitespace: true,
+                message: "Nhập tên nhà cung cấp."
+              }
+            ]}
+          >
+            <Input placeholder="Tên nhà cung cấp" autoFocus={mode === "create"} />
+          </Form.Item>
+
+          <div className="supplier-form-grid">
+            <Form.Item label="Số điện thoại" name="phone">
+              <Input placeholder="Số điện thoại" />
+            </Form.Item>
+
+            <Form.Item label="Ngân hàng" name="bank_name">
+              <Input placeholder="Tên ngân hàng" />
+            </Form.Item>
+
+            <Form.Item label="Số tài khoản" name="bank_account_number">
+              <Input placeholder="Số tài khoản" />
+            </Form.Item>
+
+            <Form.Item label="Tên chủ tài khoản" name="bank_account_name">
+              <Input placeholder="Tên chủ tài khoản" />
+            </Form.Item>
+          </div>
+
+          <Form.Item label="Địa chỉ" name="address">
+            <TextArea rows={2} placeholder="Địa chỉ" />
+          </Form.Item>
+
+          <Form.Item label="Ghi chú" name="note">
+            <TextArea rows={3} placeholder="Ghi chú" />
+          </Form.Item>
+
+          <Form.Item name="payment_qr_image" hidden>
+            <Input />
+          </Form.Item>
+
+          <Form.Item label="QR thanh toán">
+            <div className="supplier-qr-box">
+              {qrPreview ? (
+                <img
+                  src={qrPreview}
+                  alt="QR thanh toán"
+                  className="supplier-qr-preview"
+                />
+              ) : (
+                <div className="supplier-qr-empty">Chưa có ảnh QR</div>
+              )}
+
+              {mode !== "view" && (
+                <Space wrap>
+                  <label className="supplier-file-label">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        onQrFile(event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                    <span className="ant-btn ant-btn-default">
+                      {qrPreview ? "Chọn ảnh khác" : "Tải ảnh QR"}
+                    </span>
+                  </label>
+
+                  {qrPreview && (
+                    <Button onClick={removeQr}>Xóa ảnh QR</Button>
+                  )}
+                </Space>
+              )}
+            </div>
+          </Form.Item>
+        </Form>
+
+        {mode === "view" && selectedSupplier && !selectedSupplier.can_delete && (
+          <Text type="secondary" className="supplier-delete-note">
+            Không thể xóa vì nhà cung cấp đã có dữ liệu nghiệp vụ liên kết.
+          </Text>
+        )}
+      </Modal>
+    </>
+  );
+}
+
 function BackupSettingsPage() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -709,6 +1107,10 @@ function App() {
 
     if (page === "item-groups") {
       return <ItemGroupsPage />;
+    }
+
+    if (page === "suppliers") {
+      return <SuppliersPage />;
     }
 
     if (page === "settings") {

@@ -17,3 +17,19 @@ export type BackupStatus = {
   last_error: string | null;
   reason: string | null;
 };
+
+
+export type Supplier = {
+  id: number;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  note: string | null;
+  bank_name: string | null;
+  bank_account_number: string | null;
+  bank_account_name: string | null;
+  payment_qr_image: string | null;
+  can_delete: boolean;
+};
+
+export type SupplierInput = Omit<Supplier, "id" | "can_delete">;
