@@ -23,10 +23,18 @@ import type { MenuProps, TableProps } from "antd";
 
 import {
   createItemGroup,
+  getBackupStatus,
   getItemGroups,
-  updateItemGroup
+  runBackup,
+  selectBackupFolder,
+  updateItemGroup,
+  useLocalBackupFolder
 } from "./api";
-import type { ItemGroup, ItemGroupInput } from "./types";
+import type {
+  BackupStatus,
+  ItemGroup,
+  ItemGroupInput
+} from "./types";
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -500,6 +508,165 @@ function ItemGroupsPage() {
   );
 }
 
+function BackupSettingsPage() {
+  const [status, setStatus] = useState<BackupStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [messageApi, messageContext] = message.useMessage();
+
+  const loadStatus = async () => {
+    try {
+      setLoading(true);
+      setStatus(await getBackupStatus());
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không đọc được trạng thái sao lưu."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  const doAction = async (
+    action: () => Promise<BackupStatus>,
+    successMessage: string
+  ) => {
+    try {
+      setWorking(true);
+      const next = await action();
+      setStatus(next);
+      messageApi.success(successMessage);
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không thực hiện được sao lưu."
+      );
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const latestText = status?.latest_backup
+    ? new Intl.DateTimeFormat("vi-VN", {
+        dateStyle: "short",
+        timeStyle: "medium"
+      }).format(new Date(status.latest_backup))
+    : "Chưa có";
+
+  return (
+    <>
+      {messageContext}
+      <div className="page-heading">
+        <div>
+          <Title level={2}>Cài đặt</Title>
+          <Text type="secondary">
+            Sao lưu database OC11 tự động và đồng bộ qua Google Drive Desktop.
+          </Text>
+        </div>
+      </div>
+
+      <Card
+        className="backup-settings-card"
+        loading={loading}
+        title="Sao lưu dữ liệu"
+        extra={
+          status?.google_drive_configured ? (
+            <Tag color="success">Google Drive đã cấu hình</Tag>
+          ) : (
+            <Tag color="warning">Đang sao lưu local</Tag>
+          )
+        }
+      >
+        <div className="backup-status-grid">
+          <div>
+            <Text type="secondary">Thư mục sao lưu</Text>
+            <div className="backup-path">
+              <Text code>{status?.folder ?? "—"}</Text>
+            </div>
+          </div>
+
+          <div>
+            <Text type="secondary">Lần sao lưu gần nhất</Text>
+            <div><Text strong>{latestText}</Text></div>
+          </div>
+
+          <div>
+            <Text type="secondary">Số bản theo ngày</Text>
+            <div><Text strong>{status?.daily_backup_count ?? 0}</Text></div>
+          </div>
+
+          <div>
+            <Text type="secondary">Trạng thái</Text>
+            <div>
+              {status?.last_error ? (
+                <Tag color="error">Có lỗi sao lưu</Tag>
+              ) : status?.latest_file_exists ? (
+                <Tag color="success">Hoạt động</Tag>
+              ) : (
+                <Tag>Chưa có bản sao</Tag>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {status?.last_error && (
+          <div className="backup-error">
+            <Text type="danger">{status.last_error}</Text>
+          </div>
+        )}
+
+        <div className="backup-explain">
+          <Text>
+            Sau mỗi lần dữ liệu được ghi thành công, OC11 cập nhật
+            <Text strong> oc11_latest.db</Text> và một bản
+            <Text strong> oc11_YYYY-MM-DD.db</Text>. Khi thư mục này nằm trong
+            Google Drive Desktop, Google Drive sẽ tự đồng bộ các file lên cloud.
+          </Text>
+        </div>
+
+        <Space wrap>
+          <Button
+            type="primary"
+            loading={working}
+            onClick={() =>
+              void doAction(
+                selectBackupFolder,
+                "Đã chọn thư mục Google Drive và sao lưu dữ liệu."
+              )
+            }
+          >
+            Chọn thư mục Google Drive
+          </Button>
+
+          <Button
+            loading={working}
+            onClick={() =>
+              void doAction(runBackup, "Đã sao lưu dữ liệu ngay.")
+            }
+          >
+            Sao lưu ngay
+          </Button>
+
+          <Button
+            loading={working}
+            onClick={() =>
+              void doAction(
+                useLocalBackupFolder,
+                "Đã chuyển về thư mục sao lưu local."
+              )
+            }
+          >
+            Dùng thư mục local
+          </Button>
+        </Space>
+      </Card>
+    </>
+  );
+}
+
 function PlaceholderPage({ title }: { title: string }) {
   return (
     <Card className="placeholder-page">
@@ -542,6 +709,10 @@ function App() {
 
     if (page === "item-groups") {
       return <ItemGroupsPage />;
+    }
+
+    if (page === "settings") {
+      return <BackupSettingsPage />;
     }
 
     return <PlaceholderPage title={pageTitles[page] ?? "Ốc 11"} />;
