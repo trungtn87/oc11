@@ -66,4 +66,21 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                item_type TEXT NOT NULL
+                    CHECK (item_type IN ('material', 'direct_sale')),
+                item_group_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                FOREIGN KEY (item_group_id) REFERENCES item_groups(id),
+                FOREIGN KEY (unit_id) REFERENCES units(id)
+            )
+            """
+        )
         connection.commit()

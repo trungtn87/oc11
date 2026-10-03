@@ -42,3 +42,27 @@ export type Unit = {
 };
 
 export type UnitInput = Omit<Unit, "id">;
+
+
+export type ItemType = "material" | "direct_sale";
+
+export type InventoryItem = {
+  id: number;
+  name: string;
+  item_type: ItemType;
+  item_group_id: number;
+  item_group_name: string;
+  unit_id: number;
+  unit_name: string;
+  note: string | null;
+  is_active: boolean;
+};
+
+export type InventoryItemInput = {
+  name: string;
+  item_type: ItemType;
+  item_group_id: number;
+  unit_id: number;
+  note: string | null;
+  is_active: boolean;
+};

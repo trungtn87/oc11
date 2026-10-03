@@ -22,16 +22,19 @@ import {
 import type { MenuProps, TableProps } from "antd";
 
 import {
+  createInventoryItem,
   createItemGroup,
   createSupplier,
   createUnit,
   deleteSupplier,
   getBackupStatus,
+  getInventoryItems,
   getItemGroups,
   getSuppliers,
   getUnits,
   runBackup,
   selectBackupFolder,
+  updateInventoryItem,
   updateItemGroup,
   updateSupplier,
   updateUnit,
@@ -39,8 +42,11 @@ import {
 } from "./api";
 import type {
   BackupStatus,
+  InventoryItem,
+  InventoryItemInput,
   ItemGroup,
   ItemGroupInput,
+  ItemType,
   Supplier,
   SupplierInput,
   Unit,
@@ -76,6 +82,17 @@ type UnitForm = {
   name: string;
   is_active: boolean;
 };
+
+type InventoryItemForm = {
+  name: string;
+  item_type: ItemType;
+  item_group_id: number;
+  unit_id: number;
+  note?: string;
+  is_active: boolean;
+};
+
+type ItemTypeFilter = "all" | ItemType;
 
 const menuItems: MenuProps["items"] = [
   { key: "dashboard", label: "Tổng quan" },
@@ -153,7 +170,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
     { label: "Bán hàng (POS)", target: "sales-pos", disabled: true },
     { label: "Nhập hàng", target: "purchase-orders", disabled: true },
     { label: "Thu chi", target: "cash-transactions", disabled: true },
-    { label: "Thêm hàng hóa", target: "item-list", disabled: true },
+    { label: "Thêm hàng hóa", target: "item-list", disabled: false },
     { label: "Nhóm hàng hóa", target: "item-groups", disabled: false }
   ];
 
@@ -295,6 +312,394 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
           </Card>
         </Col>
       </Row>
+    </>
+  );
+}
+
+
+function InventoryItemsPage() {
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [groups, setGroups] = useState<ItemGroup[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<ItemTypeFilter>("all");
+  const [groupFilter, setGroupFilter] = useState<number | "all">("all");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [form] = Form.useForm<InventoryItemForm>();
+  const [messageApi, messageContext] = message.useMessage();
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [nextItems, nextGroups, nextUnits] = await Promise.all([
+        getInventoryItems(),
+        getItemGroups(),
+        getUnits()
+      ]);
+      setItems(nextItems);
+      setGroups(nextGroups);
+      setUnits(nextUnits);
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không tải được hàng hóa."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const filteredItems = useMemo(() => {
+    const keyword = search.trim().toLocaleLowerCase("vi");
+
+    return items.filter((item) => {
+      const matchesSearch =
+        !keyword ||
+        item.name.toLocaleLowerCase("vi").includes(keyword) ||
+        (item.note ?? "").toLocaleLowerCase("vi").includes(keyword);
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active" && item.is_active) ||
+        (statusFilter === "inactive" && !item.is_active);
+
+      const matchesType =
+        typeFilter === "all" || item.item_type === typeFilter;
+
+      const matchesGroup =
+        groupFilter === "all" || item.item_group_id === groupFilter;
+
+      return matchesSearch && matchesStatus && matchesType && matchesGroup;
+    });
+  }, [items, search, statusFilter, typeFilter, groupFilter]);
+
+  const activeGroups = groups.filter((group) => group.is_active);
+  const activeUnits = units.filter((unit) => unit.is_active);
+
+  const openCreate = () => {
+    setEditingItem(null);
+    form.resetFields();
+    form.setFieldsValue({
+      item_type: "material",
+      is_active: true,
+      item_group_id: activeGroups[0]?.id,
+      unit_id: activeUnits[0]?.id
+    });
+    setModalOpen(true);
+  };
+
+  const openEdit = (item: InventoryItem) => {
+    setEditingItem(item);
+    form.setFieldsValue({
+      name: item.name,
+      item_type: item.item_type,
+      item_group_id: item.item_group_id,
+      unit_id: item.unit_id,
+      note: item.note ?? "",
+      is_active: item.is_active
+    });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingItem(null);
+    form.resetFields();
+  };
+
+  const saveItem = async () => {
+    try {
+      const values = await form.validateFields();
+      const payload: InventoryItemInput = {
+        name: values.name.trim(),
+        item_type: values.item_type,
+        item_group_id: values.item_group_id,
+        unit_id: values.unit_id,
+        note: values.note?.trim() || null,
+        is_active: values.is_active
+      };
+
+      setSaving(true);
+
+      if (editingItem) {
+        await updateInventoryItem(editingItem.id, payload);
+        messageApi.success("Đã cập nhật hàng hóa.");
+      } else {
+        await createInventoryItem(payload);
+        messageApi.success("Đã thêm hàng hóa.");
+      }
+
+      closeModal();
+      await loadData();
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const itemTypeLabel = (value: ItemType) =>
+    value === "material" ? "Nguyên vật liệu" : "Hàng bán trực tiếp";
+
+  const columns: TableProps<InventoryItem>["columns"] = [
+    {
+      title: "Tên hàng hóa",
+      dataIndex: "name",
+      key: "name",
+      render: (name: string) => <Text strong>{name}</Text>
+    },
+    {
+      title: "Loại",
+      dataIndex: "item_type",
+      key: "item_type",
+      width: 170,
+      render: (value: ItemType) => (
+        <Tag color={value === "material" ? "blue" : "purple"}>
+          {itemTypeLabel(value)}
+        </Tag>
+      )
+    },
+    {
+      title: "Nhóm",
+      dataIndex: "item_group_name",
+      key: "item_group_name",
+      width: 170
+    },
+    {
+      title: "Đơn vị",
+      dataIndex: "unit_name",
+      key: "unit_name",
+      width: 120
+    },
+    {
+      title: "Trạng thái",
+      dataIndex: "is_active",
+      key: "is_active",
+      width: 160,
+      render: (isActive: boolean) =>
+        isActive ? (
+          <Tag color="success">Đang sử dụng</Tag>
+        ) : (
+          <Tag>Ngừng sử dụng</Tag>
+        )
+    },
+    {
+      title: "Thao tác",
+      key: "action",
+      width: 100,
+      render: (_, item) => (
+        <Button type="link" onClick={() => openEdit(item)}>
+          Sửa
+        </Button>
+      )
+    }
+  ];
+
+  const missingMasterData = activeGroups.length === 0 || activeUnits.length === 0;
+
+  return (
+    <>
+      {messageContext}
+      <div className="page-heading">
+        <div>
+          <Title level={2}>Hàng hóa / Nguyên vật liệu</Title>
+          <Text type="secondary">
+            Quản lý những thứ thực sự nhập và theo dõi trong kho. Món trong thực đơn
+            được quản lý riêng.
+          </Text>
+        </div>
+
+        <Button
+          type="primary"
+          size="large"
+          onClick={openCreate}
+          disabled={missingMasterData}
+        >
+          + Thêm hàng hóa
+        </Button>
+      </div>
+
+      {missingMasterData && (
+        <Card className="item-master-warning" size="small">
+          <Text type="warning">
+            Cần có ít nhất một Nhóm hàng hóa và một Đơn vị tính đang sử dụng
+            trước khi thêm hàng hóa.
+          </Text>
+        </Card>
+      )}
+
+      <div className="toolbar item-toolbar">
+        <Input.Search
+          allowClear
+          placeholder="Tìm hàng hóa..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="search-box"
+        />
+
+        <Select<ItemTypeFilter>
+          value={typeFilter}
+          onChange={setTypeFilter}
+          className="status-filter"
+          options={[
+            { value: "all", label: "Tất cả loại" },
+            { value: "material", label: "Nguyên vật liệu" },
+            { value: "direct_sale", label: "Hàng bán trực tiếp" }
+          ]}
+        />
+
+        <Select<number | "all">
+          value={groupFilter}
+          onChange={setGroupFilter}
+          className="status-filter"
+          options={[
+            { value: "all", label: "Tất cả nhóm" },
+            ...groups.map((group) => ({
+              value: group.id,
+              label: group.is_active ? group.name : `${group.name} (ngừng)`
+            }))
+          ]}
+        />
+
+        <Select<StatusFilter>
+          value={statusFilter}
+          onChange={setStatusFilter}
+          className="status-filter"
+          options={[
+            { value: "all", label: "Tất cả trạng thái" },
+            { value: "active", label: "Đang sử dụng" },
+            { value: "inactive", label: "Ngừng sử dụng" }
+          ]}
+        />
+      </div>
+
+      <div className="table-card">
+        <Table<InventoryItem>
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          dataSource={filteredItems}
+          pagination={false}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: "Chưa có hàng hóa." }}
+        />
+      </div>
+
+      <Modal
+        open={modalOpen}
+        width={680}
+        title={editingItem ? "Sửa hàng hóa" : "Thêm hàng hóa"}
+        okText="Lưu"
+        cancelText="Hủy"
+        confirmLoading={saving}
+        onCancel={closeModal}
+        onOk={() => void saveItem()}
+      >
+        <Form<InventoryItemForm>
+          form={form}
+          layout="vertical"
+          className="item-form"
+        >
+          <Form.Item
+            label="Tên hàng hóa"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên hàng hóa." },
+              { max: 150, message: "Tên hàng hóa tối đa 150 ký tự." }
+            ]}
+          >
+            <Input placeholder="Ví dụ: Ốc hương, bơ lạt, bia Tiger lon..." autoFocus />
+          </Form.Item>
+
+          <div className="item-form-grid">
+            <Form.Item
+              label="Loại"
+              name="item_type"
+              rules={[{ required: true, message: "Chọn loại hàng hóa." }]}
+            >
+              <Select
+                options={[
+                  { value: "material", label: "Nguyên vật liệu" },
+                  { value: "direct_sale", label: "Hàng bán trực tiếp" }
+                ]}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Nhóm hàng hóa"
+              name="item_group_id"
+              rules={[{ required: true, message: "Chọn nhóm hàng hóa." }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={groups.map((group) => ({
+                  value: group.id,
+                  label: group.is_active ? group.name : `${group.name} (ngừng sử dụng)`,
+                  disabled: !group.is_active && editingItem?.item_group_id !== group.id
+                }))}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Đơn vị tính"
+              name="unit_id"
+              rules={[{ required: true, message: "Chọn đơn vị tính." }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={units.map((unit) => ({
+                  value: unit.id,
+                  label: unit.is_active ? unit.name : `${unit.name} (ngừng sử dụng)`,
+                  disabled: !unit.is_active && editingItem?.unit_id !== unit.id
+                }))}
+              />
+            </Form.Item>
+
+            <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
+              <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+            </Form.Item>
+          </div>
+
+          <Form.Item
+            label="Ghi chú"
+            name="note"
+            rules={[{ max: 500, message: "Ghi chú tối đa 500 ký tự." }]}
+          >
+            <TextArea
+              rows={3}
+              maxLength={500}
+              showCount
+              placeholder="Ghi chú không bắt buộc..."
+            />
+          </Form.Item>
+        </Form>
+
+        <div className="item-cost-note">
+          <Text type="secondary">
+            Giá vốn và tồn kho không nhập tại đây. Hệ thống sẽ tính từ Phiếu nhập
+            và biến động kho ở các module tiếp theo.
+          </Text>
+        </div>
+
+        {editingItem && (
+          <div className="item-delete-note">
+            <Text type="secondary">
+              Hàng hóa không xóa; khi không còn sử dụng hãy chuyển sang trạng thái Ngừng.
+            </Text>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }
@@ -1329,6 +1734,10 @@ function App() {
   const renderPage = () => {
     if (page === "dashboard") {
       return <Dashboard onNavigate={setPage} />;
+    }
+
+    if (page === "item-list") {
+      return <InventoryItemsPage />;
     }
 
     if (page === "item-groups") {

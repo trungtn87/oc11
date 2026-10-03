@@ -2,6 +2,8 @@ import type {
   BackupStatus,
   ItemGroup,
   ItemGroupInput,
+  InventoryItem,
+  InventoryItemInput,
   Supplier,
   SupplierInput,
   Unit,
@@ -127,6 +129,30 @@ export function updateUnit(
   payload: UnitInput
 ): Promise<Unit> {
   return request<Unit>(`/api/units/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+
+export function getInventoryItems(): Promise<InventoryItem[]> {
+  return request<InventoryItem[]>("/api/items");
+}
+
+export function createInventoryItem(
+  payload: InventoryItemInput
+): Promise<InventoryItem> {
+  return request<InventoryItem>("/api/items", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateInventoryItem(
+  id: number,
+  payload: InventoryItemInput
+): Promise<InventoryItem> {
+  return request<InventoryItem>(`/api/items/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload)
   });

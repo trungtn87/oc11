@@ -497,3 +497,49 @@ body {
     width: 100%;
   }
 }
+
+
+.item-toolbar {
+  flex-wrap: wrap;
+}
+
+.item-master-warning {
+  max-width: 920px;
+  margin-bottom: 16px;
+  border-color: #ffe58f;
+  background: #fffbe6;
+}
+
+.item-form {
+  margin-top: 18px;
+}
+
+.item-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.item-cost-note,
+.item-delete-note {
+  padding: 11px 13px;
+  border-radius: 8px;
+  line-height: 1.55;
+}
+
+.item-cost-note {
+  background: #f3f7ff;
+  border: 1px solid #e0e9fa;
+}
+
+.item-delete-note {
+  margin-top: 10px;
+  background: #f8fafc;
+  border: 1px solid #edf0f4;
+}
+
+@media (max-width: 700px) {
+  .item-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
