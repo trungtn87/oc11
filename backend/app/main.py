@@ -1,6 +1,9 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
 from .item_groups import router as item_groups_router
@@ -24,3 +27,14 @@ app.include_router(item_groups_router)
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+static_dir = os.getenv("OC11_STATIC_DIR")
+if static_dir:
+    static_path = Path(static_dir)
+    if static_path.exists():
+        app.mount(
+            "/",
+            StaticFiles(directory=static_path, html=True),
+            name="manager-web",
+        )

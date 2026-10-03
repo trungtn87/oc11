@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 
@@ -7,6 +8,12 @@ def get_db_path() -> Path:
     configured = os.getenv("OC11_DB_PATH")
     if configured:
         return Path(configured)
+
+    if getattr(sys, "frozen", False):
+        portable_root = Path(
+            os.getenv("OC11_PORTABLE_ROOT", str(Path(sys.executable).resolve().parent))
+        )
+        return portable_root / "data" / "oc11.db"
 
     return Path(__file__).resolve().parents[1] / "data" / "oc11.db"
 

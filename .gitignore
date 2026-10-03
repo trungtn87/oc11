@@ -14,6 +14,12 @@ backend/data/
 manager-web/node_modules/
 manager-web/dist/
 
+# Packaging
+/build/
+/dist/
+/portable/
+*.spec
+
 # IDE / OS
 .vscode/
 .idea/

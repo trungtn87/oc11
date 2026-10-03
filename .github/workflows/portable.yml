@@ -1,0 +1,85 @@
+name: Build Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install manager web dependencies
+        working-directory: manager-web
+        run: npm install
+
+      - name: Build manager web
+        working-directory: manager-web
+        run: npm run build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend and packaging dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build OC11.exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --name OC11 --add-data "manager-web/dist;static" launcher.py
+
+      - name: Create portable package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "portable/OC11-Portable/data" | Out-Null
+          Copy-Item "dist/OC11.exe" "portable/OC11-Portable/OC11.exe"
+
+          @"
+          OC11 Portable
+          =============
+
+          Cach dung:
+          1. Giai nen TOAN BO file ZIP vao mot thu muc tren Windows.
+          2. Chay OC11.exe.
+          3. Trinh duyet se tu mo trang quan ly tai http://127.0.0.1:8000
+
+          Du lieu:
+          - Database nam tai data/oc11.db.
+          - Khong xoa thu muc data khi cap nhat phien ban.
+          - Nen backup data/oc11.db len Google Drive dinh ky.
+
+          Cap nhat:
+          - Tai ban OC11-Portable.zip moi.
+          - Dong OC11.exe cu.
+          - Thay file OC11.exe, GIU NGUYEN thu muc data.
+          "@ | Set-Content -Encoding UTF8 "portable/OC11-Portable/HUONG-DAN.txt"
+
+          @"
+          Thu muc nay chua database cua OC11.
+          File oc11.db se tu duoc tao khi chay OC11.exe lan dau.
+          Khong xoa file oc11.db khi cap nhat ung dung.
+          "@ | Set-Content -Encoding UTF8 "portable/OC11-Portable/data/README.txt"
+
+          Compress-Archive -Path "portable/OC11-Portable/*" -DestinationPath "portable/OC11-Portable.zip" -Force
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: OC11-Portable
+          path: portable/OC11-Portable.zip
+          if-no-files-found: error
+          retention-days: 30
