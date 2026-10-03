@@ -4,18 +4,17 @@ Hệ thống quản lý nội bộ cho Quán Ốc 11.
 
 ## Mục tiêu phát hành
 
-Bản sử dụng thực tế trên Windows được đóng gói thành:
+Bản sử dụng thực tế trên Windows được phát hành dưới dạng:
 
 ```
 OC11-Portable.zip
-└── OC11-Portable/
-    ├── OC11.exe
-    ├── HUONG-DAN.txt
-    └── data/
-        └── oc11.db   # tự tạo khi chạy lần đầu
+├── OC11.exe
+├── HUONG-DAN.txt
+└── data/
+    └── oc11.db   # tự tạo khi chạy lần đầu
 ```
 
-Người dùng chỉ cần **giải nén toàn bộ ZIP rồi chạy `OC11.exe`**. Máy sử dụng bản portable không cần cài Python hay Node.js.
+Người dùng chỉ cần **tải ZIP, giải nén một lần rồi chạy `OC11.exe`**. Máy sử dụng bản portable không cần cài Python hay Node.js.
 
 Database luôn nằm ngoài EXE tại:
 
@@ -61,10 +60,9 @@ Trong GitHub:
 
 1. Mở tab **Actions**.
 2. Chọn lần chạy **Build Windows Portable** mới nhất đã thành công.
-3. Tải artifact **OC11-Portable**.
-4. Giải nén artifact để lấy `OC11-Portable.zip`.
-5. Giải nén ZIP đó vào thư mục muốn sử dụng.
-6. Chạy `OC11.exe`.
+3. Tải artifact **OC11-Portable** — GitHub sẽ tải về file `OC11-Portable.zip`.
+4. Giải nén ZIP một lần vào thư mục muốn sử dụng.
+5. Chạy `OC11.exe`.
 
 ## Dành cho phát triển
 
