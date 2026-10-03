@@ -22,7 +22,7 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       - name: Run backend tests
-        run: pytest backend/tests
+        run: python -m pytest backend/tests
 
   manager-web-build:
     runs-on: ubuntu-latest
