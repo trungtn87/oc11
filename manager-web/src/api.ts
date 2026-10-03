@@ -1,4 +1,8 @@
-import type { ItemGroup, ItemGroupInput } from "./types";
+import type {
+  BackupStatus,
+  ItemGroup,
+  ItemGroupInput
+} from "./types";
 
 type ApiErrorPayload = {
   detail?: string;
@@ -49,5 +53,27 @@ export function updateItemGroup(
   return request<ItemGroup>(`/api/item-groups/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function getBackupStatus(): Promise<BackupStatus> {
+  return request<BackupStatus>("/api/backup/status");
+}
+
+export function runBackup(): Promise<BackupStatus> {
+  return request<BackupStatus>("/api/backup/run", {
+    method: "POST"
+  });
+}
+
+export function selectBackupFolder(): Promise<BackupStatus> {
+  return request<BackupStatus>("/api/backup/select-folder", {
+    method: "POST"
+  });
+}
+
+export function useLocalBackupFolder(): Promise<BackupStatus> {
+  return request<BackupStatus>("/api/backup/use-local-folder", {
+    method: "POST"
   });
 }
