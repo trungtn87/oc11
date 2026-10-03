@@ -1,0 +1,19 @@
+{
+  "name": "OC11 Development",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": {
+      "label": "OC11 API"
+    },
+    "5173": {
+      "label": "OC11 Manager Web"
+    }
+  },
+  "postCreateCommand": "pip install -r backend/requirements.txt && cd manager-web && npm install"
+}

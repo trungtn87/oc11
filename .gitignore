@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# SQLite runtime data
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+manager-web/node_modules/
+manager-web/dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
