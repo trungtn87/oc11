@@ -4,6 +4,7 @@ import unicodedata
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from .backup import backup_database
 from .database import connect
 
 router = APIRouter(prefix="/api/item-groups", tags=["item-groups"])
@@ -110,6 +111,7 @@ def create_item_group(payload: ItemGroupInput) -> ItemGroupOutput:
             (cursor.lastrowid,),
         ).fetchone()
 
+    backup_database(reason="item-group-created")
     return row_to_output(row)
 
 
@@ -162,4 +164,5 @@ def update_item_group(group_id: int, payload: ItemGroupInput) -> ItemGroupOutput
             (group_id,),
         ).fetchone()
 
+    backup_database(reason="item-group-updated")
     return row_to_output(row)
