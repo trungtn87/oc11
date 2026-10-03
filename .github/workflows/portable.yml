@@ -42,7 +42,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile --name OC11 --add-data "manager-web/dist;static" launcher.py
 
-      - name: Create portable package
+      - name: Create portable folder
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "portable/OC11-Portable/data" | Out-Null
@@ -53,7 +53,7 @@ jobs:
           =============
 
           Cach dung:
-          1. Giai nen TOAN BO file ZIP vao mot thu muc tren Windows.
+          1. Giai nen file OC11-Portable.zip vao mot thu muc tren Windows.
           2. Chay OC11.exe.
           3. Trinh duyet se tu mo trang quan ly tai http://127.0.0.1:8000
 
@@ -74,12 +74,10 @@ jobs:
           Khong xoa file oc11.db khi cap nhat ung dung.
           "@ | Set-Content -Encoding UTF8 "portable/OC11-Portable/data/README.txt"
 
-          Compress-Archive -Path "portable/OC11-Portable/*" -DestinationPath "portable/OC11-Portable.zip" -Force
-
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
           name: OC11-Portable
-          path: portable/OC11-Portable.zip
+          path: portable/OC11-Portable/
           if-no-files-found: error
           retention-days: 30
