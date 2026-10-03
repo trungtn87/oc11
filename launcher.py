@@ -41,7 +41,10 @@ def open_manager() -> None:
 
 if __name__ == "__main__":
     (root / "data").mkdir(parents=True, exist_ok=True)
-    threading.Timer(1.5, open_manager).start()
+
+    if os.getenv("OC11_NO_BROWSER") != "1":
+        threading.Timer(1.5, open_manager).start()
+
     uvicorn.run(
         app,
         host="127.0.0.1",
