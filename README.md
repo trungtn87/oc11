@@ -2,16 +2,25 @@
 
 Hệ thống quản lý nội bộ cho Quán Ốc 11.
 
+## Trạng thái hiện tại
+
+- ✅ Khung **Ốc 11 Manager Web** với bố cục sidebar + topbar + dashboard.
+- ✅ Trang **Tổng quan** đã có layout chuẩn; số liệu nghiệp vụ đang để 0/chưa có dữ liệu cho đến khi module tương ứng được xây thật.
+- ✅ Feature 01 - **Nhóm hàng hóa**: Thêm / Sửa / Active-Inactive.
+- ✅ FastAPI + SQLite local.
+- ✅ GitHub Actions test backend và build frontend.
+- ⏳ Các module Hàng hóa, Nhập hàng, Kho, Thu chi, POS, Báo cáo sẽ được làm lần lượt.
+
 ## Kiến trúc giai đoạn 1
 
 - **Manager Web:** React + TypeScript + Ant Design
 - **Backend/API:** FastAPI
 - **Database:** SQLite chạy local
-- **POS:** tách riêng, sẽ triển khai sau
+- **POS:** ứng dụng riêng, triển khai sau
 - **Backup:** bản sao SQLite lên Google Drive
 - **Source & CI:** GitHub + GitHub Actions
 
-Manager Web và POS không truy cập trực tiếp file SQLite. Cả hai dùng chung Backend/API.
+Manager Web và POS không truy cập trực tiếp SQLite. Cả hai dùng Backend/API chung.
 
 ## Quy trình phát triển
 
@@ -19,41 +28,53 @@ Manager Web và POS không truy cập trực tiếp file SQLite. Cả hai dùng 
 IDEA -> DATABASE -> UI -> IMPLEMENT -> TEST -> LOCK
 ```
 
-Mỗi chức năng chỉ được mở rộng sau khi nghiệp vụ và dữ liệu cần thiết đã được chốt.
+## Chạy nhanh trên Windows
 
-## Feature hiện tại
+### Lần đầu
 
-**Feature 01 - Nhóm hàng hóa**
+1. Cài **Python 3.12+** và nhớ chọn **Add Python to PATH**.
+2. Cài **Node.js 22+**.
+3. Tải repo OC11 về máy hoặc clone repo.
+4. Chạy:
 
-- Thêm nhóm
-- Sửa nhóm
-- Active / Inactive
-- Không có chức năng xóa
-- Tên nhóm duy nhất theo nghiệp vụ, không phân biệt hoa/thường
+```
+setup-windows.bat
+```
 
-Chi tiết: `docs/features/01-item-groups.md`
+### Những lần sau
 
-## Chạy Backend
+Chỉ cần chạy:
 
-Yêu cầu Python 3.12+.
+```
+start-oc11.bat
+```
+
+Hệ thống sẽ mở:
+
+```
+http://127.0.0.1:5173
+```
+
+Database local nằm tại:
+
+```
+backend/data/oc11.db
+```
+
+File database không được commit lên GitHub.
+
+## Chạy thủ công
+
+Backend:
 
 ```bash
 python -m venv .venv
-# Windows
 .venv\Scripts\activate
 pip install -r backend/requirements.txt
-uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API docs:
-
-```
-http://localhost:8000/docs
-```
-
-## Chạy Manager Web
-
-Yêu cầu Node.js 22+.
+Manager Web:
 
 ```bash
 cd manager-web
@@ -61,28 +82,23 @@ npm install
 npm run dev
 ```
 
-Mở:
-
-```
-http://localhost:5173
-```
-
-Trong môi trường dev, Vite tự proxy `/api` sang FastAPI tại cổng 8000.
-
 ## Test
 
 Backend:
 
 ```bash
-pytest backend/tests
+python -m pytest backend/tests
 ```
 
 Frontend:
 
 ```bash
 cd manager-web
-npm install
 npm run build
 ```
 
-GitHub Actions tự chạy hai bước trên mỗi lần push hoặc tạo pull request.
+GitHub Actions tự chạy hai bước trên mỗi lần push hoặc pull request.
+
+## Feature 01 - Nhóm hàng hóa
+
+Chi tiết: `docs/features/01-item-groups.md`
