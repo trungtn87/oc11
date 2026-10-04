@@ -921,6 +921,7 @@ def void_purchase_receipt_for_reentry(
             (payment["id"],),
         )
 
+        void_time = datetime.now().isoformat(timespec="microseconds")
         receipt_items = select_receipt_items(connection, receipt_id)
         for item in receipt_items:
             connection.execute(
@@ -939,7 +940,7 @@ def void_purchase_receipt_for_reentry(
                 """,
                 (
                     item["item_id"],
-                    receipt["receipt_time"],
+                    void_time,
                     -float(item["quantity_in_smallest_unit"]),
                     str(receipt_id),
                     str(item["id"]),
@@ -951,11 +952,11 @@ def void_purchase_receipt_for_reentry(
             """
             UPDATE purchase_receipts
             SET is_void = 1,
-                voided_at = CURRENT_TIMESTAMP,
+                voided_at = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (receipt_id,),
+            (void_time, receipt_id),
         )
         connection.commit()
 
