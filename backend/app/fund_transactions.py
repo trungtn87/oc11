@@ -596,6 +596,7 @@ def list_fund_transactions(
                 t.note
             FROM fund_transactions AS t
             JOIN fund_accounts AS a ON a.id = t.fund_account_id
+            LEFT JOIN fund_transaction_categories AS c ON c.id = t.category_id
             WHERE {" AND ".join(range_where)}
             ORDER BY t.transaction_time ASC, t.id ASC
             """,
