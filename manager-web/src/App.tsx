@@ -36,6 +36,7 @@ import {
   InboxOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  PlusOutlined,
   ProfileOutlined,
   RollbackOutlined,
   SettingOutlined,
@@ -422,7 +423,12 @@ function InventoryItemsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [conversions, setConversions] = useState<ConversionDraft[]>([]);
+  const [quickGroupOpen, setQuickGroupOpen] = useState(false);
+  const [quickUnitOpen, setQuickUnitOpen] = useState(false);
+  const [quickSaving, setQuickSaving] = useState(false);
   const [form] = Form.useForm<InventoryItemForm>();
+  const [quickGroupForm] = Form.useForm<GroupForm>();
+  const [quickUnitForm] = Form.useForm<UnitForm>();
   const [messageApi, messageContext] = message.useMessage();
 
   const loadData = async () => {
@@ -514,6 +520,82 @@ function InventoryItemsPage() {
         is_active: true
       }
     ];
+  };
+
+  const openQuickGroup = () => {
+    quickGroupForm.resetFields();
+    quickGroupForm.setFieldsValue({ is_active: true });
+    setQuickGroupOpen(true);
+  };
+
+  const saveQuickGroup = async () => {
+    try {
+      const values = await quickGroupForm.validateFields();
+      setQuickSaving(true);
+      const created = await createItemGroup({
+        name: values.name.trim(),
+        note: values.note?.trim() || null,
+        is_active: true
+      });
+      const nextGroups = await getItemGroups();
+      setGroups(nextGroups);
+      form.setFieldValue("item_group_id", created.id);
+      setQuickGroupOpen(false);
+      quickGroupForm.resetFields();
+      messageApi.success("Đã thêm nhóm hàng hóa.");
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
+  const openQuickUnit = () => {
+    quickUnitForm.resetFields();
+    quickUnitForm.setFieldsValue({ is_active: true });
+    setQuickUnitOpen(true);
+  };
+
+  const saveQuickUnit = async () => {
+    try {
+      const values = await quickUnitForm.validateFields();
+      setQuickSaving(true);
+      const created = await createUnit({
+        name: values.name.trim(),
+        is_active: true
+      });
+      const nextUnits = await getUnits();
+      setUnits(nextUnits);
+
+      form.setFieldValue("default_unit_id", created.id);
+      const currentSmallest = form.getFieldValue("smallest_unit_id") as number | undefined;
+      if (!currentSmallest) {
+        form.setFieldValue("smallest_unit_id", created.id);
+        setConversions([
+          {
+            unit_id: created.id,
+            quantity_in_smallest_unit: 1,
+            is_active: true
+          }
+        ]);
+      } else {
+        setConversions((rows) =>
+          ensureDefaultRow(rows, created.id, currentSmallest)
+        );
+      }
+
+      setQuickUnitOpen(false);
+      quickUnitForm.resetFields();
+      messageApi.success("Đã thêm đơn vị tính.");
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setQuickSaving(false);
+    }
   };
 
   const openCreate = () => {
@@ -844,7 +926,7 @@ function InventoryItemsPage() {
 
       <Modal
         open={modalOpen}
-        width={780}
+        width={665}
         title={editingItem ? "Sửa hàng hóa" : "Thêm hàng hóa"}
         okText="Lưu"
         cancelText="Hủy"
@@ -869,20 +951,30 @@ function InventoryItemsPage() {
           </Form.Item>
 
           <div className="item-form-grid">
-            <Form.Item
-              label="Nhóm hàng hóa"
-              name="item_group_id"
-              rules={[{ required: true, message: "Chọn nhóm hàng hóa." }]}
-            >
-              <Select
-                showSearch
-                optionFilterProp="label"
-                options={groups.map((group) => ({
-                  value: group.id,
-                  label: group.is_active ? group.name : `${group.name} (ngừng sử dụng)`,
-                  disabled: !group.is_active && editingItem?.item_group_id !== group.id
-                }))}
-              />
+            <Form.Item label="Nhóm hàng hóa" required>
+              <div className="inline-master-field">
+                <Form.Item
+                  name="item_group_id"
+                  noStyle
+                  rules={[{ required: true, message: "Chọn nhóm hàng hóa." }]}
+                >
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    options={groups.map((group) => ({
+                      value: group.id,
+                      label: group.is_active ? group.name : `${group.name} (ngừng sử dụng)`,
+                      disabled: !group.is_active && editingItem?.item_group_id !== group.id
+                    }))}
+                  />
+                </Form.Item>
+                <Button
+                  className="quick-add-button"
+                  icon={<PlusOutlined />}
+                  onClick={openQuickGroup}
+                  title="Thêm nhanh nhóm hàng hóa"
+                />
+              </div>
             </Form.Item>
 
             <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
@@ -891,20 +983,33 @@ function InventoryItemsPage() {
 
             <Form.Item
               label="Đơn vị mặc định"
-              name="default_unit_id"
               tooltip="Phiếu nhập và các chức năng sẽ mặc định chọn đơn vị này, nhưng người dùng có thể đổi đơn vị."
-              rules={[{ required: true, message: "Chọn đơn vị mặc định." }]}
+              required
             >
-              <Select
-                showSearch
-                optionFilterProp="label"
-                onChange={handleDefaultUnitChange}
-                options={units.map((unit) => ({
-                  value: unit.id,
-                  label: unit.is_active ? unit.name : `${unit.name} (ngừng sử dụng)`,
-                  disabled: !unit.is_active && editingItem?.default_unit_id !== unit.id
-                }))}
-              />
+              <div className="inline-master-field">
+                <Form.Item
+                  name="default_unit_id"
+                  noStyle
+                  rules={[{ required: true, message: "Chọn đơn vị mặc định." }]}
+                >
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={handleDefaultUnitChange}
+                    options={units.map((unit) => ({
+                      value: unit.id,
+                      label: unit.is_active ? unit.name : `${unit.name} (ngừng sử dụng)`,
+                      disabled: !unit.is_active && editingItem?.default_unit_id !== unit.id
+                    }))}
+                  />
+                </Form.Item>
+                <Button
+                  className="quick-add-button"
+                  icon={<PlusOutlined />}
+                  onClick={openQuickUnit}
+                  title="Thêm nhanh đơn vị tính"
+                />
+              </div>
             </Form.Item>
 
             <Form.Item
@@ -1039,6 +1144,71 @@ function InventoryItemsPage() {
             </Text>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={quickGroupOpen}
+        width={420}
+        title="Thêm nhóm hàng hóa nhanh"
+        okText="Thêm"
+        cancelText="Hủy"
+        confirmLoading={quickSaving}
+        onCancel={() => setQuickGroupOpen(false)}
+        onOk={() => void saveQuickGroup()}
+      >
+        <Form<GroupForm>
+          form={quickGroupForm}
+          layout="vertical"
+          initialValues={{ is_active: true }}
+          className="quick-master-form"
+        >
+          <Form.Item
+            label="Tên nhóm hàng hóa"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên nhóm hàng hóa." },
+              { max: 150, message: "Tên nhóm tối đa 150 ký tự." }
+            ]}
+          >
+            <Input autoFocus placeholder="Ví dụ: Gia vị, Đồ uống..." />
+          </Form.Item>
+          <Form.Item
+            label="Ghi chú"
+            name="note"
+            rules={[{ max: 500, message: "Ghi chú tối đa 500 ký tự." }]}
+          >
+            <TextArea rows={2} placeholder="Không bắt buộc..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        open={quickUnitOpen}
+        width={390}
+        title="Thêm đơn vị nhanh"
+        okText="Thêm"
+        cancelText="Hủy"
+        confirmLoading={quickSaving}
+        onCancel={() => setQuickUnitOpen(false)}
+        onOk={() => void saveQuickUnit()}
+      >
+        <Form<UnitForm>
+          form={quickUnitForm}
+          layout="vertical"
+          initialValues={{ is_active: true }}
+          className="quick-master-form"
+        >
+          <Form.Item
+            label="Tên đơn vị"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên đơn vị tính." },
+              { max: 100, message: "Tên đơn vị tối đa 100 ký tự." }
+            ]}
+          >
+            <Input autoFocus placeholder="Ví dụ: kg, g, chai, lon..." />
+          </Form.Item>
+        </Form>
       </Modal>
     </>
   );
@@ -1732,7 +1902,7 @@ function SuppliersPage() {
 
       <Modal
         open={modalOpen}
-        width={760}
+        width={650}
         title={modalTitle}
         onCancel={closeModal}
         footer={
@@ -2104,8 +2274,8 @@ function App() {
   return (
     <Layout className="app-shell">
       <Sider
-        width={280}
-        collapsedWidth={80}
+        width={238}
+        collapsedWidth={68}
         className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}
         collapsible
         collapsed={collapsed}

@@ -786,3 +786,282 @@ body {
     grid-template-columns: auto minmax(90px, 1fr) auto;
   }
 }
+
+
+/* Compact UI pass: ~15% smaller for 1366x768 and similar screens */
+body {
+  font-size: 12px;
+}
+
+.brand {
+  min-height: 107px;
+  padding: 15px 15px 14px;
+}
+
+.brand-collapsed {
+  min-height: 78px;
+  padding: 12px 7px;
+}
+
+.brand-logo-mark {
+  width: 57px;
+  height: 49px;
+}
+
+.brand-collapsed .brand-logo-mark {
+  width: 45px;
+  height: 39px;
+}
+
+.brand-title {
+  font-size: 25px;
+}
+
+.brand-subtitle {
+  margin-top: 6px;
+  font-size: 9px;
+}
+
+.main-menu {
+  padding: 8px 7px 15px;
+}
+
+.main-menu > .ant-menu-item,
+.main-menu > .ant-menu-submenu > .ant-menu-submenu-title {
+  height: 39px;
+  line-height: 39px;
+}
+
+.main-menu .ant-menu-sub .ant-menu-item {
+  height: 31px;
+  font-size: 12px;
+  line-height: 31px;
+}
+
+.main-menu .ant-menu-item .anticon,
+.main-menu .ant-menu-submenu-title .anticon {
+  font-size: 14px;
+}
+
+.topbar {
+  height: 61px;
+  padding: 0 24px;
+}
+
+.topbar-title {
+  font-size: 15px;
+}
+
+.sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  font-size: 17px;
+}
+
+.today-chip {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.manager-avatar {
+  width: 29px;
+  height: 29px;
+  font-size: 14px;
+}
+
+.content {
+  padding: 18px;
+}
+
+.dashboard-heading,
+.page-heading {
+  gap: 20px;
+  margin-bottom: 17px;
+}
+
+.dashboard-heading h2,
+.page-heading h2 {
+  font-size: 25px !important;
+}
+
+.metrics-row {
+  margin-bottom: 12px;
+}
+
+.metric-card {
+  min-height: 112px;
+}
+
+.metric-card .ant-card-body {
+  padding: 17px;
+}
+
+.metric-card .ant-statistic-title {
+  font-size: 12px;
+}
+
+.metric-card .ant-statistic-content {
+  font-size: 22px;
+}
+
+.dashboard-card .ant-card-head {
+  min-height: 47px;
+  padding: 0 17px;
+}
+
+.dashboard-card .ant-card-head-title {
+  font-size: 14px;
+}
+
+.dashboard-card .ant-card-body {
+  padding: 17px;
+}
+
+.empty-chart {
+  height: 230px;
+}
+
+.donut-placeholder {
+  min-height: 230px;
+}
+
+.compact-empty,
+.activity-placeholder {
+  min-height: 128px;
+}
+
+.quick-action-btn {
+  height: 53px;
+}
+
+.toolbar {
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.search-box {
+  max-width: 374px;
+}
+
+.status-filter {
+  width: 162px;
+}
+
+.table-card .ant-table {
+  font-size: 12px;
+}
+
+.table-card .ant-table-thead > tr > th,
+.table-card .ant-table-tbody > tr > td {
+  padding: 10px 13px;
+}
+
+.backup-settings-card {
+  max-width: 833px;
+}
+
+.backup-status-grid {
+  gap: 15px;
+  margin-bottom: 19px;
+}
+
+.backup-status-grid > div {
+  padding: 12px;
+}
+
+.supplier-form,
+.item-form {
+  margin-top: 15px;
+}
+
+.supplier-form-grid,
+.item-form-grid {
+  gap: 0 14px;
+}
+
+.supplier-qr-preview,
+.supplier-qr-empty {
+  width: 145px;
+  height: 145px;
+}
+
+.conversion-section {
+  margin-top: 15px;
+  padding: 14px;
+}
+
+.conversion-row {
+  grid-template-columns: minmax(128px, 1fr) minmax(238px, 1.7fr) auto auto;
+  gap: 8px;
+  padding: 8px;
+}
+
+.inline-master-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.inline-master-field .ant-select {
+  width: 100%;
+}
+
+.quick-add-button {
+  width: 30px;
+  min-width: 30px;
+  padding-inline: 0;
+  color: #2774e8;
+  border-color: #b8d2fb;
+  background: #f5f9ff;
+}
+
+.quick-add-button:hover {
+  color: #ffffff !important;
+  border-color: #2774e8 !important;
+  background: #2774e8 !important;
+}
+
+.quick-master-form {
+  margin-top: 12px;
+}
+
+.ant-btn {
+  font-size: 12px;
+}
+
+.ant-input,
+.ant-input-number,
+.ant-select-selector,
+.ant-form-item-label > label,
+.ant-switch,
+.ant-tag {
+  font-size: 12px;
+}
+
+.ant-form-item {
+  margin-bottom: 18px;
+}
+
+.ant-modal .ant-modal-content {
+  padding: 17px;
+}
+
+.ant-modal .ant-modal-title {
+  font-size: 15px;
+}
+
+.ant-modal .ant-modal-header {
+  margin-bottom: 16px;
+}
+
+.ant-modal .ant-modal-footer {
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .content {
+    padding: 14px;
+  }
+}
