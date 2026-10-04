@@ -6,6 +6,8 @@ import type {
   FundTransactionCreateInput,
   FundTransactionCreateOutput,
   FundTransactionList,
+  FundTransactionCategory,
+  FundTransactionCategoryInput,
   InventoryItem,
   InventoryItemInput,
   ItemGroup,
@@ -230,4 +232,36 @@ export function createFundTransaction(
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+
+export function getFundTransactionCategories(
+  direction?: "IN" | "OUT"
+): Promise<FundTransactionCategory[]> {
+  const query = direction ? `?direction=${direction}` : "";
+  return request<FundTransactionCategory[]>(
+    `/api/fund-transaction-categories${query}`
+  );
+}
+
+export function createFundTransactionCategory(
+  payload: FundTransactionCategoryInput
+): Promise<FundTransactionCategory> {
+  return request<FundTransactionCategory>("/api/fund-transaction-categories", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateFundTransactionCategory(
+  id: number,
+  payload: FundTransactionCategoryInput
+): Promise<FundTransactionCategory> {
+  return request<FundTransactionCategory>(
+    `/api/fund-transaction-categories/${id}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
 }
