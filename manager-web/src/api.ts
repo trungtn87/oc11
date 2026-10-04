@@ -10,6 +10,10 @@ import type {
   FundTransactionCategoryInput,
   InventoryItem,
   InventoryItemInput,
+  InventoryItemHistory,
+  InventoryStock,
+  StockAdjustment,
+  StockAdjustmentInput,
   ItemGroup,
   ItemGroupInput,
   PurchaseReceipt,
@@ -319,4 +323,53 @@ export function voidPurchaseReceiptForReentry(
     `/api/purchase-receipts/${id}/void-for-reentry`,
     { method: "POST" }
   );
+}
+
+
+export function getInventoryStock(params?: {
+  search?: string;
+  group_id?: number;
+  as_of?: string;
+}): Promise<InventoryStock[]> {
+  const query = new URLSearchParams();
+
+  if (params?.search?.trim()) {
+    query.set("search", params.search.trim());
+  }
+  if (params?.group_id !== undefined) {
+    query.set("group_id", String(params.group_id));
+  }
+  if (params?.as_of) {
+    query.set("as_of", params.as_of);
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<InventoryStock[]>(`/api/inventory/stock${suffix}`);
+}
+
+export function getInventoryItemHistory(
+  itemId: number,
+  params: {
+    from: string;
+    to: string;
+    type?: "ALL" | "PURCHASE" | "SALE" | "ADJUSTMENT" | "OTHER";
+  }
+): Promise<InventoryItemHistory> {
+  const query = new URLSearchParams();
+  query.set("from", params.from);
+  query.set("to", params.to);
+  query.set("type", params.type ?? "ALL");
+
+  return request<InventoryItemHistory>(
+    `/api/inventory/items/${itemId}/history?${query.toString()}`
+  );
+}
+
+export function createStockAdjustment(
+  payload: StockAdjustmentInput
+): Promise<StockAdjustment> {
+  return request<StockAdjustment>("/api/inventory/adjustments", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
