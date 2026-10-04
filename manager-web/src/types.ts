@@ -201,7 +201,16 @@ export type PurchaseReceipt = {
   total_amount: number;
   payment_status: PurchasePaymentStatus;
   payment_reference_code: string | null;
+  payment_fund_account_id: number | null;
+  payment_account_type: FundAccountType | null;
+  replaces_receipt_id: number | null;
+  replaces_receipt_code: string | null;
+  replacement_receipt_id: number | null;
+  replacement_receipt_code: string | null;
+  is_void: boolean;
+  voided_at: string | null;
   created_at: string;
+  updated_at: string | null;
   items: PurchaseReceiptItem[];
 };
 
@@ -215,6 +224,7 @@ export type PurchaseReceiptInput = {
     account_type: FundAccountType;
     fund_account_id: number;
   } | null;
+  replaces_receipt_id?: number | null;
   items: Array<{
     item_id: number;
     unit_id: number;
