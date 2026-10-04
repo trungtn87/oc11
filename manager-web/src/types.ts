@@ -99,3 +99,27 @@ export type FundAccountInput = Omit<
   FundAccount,
   "id" | "current_balance" | "can_delete"
 >;
+
+
+export type FundTransaction = {
+  id: number;
+  fund_account_id: number;
+  fund_account_name: string;
+  account_type: FundAccountType;
+  transaction_time: string;
+  transaction_type: string;
+  direction: "IN" | "OUT";
+  amount: number;
+  reference_code: string | null;
+  description: string | null;
+  note: string | null;
+  running_balance: number;
+};
+
+export type FundTransactionList = {
+  opening_balance: number;
+  total_in: number;
+  total_out: number;
+  closing_balance: number;
+  items: FundTransaction[];
+};
