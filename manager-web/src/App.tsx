@@ -66,6 +66,7 @@ import {
   updateUnit,
   useLocalBackupFolder
 } from "./api";
+import { BankAccountsPage, CashFundsPage } from "./FundAccountsPage";
 import type {
   BackupStatus,
   InventoryItem,
@@ -168,8 +169,9 @@ const menuItems: MenuProps["items"] = [
     icon: <WalletOutlined />,
     label: "Thu chi",
     children: [
-      { key: "cash-transactions", icon: <DollarOutlined />, label: "Thu chi" },
-      { key: "cash-categories", icon: <ProfileOutlined />, label: "Danh mục thu chi" }
+      { key: "cash-funds", icon: <WalletOutlined />, label: "Quỹ tiền mặt" },
+      { key: "bank-accounts", icon: <DollarOutlined />, label: "Tài khoản ngân hàng" },
+      { key: "cash-transactions", icon: <ProfileOutlined />, label: "Sổ tiền" }
     ]
   },
   {
@@ -2228,8 +2230,9 @@ const pageTitles: Record<string, string> = {
   "suppliers": "Nhà cung cấp",
   stock: "Tồn kho",
   "stock-count": "Kiểm kho",
-  "cash-transactions": "Thu chi",
-  "cash-categories": "Danh mục thu chi",
+  "cash-funds": "Quỹ tiền mặt",
+  "bank-accounts": "Tài khoản ngân hàng",
+  "cash-transactions": "Sổ tiền",
   "report-revenue": "Báo cáo doanh thu",
   "report-stock": "Báo cáo tồn kho",
   "report-purchases": "Báo cáo nhập hàng",
@@ -2262,6 +2265,14 @@ function App() {
 
     if (page === "suppliers") {
       return <SuppliersPage />;
+    }
+
+    if (page === "cash-funds") {
+      return <CashFundsPage />;
+    }
+
+    if (page === "bank-accounts") {
+      return <BankAccountsPage />;
     }
 
     if (page === "settings") {
