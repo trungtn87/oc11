@@ -69,6 +69,7 @@ import {
 import { BankAccountsPage, CashFundsPage } from "./FundAccountsPage";
 import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
+import InventoryStockPage from "./InventoryStockPage";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import type {
   BackupStatus,
@@ -164,8 +165,8 @@ const menuItems: MenuProps["items"] = [
     icon: <DatabaseOutlined />,
     label: "Kho",
     children: [
-      { key: "stock", icon: <InboxOutlined />, label: "Tồn kho" },
-      { key: "stock-count", icon: <AuditOutlined />, label: "Kiểm kho" }
+      { key: "stock", icon: <InboxOutlined />, label: "Tồn kho thực tế" },
+      { key: "stock-sales", icon: <AuditOutlined />, label: "Dữ liệu xuất kho bán hàng" }
     ]
   },
   {
@@ -2234,8 +2235,8 @@ const pageTitles: Record<string, string> = {
   "units": "Đơn vị tính",
   "purchase-orders": "Phiếu nhập",
   "suppliers": "Nhà cung cấp",
-  stock: "Tồn kho",
-  "stock-count": "Kiểm kho",
+  stock: "Tồn kho thực tế",
+  "stock-sales": "Dữ liệu xuất kho bán hàng",
   "cash-funds": "Quỹ tiền mặt",
   "cash-ledger": "Sổ tiền mặt",
   "bank-accounts": "Tài khoản ngân hàng",
@@ -2285,6 +2286,10 @@ function App() {
           }}
         />
       );
+    }
+
+    if (page === "stock") {
+      return <InventoryStockPage />;
     }
 
     if (page === "cash-funds") {
