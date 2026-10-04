@@ -389,6 +389,52 @@ def init_db() -> None:
             """
         )
 
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_source
+            ON inventory_movements (source_type, source_id, source_line_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_sale_source_line
+            ON inventory_movements (source_type, source_id, source_line_id)
+            WHERE source_type = 'SALE'
+              AND source_id IS NOT NULL
+              AND source_line_id IS NOT NULL
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stock_adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                adjustment_code TEXT NOT NULL UNIQUE,
+                adjustment_time TEXT NOT NULL,
+                reason TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stock_adjustment_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_adjustment_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                system_quantity REAL NOT NULL,
+                actual_quantity REAL NOT NULL,
+                quantity_delta REAL NOT NULL,
+                note TEXT,
+                FOREIGN KEY (stock_adjustment_id)
+                    REFERENCES stock_adjustments(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES items(id),
+                UNIQUE (stock_adjustment_id, item_id)
+            )
+            """
+        )
+
         legacy_items_without_conversions = connection.execute(
             """
             SELECT id, smallest_unit_id
