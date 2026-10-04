@@ -480,6 +480,39 @@ def create_fund_transaction(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Nhập số tiền.",
                 )
+
+            source_type = clean_text(payload.source_type)
+            source_id = clean_text(payload.source_id)
+            if source_type == "PURCHASE_RECEIPT":
+                if source_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Thiếu phiếu nhập cần thanh toán.",
+                    )
+                receipt = connection.execute(
+                    """
+                    SELECT id, total_amount, payment_status
+                    FROM purchase_receipts
+                    WHERE id = ?
+                    """,
+                    (source_id,),
+                ).fetchone()
+                if receipt is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Không tìm thấy phiếu nhập cần thanh toán.",
+                    )
+                if receipt["payment_status"] != "DEBT":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Phiếu nhập này đã được thanh toán.",
+                    )
+                if payload.amount != int(receipt["total_amount"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Số tiền trả nợ phải bằng tổng tiền phiếu nhập.",
+                    )
+
             if payload.category_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -512,8 +545,8 @@ def create_fund_transaction(
                     group_id=None,
                     description=description,
                     note=note,
-                    source_type=clean_text(payload.source_type),
-                    source_id=clean_text(payload.source_id),
+                    source_type=source_type,
+                    source_id=source_id,
                 )
             )
             reference_codes.append(reference)
