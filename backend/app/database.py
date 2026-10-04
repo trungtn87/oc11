@@ -117,6 +117,9 @@ def init_db() -> None:
                 name TEXT NOT NULL UNIQUE,
                 type TEXT NOT NULL
                     CHECK (type IN ('CASH', 'BANK')),
+                bank_name TEXT,
+                account_number TEXT,
+                account_name TEXT,
                 current_balance INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
@@ -124,6 +127,16 @@ def init_db() -> None:
             )
             """
         )
+        fund_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(fund_accounts)").fetchall()
+        }
+        for column_name in ("bank_name", "account_number", "account_name"):
+            if column_name not in fund_columns:
+                connection.execute(
+                    f"ALTER TABLE fund_accounts ADD COLUMN {column_name} TEXT"
+                )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS fund_transactions (
