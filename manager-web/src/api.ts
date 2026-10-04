@@ -12,6 +12,8 @@ import type {
   InventoryItemInput,
   ItemGroup,
   ItemGroupInput,
+  PurchaseReceipt,
+  PurchaseReceiptInput,
   Supplier,
   SupplierInput,
   Unit,
@@ -264,4 +266,37 @@ export function updateFundTransactionCategory(
       body: JSON.stringify(payload)
     }
   );
+}
+
+
+export function getPurchaseReceipts(params?: {
+  supplier_id?: number;
+  payment_status?: "PAID" | "DEBT";
+  search?: string;
+}): Promise<PurchaseReceipt[]> {
+  const query = new URLSearchParams();
+  if (params?.supplier_id !== undefined) {
+    query.set("supplier_id", String(params.supplier_id));
+  }
+  if (params?.payment_status) {
+    query.set("payment_status", params.payment_status);
+  }
+  if (params?.search?.trim()) {
+    query.set("search", params.search.trim());
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<PurchaseReceipt[]>(`/api/purchase-receipts${suffix}`);
+}
+
+export function getPurchaseReceipt(id: number): Promise<PurchaseReceipt> {
+  return request<PurchaseReceipt>(`/api/purchase-receipts/${id}`);
+}
+
+export function createPurchaseReceipt(
+  payload: PurchaseReceiptInput
+): Promise<PurchaseReceipt> {
+  return request<PurchaseReceipt>("/api/purchase-receipts", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
