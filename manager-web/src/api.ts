@@ -1,5 +1,8 @@
 import type {
   BackupStatus,
+  FundAccount,
+  FundAccountInput,
+  FundAccountType,
   InventoryItem,
   InventoryItemInput,
   ItemGroup,
@@ -155,5 +158,38 @@ export function updateInventoryItem(
   return request<InventoryItem>(`/api/items/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+
+export function getFundAccounts(type?: FundAccountType): Promise<FundAccount[]> {
+  const query = type ? `?type=${type}` : "";
+  return request<FundAccount[]>(`/api/fund-accounts${query}`);
+}
+
+export function createFundAccount(
+  payload: FundAccountInput
+): Promise<FundAccount> {
+  return request<FundAccount>("/api/fund-accounts", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateFundAccount(
+  id: number,
+  payload: FundAccountInput
+): Promise<FundAccount> {
+  return request<FundAccount>(`/api/fund-accounts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteFundAccount(
+  id: number
+): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/fund-accounts/${id}`, {
+    method: "DELETE"
   });
 }
