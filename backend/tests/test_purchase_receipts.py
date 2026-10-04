@@ -274,6 +274,19 @@ def test_void_paid_receipt_reverses_money_and_stock_then_allows_reentry(
             """,
             (str(receipt["id"]),),
         ).fetchone()[0]
+        void_movement_time = connection.execute(
+            """
+            SELECT movement_time
+            FROM inventory_movements
+            WHERE source_type = 'PURCHASE_RECEIPT_VOID'
+              AND source_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (str(receipt["id"]),),
+        ).fetchone()[0]
 
     assert stock == 3
     assert active_payment_count == 0
+    assert void_movement_time == voided_body["voided_at"]
+    assert void_movement_time != receipt["receipt_time"]
