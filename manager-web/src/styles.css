@@ -1220,3 +1220,14 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+
+.purchase-row-void > td {
+  background: #fafafa !important;
+  color: #8c8c8c;
+}
+
+.purchase-row-void .purchase-code-link {
+  color: #8c8c8c;
+  text-decoration: line-through;
+}
