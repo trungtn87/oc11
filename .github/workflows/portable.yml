@@ -44,7 +44,7 @@ jobs:
       - name: Build OC11.exe
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --name OC11 --add-data "manager-web/dist;static" launcher.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name OC11 --add-data "manager-web/dist;static" launcher.py
 
       - name: Smoke test OC11.exe
         shell: pwsh
