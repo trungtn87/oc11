@@ -108,6 +108,8 @@ export type FundTransaction = {
   account_type: FundAccountType;
   transaction_time: string;
   transaction_type: string;
+  category_id: number | null;
+  category_name: string | null;
   direction: "IN" | "OUT";
   amount: number;
   reference_code: string | null;
@@ -137,6 +139,7 @@ export type FundTransactionCreateInput = {
   direction: "IN" | "OUT";
   transaction_type: FundTransactionType;
   transaction_time: string;
+  category_id?: number;
   amount?: number;
   actual_balance?: number;
   related_fund_account_id?: number;
@@ -147,4 +150,21 @@ export type FundTransactionCreateInput = {
 export type FundTransactionCreateOutput = {
   created_ids: number[];
   reference_codes: string[];
+};
+
+
+export type FundTransactionCategory = {
+  id: number;
+  name: string;
+  direction: "IN" | "OUT";
+  is_active: boolean;
+  sort_order: number;
+  can_change_direction: boolean;
+};
+
+export type FundTransactionCategoryInput = {
+  name: string;
+  direction: "IN" | "OUT";
+  is_active: boolean;
+  sort_order: number;
 };
