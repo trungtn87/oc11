@@ -25,7 +25,9 @@ import {
   getPurchaseReceipts,
   getSuppliers,
   getUnits,
-  updateInventoryItem
+  updateInventoryItem,
+  updatePurchaseReceipt,
+  voidPurchaseReceiptForReentry
 } from "./api";
 import type {
   FundAccount,
@@ -113,6 +115,8 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   const [supplierFilter, setSupplierFilter] = useState<number | "all">("all");
   const [statusFilter, setStatusFilter] = useState<PurchasePaymentStatus | "all">("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingReceipt, setEditingReceipt] = useState<PurchaseReceipt | null>(null);
+  const [replacingReceiptId, setReplacingReceiptId] = useState<number | null>(null);
   const [lines, setLines] = useState<ReceiptLineDraft[]>([newLine()]);
   const [quickSupplierOpen, setQuickSupplierOpen] = useState(false);
   const [quickConversionOpen, setQuickConversionOpen] = useState(false);
@@ -203,6 +207,8 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   };
 
   const openCreate = () => {
+    setEditingReceipt(null);
+    setReplacingReceiptId(null);
     form.resetFields();
     form.setFieldsValue({
       receipt_time: toLocalDateTimeInput(new Date()),
@@ -215,8 +221,107 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
 
   const closeCreate = () => {
     setModalOpen(false);
+    setEditingReceipt(null);
+    setReplacingReceiptId(null);
     setLines([newLine()]);
     form.resetFields();
+  };
+
+  const receiptToLines = (receipt: PurchaseReceipt): ReceiptLineDraft[] =>
+    receipt.items.map((item) => ({
+      key: `receipt-${receipt.id}-line-${item.id}`,
+      item_id: item.item_id,
+      unit_id: item.unit_id,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      note: item.note ?? undefined
+    }));
+
+  const fillReceiptForm = (
+    receipt: PurchaseReceipt,
+    mode: "edit" | "replace"
+  ) => {
+    setEditingReceipt(mode === "edit" ? receipt : null);
+    setReplacingReceiptId(mode === "replace" ? receipt.id : null);
+    form.resetFields();
+    form.setFieldsValue({
+      supplier_id: receipt.supplier_id,
+      receipt_time: receipt.receipt_time.slice(0, 16),
+      description: receipt.description ?? undefined,
+      shipping_fee: receipt.shipping_fee,
+      payment_status: mode === "edit" ? "DEBT" : receipt.payment_status,
+      account_type:
+        mode === "replace"
+          ? (receipt.payment_account_type ?? undefined)
+          : undefined,
+      fund_account_id:
+        mode === "replace"
+          ? (receipt.payment_fund_account_id ?? undefined)
+          : undefined
+    });
+    setLines(receiptToLines(receipt));
+    setModalOpen(true);
+  };
+
+  const openEditReceipt = async (receipt: PurchaseReceipt) => {
+    try {
+      const detail = await getPurchaseReceipt(receipt.id);
+      if (detail.is_void) {
+        messageApi.warning("Phiếu đã hủy không thể sửa.");
+        return;
+      }
+      if (detail.payment_status !== "DEBT") {
+        messageApi.warning("Phiếu đã thanh toán không được sửa. Hãy dùng Hủy để nhập lại.");
+        return;
+      }
+      fillReceiptForm(detail, "edit");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không mở được phiếu nhập.");
+    }
+  };
+
+  const openReentryReceipt = async (receipt: PurchaseReceipt) => {
+    try {
+      const detail = receipt.items.length
+        ? receipt
+        : await getPurchaseReceipt(receipt.id);
+      if (!detail.is_void) {
+        messageApi.warning("Chỉ nhập lại từ phiếu đã hủy.");
+        return;
+      }
+      if (detail.replacement_receipt_id) {
+        messageApi.info(`Phiếu đã được thay thế bởi ${detail.replacement_receipt_code}.`);
+        return;
+      }
+      fillReceiptForm(detail, "replace");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không mở được phiếu nhập.");
+    }
+  };
+
+  const voidAndReenter = (receipt: PurchaseReceipt) => {
+    Modal.confirm({
+      title: `Hủy ${receipt.receipt_code} để nhập lại?`,
+      content:
+        "Hệ thống sẽ đảo toàn bộ hàng đã nhập, hoàn tác phiếu chi và hoàn lại số dư quỹ/tài khoản. Phiếu cũ vẫn được giữ với trạng thái Đã hủy.",
+      okText: "Hủy và nhập lại",
+      cancelText: "Không",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const voided = await voidPurchaseReceiptForReentry(receipt.id);
+          setViewReceipt(null);
+          await Promise.all([loadReceipts(), loadMasterData()]);
+          fillReceiptForm(voided, "replace");
+          messageApi.success(`Đã hủy ${receipt.receipt_code}. Hãy kiểm tra và lưu phiếu mới.`);
+        } catch (error) {
+          messageApi.error(
+            error instanceof Error ? error.message : "Không hủy được phiếu nhập."
+          );
+          throw error;
+        }
+      }
+    });
   };
 
   const saveReceipt = async () => {
@@ -249,6 +354,7 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
                 fund_account_id: values.fund_account_id as number
               }
             : null,
+        replaces_receipt_id: replacingReceiptId,
         items: lines.map((line) => ({
           item_id: line.item_id as number,
           unit_id: line.unit_id as number,
@@ -259,10 +365,24 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
       };
 
       setSaving(true);
-      await createPurchaseReceipt(payload);
+      if (editingReceipt) {
+        await updatePurchaseReceipt(editingReceipt.id, {
+          ...payload,
+          payment_status: "DEBT",
+          payment: null,
+          replaces_receipt_id: editingReceipt.replaces_receipt_id
+        });
+        messageApi.success("Đã cập nhật phiếu trả nợ và đồng bộ lại tồn kho.");
+      } else {
+        const created = await createPurchaseReceipt(payload);
+        messageApi.success(
+          replacingReceiptId
+            ? `Đã tạo ${created.receipt_code} thay thế phiếu đã hủy.`
+            : "Đã lưu phiếu nhập và cập nhật tồn kho."
+        );
+      }
       closeCreate();
       await Promise.all([loadReceipts(), loadMasterData()]);
-      messageApi.success("Đã lưu phiếu nhập và cập nhật tồn kho.");
     } catch (error) {
       if (error instanceof Error) messageApi.error(error.message);
     } finally {
@@ -428,8 +548,10 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
       dataIndex: "payment_status",
       key: "payment_status",
       width: 140,
-      render: (value: PurchasePaymentStatus) =>
-        value === "PAID" ? (
+      render: (value: PurchasePaymentStatus, row) =>
+        row.is_void ? (
+          <Tag>Đã hủy</Tag>
+        ) : value === "PAID" ? (
           <Tag color="success">Đã thanh toán</Tag>
         ) : (
           <Tag color="gold">Trả nợ</Tag>
@@ -439,14 +561,36 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
       title: "Thao tác",
       key: "actions",
       width: 125,
-      render: (_, row) =>
-        row.payment_status === "DEBT" ? (
-          <Button type="link" onClick={() => payDebt(row)}>
-            Trả nợ
+      render: (_, row) => {
+        if (row.is_void) {
+          return row.replacement_receipt_code ? (
+            <Text type="secondary">→ {row.replacement_receipt_code}</Text>
+          ) : (
+            <Button type="link" onClick={() => void openReentryReceipt(row)}>
+              Nhập lại
+            </Button>
+          );
+        }
+
+        if (row.payment_status === "DEBT") {
+          return (
+            <Space size={2}>
+              <Button type="link" onClick={() => void openEditReceipt(row)}>
+                Sửa
+              </Button>
+              <Button type="link" onClick={() => payDebt(row)}>
+                Trả nợ
+              </Button>
+            </Space>
+          );
+        }
+
+        return (
+          <Button danger type="link" onClick={() => voidAndReenter(row)}>
+            Hủy để nhập lại
           </Button>
-        ) : (
-          <Text type="secondary">{row.payment_reference_code || ""}</Text>
-        )
+        );
+      }
     }
   ];
 
@@ -510,14 +654,21 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
           pagination={{ pageSize: 30, showSizeChanger: false }}
           scroll={{ x: 1100 }}
           locale={{ emptyText: "Chưa có phiếu nhập." }}
+          rowClassName={(row) => (row.is_void ? "purchase-row-void" : "")}
         />
       </div>
 
       <Modal
         open={modalOpen}
         width="min(1180px, 96vw)"
-        title="Thêm phiếu nhập hàng"
-        okText="Lưu"
+        title={
+          editingReceipt
+            ? `Sửa phiếu ${editingReceipt.receipt_code}`
+            : replacingReceiptId
+              ? "Nhập lại phiếu đã hủy"
+              : "Thêm phiếu nhập hàng"
+        }
+        okText={editingReceipt ? "Lưu thay đổi" : "Lưu"}
         cancelText="Đóng"
         confirmLoading={saving}
         onCancel={closeCreate}
@@ -576,13 +727,13 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
                 name="payment_status"
                 rules={[{ required: true }]}
               >
-                <Radio.Group>
+                <Radio.Group disabled={editingReceipt !== null}>
                   <Radio value="PAID">Đã thanh toán</Radio>
                   <Radio value="DEBT">Trả nợ</Radio>
                 </Radio.Group>
               </Form.Item>
 
-              {paymentStatus === "PAID" && (
+              {paymentStatus === "PAID" && editingReceipt === null && (
                 <div className="purchase-payment-grid">
                   <Form.Item
                     label="Loại tiền"
@@ -812,18 +963,47 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
         title={viewReceipt ? `Phiếu nhập ${viewReceipt.receipt_code}` : "Phiếu nhập"}
         width={900}
         footer={
-          viewReceipt?.payment_status === "DEBT"
-            ? [
-                <Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>,
-                <Button key="pay" type="primary" onClick={() => {
-                  const receipt = viewReceipt;
-                  setViewReceipt(null);
-                  payDebt(receipt);
-                }}>
-                  Trả nợ
-                </Button>
-              ]
-            : [<Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>]
+          !viewReceipt
+            ? [<Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>]
+            : viewReceipt.is_void
+              ? [
+                  <Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>,
+                  ...(viewReceipt.replacement_receipt_id
+                    ? []
+                    : [
+                        <Button key="reenter" type="primary" onClick={() => {
+                          const receipt = viewReceipt;
+                          setViewReceipt(null);
+                          void openReentryReceipt(receipt);
+                        }}>
+                          Nhập lại
+                        </Button>
+                      ])
+                ]
+              : viewReceipt.payment_status === "DEBT"
+                ? [
+                    <Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>,
+                    <Button key="edit" onClick={() => {
+                      const receipt = viewReceipt;
+                      setViewReceipt(null);
+                      void openEditReceipt(receipt);
+                    }}>
+                      Sửa
+                    </Button>,
+                    <Button key="pay" type="primary" onClick={() => {
+                      const receipt = viewReceipt;
+                      setViewReceipt(null);
+                      payDebt(receipt);
+                    }}>
+                      Trả nợ
+                    </Button>
+                  ]
+                : [
+                    <Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>,
+                    <Button key="void" danger type="primary" onClick={() => voidAndReenter(viewReceipt)}>
+                      Hủy để nhập lại
+                    </Button>
+                  ]
         }
         onCancel={() => setViewReceipt(null)}
       >
@@ -832,7 +1012,16 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
             <div className="purchase-view-meta">
               <div><Text type="secondary">Nhà cung cấp</Text><strong>{viewReceipt.supplier_name}</strong></div>
               <div><Text type="secondary">Ngày nhập</Text><strong>{formatDateTime(viewReceipt.receipt_time)}</strong></div>
-              <div><Text type="secondary">Trạng thái</Text><strong>{viewReceipt.payment_status === "PAID" ? "Đã thanh toán" : "Trả nợ"}</strong></div>
+              <div>
+                <Text type="secondary">Trạng thái</Text>
+                <strong>
+                  {viewReceipt.is_void
+                    ? "Đã hủy"
+                    : viewReceipt.payment_status === "PAID"
+                      ? "Đã thanh toán"
+                      : "Trả nợ"}
+                </strong>
+              </div>
               <div><Text type="secondary">Tổng tiền</Text><strong>{money(viewReceipt.total_amount)} đ</strong></div>
             </div>
             <Table
