@@ -100,6 +100,61 @@ def init_db() -> None:
     with connect() as connection:
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS employees (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                phone TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                note TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                type TEXT NOT NULL
+                    CHECK (type IN ('CASH', 'BANK')),
+                current_balance INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                note TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fund_account_id INTEGER NOT NULL,
+                transaction_time TEXT NOT NULL,
+                transaction_type TEXT NOT NULL,
+                direction TEXT NOT NULL
+                    CHECK (direction IN ('IN', 'OUT')),
+                amount INTEGER NOT NULL
+                    CHECK (amount > 0),
+                source_type TEXT,
+                source_id TEXT,
+                reference_code TEXT,
+                group_id TEXT,
+                counterparty_name TEXT,
+                description TEXT,
+                note TEXT,
+                employee_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                is_void INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_void IN (0, 1)),
+                FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id),
+                FOREIGN KEY (employee_id) REFERENCES employees(id)
+            )
+            """
+        )
+
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS item_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
