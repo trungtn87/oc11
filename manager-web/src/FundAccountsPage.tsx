@@ -22,8 +22,7 @@ import {
 } from "./api";
 import type {
   FundAccount,
-  FundAccountInput,
-  FundAccountType
+  FundAccountInput
 } from "./types";
 
 const { Title, Text } = Typography;
