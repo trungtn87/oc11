@@ -3,6 +3,7 @@ import type {
   FundAccount,
   FundAccountInput,
   FundAccountType,
+  FundTransactionList,
   InventoryItem,
   InventoryItemInput,
   ItemGroup,
@@ -192,4 +193,29 @@ export function deleteFundAccount(
   return request<{ deleted: boolean }>(`/api/fund-accounts/${id}`, {
     method: "DELETE"
   });
+}
+
+
+export function getFundTransactions(params: {
+  account_type: FundAccountType;
+  fund_account_id?: number;
+  from_date?: string;
+  to_date?: string;
+}): Promise<FundTransactionList> {
+  const search = new URLSearchParams();
+  search.set("account_type", params.account_type);
+
+  if (params.fund_account_id !== undefined) {
+    search.set("fund_account_id", String(params.fund_account_id));
+  }
+  if (params.from_date) {
+    search.set("from_date", params.from_date);
+  }
+  if (params.to_date) {
+    search.set("to_date", params.to_date);
+  }
+
+  return request<FundTransactionList>(
+    `/api/fund-transactions?${search.toString()}`
+  );
 }
