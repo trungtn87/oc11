@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Button,
+  Form,
   Input,
+  InputNumber,
   message,
+  Modal,
   Select,
   Space,
   Table,
@@ -10,14 +13,21 @@ import {
 } from "antd";
 import type { TableProps } from "antd";
 
-import { getFundAccounts, getFundTransactions } from "./api";
+import {
+  createFundTransaction,
+  getFundAccounts,
+  getFundTransactions
+} from "./api";
 import type {
   FundAccount,
   FundAccountType,
-  FundTransaction
+  FundTransaction,
+  FundTransactionCreateInput,
+  FundTransactionType
 } from "./types";
 
 const { Title, Text } = Typography;
+const { TextArea } = Input;
 
 type LedgerRow = {
   key: string;
@@ -30,6 +40,19 @@ type LedgerRow = {
   running_balance: number;
   fund_account_name: string | null;
   is_opening?: boolean;
+};
+
+type VoucherDirection = "IN" | "OUT";
+
+type VoucherForm = {
+  fund_account_id: number;
+  transaction_type: FundTransactionType;
+  transaction_time: string;
+  amount?: number;
+  actual_balance?: number;
+  related_fund_account_id?: number;
+  description?: string;
+  note?: string;
 };
 
 function formatMoney(value: number) {
@@ -49,6 +72,13 @@ function toDateInput(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function toLocalDateTimeInput(date: Date) {
+  const day = toDateInput(date);
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${day}T${hour}:${minute}`;
 }
 
 function currentMonthRange() {
@@ -84,6 +114,7 @@ function MoneyLedgerPage({
 }) {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
+  const [allAccounts, setAllAccounts] = useState<FundAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | "all">("all");
   const [fromDate, setFromDate] = useState(initialRange.from);
   const [toDate, setToDate] = useState(initialRange.to);
@@ -92,11 +123,23 @@ function MoneyLedgerPage({
   const [totalIn, setTotalIn] = useState(0);
   const [totalOut, setTotalOut] = useState(0);
   const [closingBalance, setClosingBalance] = useState(0);
+  const [voucherOpen, setVoucherOpen] = useState(false);
+  const [voucherDirection, setVoucherDirection] = useState<VoucherDirection>("IN");
+  const [voucherSaving, setVoucherSaving] = useState(false);
+  const [form] = Form.useForm<VoucherForm>();
+  const transactionType = Form.useWatch("transaction_type", form);
+  const voucherAccountId = Form.useWatch("fund_account_id", form);
+  const actualBalance = Form.useWatch("actual_balance", form);
   const [messageApi, messageContext] = message.useMessage();
 
   const loadAccounts = async () => {
     try {
-      setAccounts(await getFundAccounts(accountType));
+      const [typed, all] = await Promise.all([
+        getFundAccounts(accountType),
+        getFundAccounts()
+      ]);
+      setAccounts(typed);
+      setAllAccounts(all);
     } catch (error) {
       messageApi.error(
         error instanceof Error ? error.message : "Không tải được danh sách quỹ."
@@ -150,6 +193,92 @@ function MoneyLedgerPage({
     void loadLedger();
   }, [accountType]);
 
+  const selectedVoucherAccount =
+    accounts.find((account) => account.id === voucherAccountId) ?? null;
+
+  const adjustmentDifference =
+    transactionType === "BALANCE_ADJUSTMENT" &&
+    selectedVoucherAccount &&
+    actualBalance !== undefined &&
+    actualBalance !== null
+      ? actualBalance - selectedVoucherAccount.current_balance
+      : null;
+
+  const openVoucher = (direction: VoucherDirection) => {
+    const firstAccount =
+      selectedAccountId === "all"
+        ? accounts.find((account) => account.is_active)
+        : accounts.find(
+            (account) => account.id === selectedAccountId && account.is_active
+          );
+
+    setVoucherDirection(direction);
+    form.resetFields();
+    form.setFieldsValue({
+      fund_account_id: firstAccount?.id,
+      transaction_type: "NORMAL",
+      transaction_time: toLocalDateTimeInput(new Date())
+    });
+    setVoucherOpen(true);
+  };
+
+  const closeVoucher = () => {
+    setVoucherOpen(false);
+    form.resetFields();
+  };
+
+  const saveVoucher = async () => {
+    try {
+      const values = await form.validateFields();
+      setVoucherSaving(true);
+
+      const payload: FundTransactionCreateInput = {
+        account_type: accountType,
+        fund_account_id: values.fund_account_id,
+        direction: voucherDirection,
+        transaction_type: values.transaction_type,
+        transaction_time: values.transaction_time,
+        amount:
+          values.transaction_type === "BALANCE_ADJUSTMENT"
+            ? undefined
+            : values.amount,
+        actual_balance:
+          values.transaction_type === "BALANCE_ADJUSTMENT"
+            ? values.actual_balance
+            : undefined,
+        related_fund_account_id:
+          values.transaction_type === "TRANSFER"
+            ? values.related_fund_account_id
+            : undefined,
+        description: values.description?.trim() || null,
+        note: values.note?.trim() || null
+      };
+
+      const saved = await createFundTransaction(payload);
+      closeVoucher();
+      await loadAccounts();
+      await loadLedger();
+      messageApi.success(
+        `Đã tạo ${voucherDirection === "IN" ? "phiếu thu" : "phiếu chi"} ${saved.reference_codes.join(", ")}.`
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setVoucherSaving(false);
+    }
+  };
+
+  const transactionTypeOptions = [
+    { value: "NORMAL", label: voucherDirection === "IN" ? "Thu tiền" : "Chi tiền" },
+    { value: "TRANSFER", label: "Chuyển quỹ / chuyển tài khoản" },
+    { value: "BALANCE_ADJUSTMENT", label: "Cân đối kiểm kê" },
+    ...(voucherDirection === "IN"
+      ? [{ value: "OPENING_BALANCE", label: "Số dư đầu kỳ" }]
+      : [])
+  ];
+
   const columns: TableProps<LedgerRow>["columns"] = [
     {
       title: "Ngày chứng từ",
@@ -163,14 +292,14 @@ function MoneyLedgerPage({
       title: "Số phiếu thu",
       dataIndex: "receipt_code",
       key: "receipt_code",
-      width: 130,
+      width: 135,
       render: (value: string | null) => value || ""
     },
     {
       title: "Số phiếu chi",
       dataIndex: "payment_code",
       key: "payment_code",
-      width: 130,
+      width: 135,
       render: (value: string | null) => value || ""
     },
     {
@@ -226,6 +355,15 @@ function MoneyLedgerPage({
             Theo dõi toàn bộ phát sinh thu, chi và số dư theo thời gian.
           </Text>
         </div>
+
+        <Space>
+          <Button size="large" onClick={() => openVoucher("OUT")}>
+            − Phiếu chi
+          </Button>
+          <Button type="primary" size="large" onClick={() => openVoucher("IN")}>
+            + Phiếu thu
+          </Button>
+        </Space>
       </div>
 
       <div className="toolbar">
@@ -297,6 +435,177 @@ function MoneyLedgerPage({
           )}
         />
       </div>
+
+      <Modal
+        open={voucherOpen}
+        width={620}
+        title={voucherDirection === "IN" ? "Phiếu thu" : "Phiếu chi"}
+        okText="Lưu phiếu"
+        cancelText="Hủy"
+        confirmLoading={voucherSaving}
+        onCancel={closeVoucher}
+        onOk={() => void saveVoucher()}
+      >
+        <Form<VoucherForm> form={form} layout="vertical">
+          <div className="supplier-form-grid">
+            <Form.Item
+              label={accountLabel}
+              name="fund_account_id"
+              rules={[{ required: true, message: `Chọn ${accountLabel.toLowerCase()}.` }]}
+            >
+              <Select
+                placeholder={`Chọn ${accountLabel.toLowerCase()}`}
+                options={accounts
+                  .filter((account) => account.is_active)
+                  .map((account) => ({
+                    value: account.id,
+                    label: `${account.name} — ${formatMoney(account.current_balance)} đ`
+                  }))}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="Ngày chứng từ"
+              name="transaction_time"
+              rules={[{ required: true, message: "Chọn ngày chứng từ." }]}
+            >
+              <Input type="datetime-local" />
+            </Form.Item>
+          </div>
+
+          <Form.Item
+            label="Loại giao dịch"
+            name="transaction_type"
+            rules={[{ required: true, message: "Chọn loại giao dịch." }]}
+          >
+            <Select options={transactionTypeOptions} />
+          </Form.Item>
+
+          {transactionType === "TRANSFER" && (
+            <Form.Item
+              label={
+                voucherDirection === "OUT"
+                  ? "Chuyển đến quỹ / tài khoản"
+                  : "Nhận từ quỹ / tài khoản"
+              }
+              name="related_fund_account_id"
+              rules={[{ required: true, message: "Chọn quỹ/tài khoản đối ứng." }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder="Chọn quỹ/tài khoản"
+                options={allAccounts
+                  .filter(
+                    (account) =>
+                      account.is_active && account.id !== voucherAccountId
+                  )
+                  .map((account) => ({
+                    value: account.id,
+                    label: `${account.name} (${account.type === "CASH" ? "Tiền mặt" : "Ngân hàng"})`
+                  }))}
+              />
+            </Form.Item>
+          )}
+
+          {transactionType === "BALANCE_ADJUSTMENT" ? (
+            <>
+              <div className="supplier-form-grid">
+                <Form.Item label="Số dư hệ thống">
+                  <Input
+                    disabled
+                    value={
+                      selectedVoucherAccount
+                        ? `${formatMoney(selectedVoucherAccount.current_balance)} đ`
+                        : ""
+                    }
+                  />
+                </Form.Item>
+
+                <Form.Item
+                  label="Số tiền thực tế"
+                  name="actual_balance"
+                  rules={[{ required: true, message: "Nhập số tiền thực tế." }]}
+                >
+                  <InputNumber<number>
+                    min={0}
+                    precision={0}
+                    style={{ width: "100%" }}
+                    formatter={(value) =>
+                      value === undefined || value === null
+                        ? ""
+                        : new Intl.NumberFormat("vi-VN").format(Number(value))
+                    }
+                    parser={(value) =>
+                      Number((value ?? "").replace(/[^0-9]/g, ""))
+                    }
+                  />
+                </Form.Item>
+              </div>
+
+              <Form.Item label="Chênh lệch">
+                <Input
+                  disabled
+                  value={
+                    adjustmentDifference === null
+                      ? ""
+                      : `${adjustmentDifference > 0 ? "+" : ""}${formatMoney(adjustmentDifference)} đ`
+                  }
+                />
+              </Form.Item>
+            </>
+          ) : (
+            <Form.Item
+              label={
+                transactionType === "OPENING_BALANCE"
+                  ? "Số dư đầu kỳ"
+                  : "Số tiền"
+              }
+              name="amount"
+              rules={[{ required: true, message: "Nhập số tiền." }]}
+            >
+              <InputNumber<number>
+                min={1}
+                precision={0}
+                style={{ width: "100%" }}
+                formatter={(value) =>
+                  value === undefined || value === null
+                    ? ""
+                    : new Intl.NumberFormat("vi-VN").format(Number(value))
+                }
+                parser={(value) =>
+                  Number((value ?? "").replace(/[^0-9]/g, ""))
+                }
+              />
+            </Form.Item>
+          )}
+
+          <Form.Item label="Diễn giải" name="description">
+            <Input
+              placeholder={
+                transactionType === "OPENING_BALANCE"
+                  ? "Số dư khi bắt đầu sử dụng OC11"
+                  : "Nội dung thu / chi"
+              }
+            />
+          </Form.Item>
+
+          <Form.Item label="Ghi chú" name="note">
+            <TextArea rows={3} placeholder="Ghi chú không bắt buộc..." />
+          </Form.Item>
+
+          {transactionType === "BALANCE_ADJUSTMENT" &&
+            adjustmentDifference !== null &&
+            adjustmentDifference !== 0 && (
+              <Text type="secondary">
+                Chênh lệch này cần tạo bằng{" "}
+                <Text strong>
+                  {adjustmentDifference > 0 ? "Phiếu thu" : "Phiếu chi"}
+                </Text>.
+              </Text>
+            )}
+        </Form>
+      </Modal>
     </>
   );
 }
