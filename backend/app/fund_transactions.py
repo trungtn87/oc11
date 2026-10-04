@@ -26,6 +26,8 @@ class FundTransactionOutput(BaseModel):
     account_type: str
     transaction_time: str
     transaction_type: str
+    category_id: int | None
+    category_name: str | None
     direction: str
     amount: int
     reference_code: str | None
@@ -48,6 +50,7 @@ class FundTransactionCreateInput(BaseModel):
     direction: str
     transaction_type: str
     transaction_time: str
+    category_id: int | None = None
     amount: int | None = Field(default=None, ge=1)
     actual_balance: int | None = Field(default=None, ge=0)
     related_fund_account_id: int | None = None
@@ -114,6 +117,37 @@ def get_account(connection: sqlite3.Connection, account_id: int) -> sqlite3.Row:
     return row
 
 
+def get_category(
+    connection: sqlite3.Connection,
+    category_id: int,
+    direction: str,
+) -> sqlite3.Row:
+    row = connection.execute(
+        """
+        SELECT id, name, direction, is_active
+        FROM fund_transaction_categories
+        WHERE id = ?
+        """,
+        (category_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy loại thu/chi.",
+        )
+    if not bool(row["is_active"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Loại thu/chi đang ngừng sử dụng.",
+        )
+    if row["direction"] != direction:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Loại thu/chi không đúng với phiếu đang tạo.",
+        )
+    return row
+
+
 def next_reference_code(
     connection: sqlite3.Connection,
     direction: str,
@@ -149,6 +183,7 @@ def insert_transaction(
     fund_account_id: int,
     transaction_time: str,
     transaction_type: str,
+    category_id: int | None,
     direction: str,
     amount: int,
     reference_code: str,
@@ -162,6 +197,7 @@ def insert_transaction(
             fund_account_id,
             transaction_time,
             transaction_type,
+            category_id,
             direction,
             amount,
             reference_code,
@@ -171,12 +207,13 @@ def insert_transaction(
             created_at,
             is_void
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
         """,
         (
             fund_account_id,
             transaction_time,
             transaction_type,
+            category_id,
             direction,
             amount,
             reference_code,
@@ -271,6 +308,7 @@ def create_fund_transaction(
                     fund_account_id=payload.fund_account_id,
                     transaction_time=payload.transaction_time,
                     transaction_type=transaction_type,
+                    category_id=None,
                     direction=direction,
                     amount=payload.amount,
                     reference_code=reference,
@@ -315,6 +353,7 @@ def create_fund_transaction(
                     fund_account_id=payload.fund_account_id,
                     transaction_time=payload.transaction_time,
                     transaction_type=transaction_type,
+                    category_id=None,
                     direction=direction,
                     amount=amount,
                     reference_code=reference,
@@ -383,6 +422,7 @@ def create_fund_transaction(
                     fund_account_id=source_account_id,
                     transaction_time=payload.transaction_time,
                     transaction_type=transaction_type,
+                    category_id=None,
                     direction="OUT",
                     amount=payload.amount,
                     reference_code=out_reference,
@@ -399,6 +439,7 @@ def create_fund_transaction(
                     fund_account_id=target_account_id,
                     transaction_time=payload.transaction_time,
                     transaction_type=transaction_type,
+                    category_id=None,
                     direction="IN",
                     amount=payload.amount,
                     reference_code=in_reference,
@@ -415,6 +456,13 @@ def create_fund_transaction(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Nhập số tiền.",
                 )
+            if payload.category_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Chọn loại thu/chi.",
+                )
+
+            get_category(connection, payload.category_id, direction)
 
             if direction == "OUT" and int(account["current_balance"]) < payload.amount:
                 raise HTTPException(
@@ -433,6 +481,7 @@ def create_fund_transaction(
                     fund_account_id=payload.fund_account_id,
                     transaction_time=payload.transaction_time,
                     transaction_type=transaction_type,
+                    category_id=payload.category_id,
                     direction=direction,
                     amount=payload.amount,
                     reference_code=reference,
@@ -511,6 +560,7 @@ def list_fund_transactions(
             ), 0) AS opening_balance
             FROM fund_transactions AS t
             JOIN fund_accounts AS a ON a.id = t.fund_account_id
+            LEFT JOIN fund_transaction_categories AS c ON c.id = t.category_id
             WHERE {" AND ".join(opening_where)}
             """,
             opening_params,
@@ -537,6 +587,8 @@ def list_fund_transactions(
                 a.type AS account_type,
                 t.transaction_time,
                 t.transaction_type,
+                t.category_id,
+                c.name AS category_name,
                 t.direction,
                 t.amount,
                 t.reference_code,
@@ -573,6 +625,8 @@ def list_fund_transactions(
                 account_type=row["account_type"],
                 transaction_time=row["transaction_time"],
                 transaction_type=row["transaction_type"],
+                category_id=row["category_id"],
+                category_name=row["category_name"],
                 direction=row["direction"],
                 amount=amount,
                 reference_code=row["reference_code"],
