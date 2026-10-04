@@ -78,3 +78,24 @@ export type InventoryItemInput = {
   is_active: boolean;
   conversions: ItemUnitConversionInput[];
 };
+
+
+export type FundAccountType = "CASH" | "BANK";
+
+export type FundAccount = {
+  id: number;
+  name: string;
+  type: FundAccountType;
+  bank_name: string | null;
+  account_number: string | null;
+  account_name: string | null;
+  current_balance: number;
+  is_active: boolean;
+  note: string | null;
+  can_delete: boolean;
+};
+
+export type FundAccountInput = Omit<
+  FundAccount,
+  "id" | "current_balance" | "can_delete"
+>;
