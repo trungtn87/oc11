@@ -21,6 +21,30 @@ import {
   Typography
 } from "antd";
 import type { MenuProps, TableProps } from "antd";
+import {
+  AppstoreOutlined,
+  AuditOutlined,
+  BarChartOutlined,
+  BarsOutlined,
+  CalendarOutlined,
+  ContainerOutlined,
+  DatabaseOutlined,
+  DollarOutlined,
+  FileTextOutlined,
+  HomeOutlined,
+  ImportOutlined,
+  InboxOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  ProfileOutlined,
+  RollbackOutlined,
+  SettingOutlined,
+  ShoppingCartOutlined,
+  TagsOutlined,
+  TeamOutlined,
+  UserOutlined,
+  WalletOutlined
+} from "@ant-design/icons";
 
 import {
   createInventoryItem,
@@ -99,70 +123,136 @@ type ConversionDraft = {
 };
 
 const menuItems: MenuProps["items"] = [
-  { key: "dashboard", label: "Tổng quan" },
+  { key: "dashboard", icon: <HomeOutlined />, label: "Tổng quan" },
   {
     key: "sales",
+    icon: <ShoppingCartOutlined />,
     label: "Bán hàng",
     children: [
-      { key: "sales-pos", label: "POS (Bán hàng)" },
-      { key: "sales-invoices", label: "Hóa đơn" },
-      { key: "sales-returns", label: "Trả hàng" }
+      { key: "sales-pos", icon: <ShoppingCartOutlined />, label: "POS (Bán hàng)" },
+      { key: "sales-invoices", icon: <FileTextOutlined />, label: "Hóa đơn" },
+      { key: "sales-returns", icon: <RollbackOutlined />, label: "Trả hàng" }
     ]
   },
   {
     key: "items",
+    icon: <AppstoreOutlined />,
     label: "Hàng hóa",
     children: [
-      { key: "item-list", label: "Danh sách hàng hóa" },
-      { key: "item-groups", label: "Nhóm hàng hóa" },
-      { key: "units", label: "Đơn vị tính" }
+      { key: "item-list", icon: <BarsOutlined />, label: "Danh sách hàng hóa" },
+      { key: "item-groups", icon: <TagsOutlined />, label: "Nhóm hàng hóa" },
+      { key: "units", icon: <ContainerOutlined />, label: "Đơn vị tính" }
     ]
   },
   {
     key: "purchases",
+    icon: <ImportOutlined />,
     label: "Nhập hàng",
     children: [
-      { key: "purchase-orders", label: "Phiếu nhập" },
-      { key: "suppliers", label: "Nhà cung cấp" }
+      { key: "purchase-orders", icon: <FileTextOutlined />, label: "Phiếu nhập" },
+      { key: "suppliers", icon: <TeamOutlined />, label: "Nhà cung cấp" }
     ]
   },
   {
     key: "inventory",
+    icon: <DatabaseOutlined />,
     label: "Kho",
     children: [
-      { key: "stock", label: "Tồn kho" },
-      { key: "stock-count", label: "Kiểm kho" }
+      { key: "stock", icon: <InboxOutlined />, label: "Tồn kho" },
+      { key: "stock-count", icon: <AuditOutlined />, label: "Kiểm kho" }
     ]
   },
   {
     key: "cash",
+    icon: <WalletOutlined />,
     label: "Thu chi",
     children: [
-      { key: "cash-transactions", label: "Thu chi" },
-      { key: "cash-categories", label: "Danh mục thu chi" }
+      { key: "cash-transactions", icon: <DollarOutlined />, label: "Thu chi" },
+      { key: "cash-categories", icon: <ProfileOutlined />, label: "Danh mục thu chi" }
     ]
   },
   {
     key: "reports",
+    icon: <BarChartOutlined />,
     label: "Báo cáo",
     children: [
-      { key: "report-revenue", label: "Doanh thu" },
-      { key: "report-stock", label: "Tồn kho" },
-      { key: "report-purchases", label: "Nhập hàng" },
-      { key: "report-cash", label: "Thu chi" },
-      { key: "report-profit", label: "Lợi nhuận (sau này)" }
+      { key: "report-revenue", icon: <FileTextOutlined />, label: "Doanh thu" },
+      { key: "report-stock", icon: <FileTextOutlined />, label: "Tồn kho" },
+      { key: "report-purchases", icon: <FileTextOutlined />, label: "Nhập hàng" },
+      { key: "report-cash", icon: <FileTextOutlined />, label: "Thu chi" },
+      { key: "report-profit", icon: <FileTextOutlined />, label: "Lợi nhuận (sau này)" }
     ]
   },
-  { key: "settings", label: "Cài đặt" }
+  { key: "settings", icon: <SettingOutlined />, label: "Cài đặt" }
 ];
+
+function BrandLogo({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div className={`brand ${collapsed ? "brand-collapsed" : ""}`}>
+      <div className="brand-logo-wrap">
+        <svg
+          className="brand-logo-mark"
+          viewBox="0 0 92 76"
+          role="img"
+          aria-label="Logo Ốc 11"
+        >
+          <defs>
+            <linearGradient id="oc11-gold" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#ffe39a" />
+              <stop offset="50%" stopColor="#f2bd54" />
+              <stop offset="100%" stopColor="#d7972e" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M18 54c0-20 13-35 31-35 16 0 28 11 28 25 0 12-8 21-20 21H37c-11 0-19-7-19-17 0-9 7-15 15-15 8 0 14 5 14 12 0 6-4 10-9 10-4 0-7-3-7-6 0-3 2-5 5-5"
+            fill="none"
+            stroke="url(#oc11-gold)"
+            strokeWidth="5.2"
+            strokeLinecap="round"
+          />
+          <path
+            d="M16 64c17 5 41 5 61 0M23 70c15 4 33 4 49 0"
+            fill="none"
+            stroke="url(#oc11-gold)"
+            strokeWidth="3.2"
+            strokeLinecap="round"
+          />
+          <path
+            d="M37 14 42 5l6 7 7-8 6 10"
+            fill="none"
+            stroke="url(#oc11-gold)"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="42" cy="5" r="2.3" fill="#f6c65f" />
+          <circle cx="55" cy="4" r="2.3" fill="#f6c65f" />
+          <circle cx="61" cy="14" r="2.3" fill="#f6c65f" />
+        </svg>
+
+        {!collapsed && (
+          <div className="brand-copy">
+            <div className="brand-title">
+              <span>Ốc</span>
+              <span className="brand-title-number">11</span>
+            </div>
+            <div className="brand-subtitle">
+              Ăn hải sản trên núi
+              <br />
+              chất lượng như ở biển
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value) + " đ";
 }
 
 function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
-  const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
-
   const metricCards = [
     { label: "Doanh thu hôm nay", value: 0, suffix: "đ", tone: "green" },
     { label: "Chi phí hôm nay", value: 0, suffix: "đ", tone: "red" },
@@ -187,7 +277,6 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
             Dữ liệu sẽ tự cập nhật khi từng nghiệp vụ được triển khai.
           </Text>
         </div>
-        <div className="today-chip">Hôm nay: {today}</div>
       </div>
 
       <Row gutter={[14, 14]} className="metrics-row">
@@ -1981,6 +2070,8 @@ const pageTitles: Record<string, string> = {
 
 function App() {
   const [page, setPage] = useState("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
   const renderPage = () => {
     if (page === "dashboard") {
@@ -2012,20 +2103,21 @@ function App() {
 
   return (
     <Layout className="app-shell">
-      <Sider width={250} className="sidebar" breakpoint="lg" collapsedWidth="0">
-        <div className="brand">
-          <div className="brand-mark">ỐC</div>
-          <div>
-            <div className="brand-title">Ốc 11</div>
-            <div className="brand-subtitle">Ăn hải sản trên núi<br />chất lượng như ở biển</div>
-          </div>
-        </div>
+      <Sider
+        width={280}
+        collapsedWidth={80}
+        className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}
+        collapsible
+        collapsed={collapsed}
+        trigger={null}
+      >
+        <BrandLogo collapsed={collapsed} />
 
         <Menu
           theme="dark"
           mode="inline"
           selectedKeys={[page]}
-          defaultOpenKeys={["items"]}
+          defaultOpenKeys={["sales", "items", "purchases"]}
           items={menuItems}
           onClick={({ key }) => setPage(key)}
           className="main-menu"
@@ -2035,12 +2127,27 @@ function App() {
       <Layout>
         <Header className="topbar">
           <div className="topbar-left">
+            <Button
+              type="text"
+              className="sidebar-toggle"
+              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={() => setCollapsed((value) => !value)}
+              aria-label={collapsed ? "Mở thanh menu" : "Thu gọn thanh menu"}
+            />
             <Text strong className="topbar-title">
               {page === "dashboard" ? "Tổng quan" : pageTitles[page] ?? "Ốc 11 Manager"}
             </Text>
           </div>
+
           <div className="topbar-right">
-            <Text type="secondary">Quản lý</Text>
+            <div className="today-chip">
+              <CalendarOutlined />
+              <span>Hôm nay: {today}</span>
+            </div>
+            <div className="manager-chip">
+              <span className="manager-avatar"><UserOutlined /></span>
+              <Text strong>Quản lý</Text>
+            </div>
           </div>
         </Header>
 
