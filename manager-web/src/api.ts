@@ -3,6 +3,8 @@ import type {
   FundAccount,
   FundAccountInput,
   FundAccountType,
+  FundTransactionCreateInput,
+  FundTransactionCreateOutput,
   FundTransactionList,
   InventoryItem,
   InventoryItemInput,
@@ -218,4 +220,14 @@ export function getFundTransactions(params: {
   return request<FundTransactionList>(
     `/api/fund-transactions?${search.toString()}`
   );
+}
+
+
+export function createFundTransaction(
+  payload: FundTransactionCreateInput
+): Promise<FundTransactionCreateOutput> {
+  return request<FundTransactionCreateOutput>("/api/fund-transactions", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
