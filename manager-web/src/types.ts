@@ -243,3 +243,87 @@ export type VoucherPrefill = {
   source_type?: string;
   source_id?: string;
 };
+
+
+export type InventoryMovementKind =
+  | "PURCHASE"
+  | "SALE"
+  | "ADJUSTMENT"
+  | "OTHER";
+
+export type InventoryStock = {
+  item_id: number;
+  item_name: string;
+  item_group_id: number;
+  item_group_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  stock_quantity: number;
+  last_purchase_time: string | null;
+  last_purchase_receipt_code: string | null;
+  last_purchase_unit_id: number | null;
+  last_purchase_unit_name: string | null;
+  last_purchase_unit_price: number | null;
+  last_purchase_price_per_smallest_unit: number | null;
+  last_reconciled_at: string | null;
+  last_reconciled_quantity: number | null;
+};
+
+export type InventoryMovement = {
+  id: number;
+  movement_time: string;
+  source_type: string;
+  movement_kind: InventoryMovementKind;
+  movement_label: string;
+  source_id: string | null;
+  source_line_id: string | null;
+  reference_code: string | null;
+  quantity_delta: number;
+  running_quantity: number;
+  note: string | null;
+};
+
+export type InventoryHistorySummary = {
+  opening_quantity: number;
+  purchase_delta: number;
+  sales_delta: number;
+  adjustment_delta: number;
+  other_delta: number;
+  closing_quantity: number;
+};
+
+export type InventoryItemHistory = {
+  item_id: number;
+  item_name: string;
+  item_group_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  from_time: string;
+  to_time: string;
+  movement_filter: "ALL" | InventoryMovementKind;
+  summary: InventoryHistorySummary;
+  items: InventoryMovement[];
+};
+
+export type StockAdjustmentInput = {
+  item_id: number;
+  actual_quantity: number;
+  adjustment_time?: string | null;
+  reason?: string | null;
+  note?: string | null;
+};
+
+export type StockAdjustment = {
+  id: number;
+  adjustment_code: string;
+  adjustment_time: string;
+  item_id: number;
+  item_name: string;
+  smallest_unit_name: string;
+  system_quantity: number;
+  actual_quantity: number;
+  quantity_delta: number;
+  reason: string | null;
+  note: string | null;
+  created_at: string;
+};
