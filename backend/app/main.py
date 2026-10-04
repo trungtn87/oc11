@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from .backup import backup_database
 from .backup_routes import router as backup_router
 from .database import init_db
+from .fund_accounts import router as fund_accounts_router
 from .item_groups import router as item_groups_router
 from .items import router as items_router
 from .suppliers import router as suppliers_router
@@ -28,6 +29,7 @@ app = FastAPI(
 )
 
 app.include_router(item_groups_router)
+app.include_router(fund_accounts_router)
 app.include_router(items_router)
 app.include_router(suppliers_router)
 app.include_router(units_router)
