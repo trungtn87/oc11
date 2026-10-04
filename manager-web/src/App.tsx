@@ -68,6 +68,7 @@ import {
 } from "./api";
 import { BankAccountsPage, CashFundsPage } from "./FundAccountsPage";
 import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
+import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import type {
   BackupStatus,
   InventoryItem,
@@ -173,7 +174,8 @@ const menuItems: MenuProps["items"] = [
       { key: "cash-funds", icon: <WalletOutlined />, label: "Quỹ tiền mặt" },
       { key: "cash-ledger", icon: <ProfileOutlined />, label: "Sổ tiền mặt" },
       { key: "bank-accounts", icon: <DollarOutlined />, label: "Tài khoản ngân hàng" },
-      { key: "bank-ledger", icon: <FileTextOutlined />, label: "Sổ tiền gửi" }
+      { key: "bank-ledger", icon: <FileTextOutlined />, label: "Sổ tiền gửi" },
+      { key: "cash-categories", icon: <TagsOutlined />, label: "Loại thu/chi" }
     ]
   },
   {
@@ -2236,6 +2238,7 @@ const pageTitles: Record<string, string> = {
   "cash-ledger": "Sổ tiền mặt",
   "bank-accounts": "Tài khoản ngân hàng",
   "bank-ledger": "Sổ tiền gửi",
+  "cash-categories": "Loại thu/chi",
   "report-revenue": "Báo cáo doanh thu",
   "report-stock": "Báo cáo tồn kho",
   "report-purchases": "Báo cáo nhập hàng",
@@ -2284,6 +2287,10 @@ function App() {
 
     if (page === "bank-ledger") {
       return <BankLedgerPage />;
+    }
+
+    if (page === "cash-categories") {
+      return <FundTransactionCategoriesPage />;
     }
 
     if (page === "settings") {
