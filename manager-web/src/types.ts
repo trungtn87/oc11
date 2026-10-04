@@ -123,3 +123,28 @@ export type FundTransactionList = {
   closing_balance: number;
   items: FundTransaction[];
 };
+
+
+export type FundTransactionType =
+  | "NORMAL"
+  | "TRANSFER"
+  | "BALANCE_ADJUSTMENT"
+  | "OPENING_BALANCE";
+
+export type FundTransactionCreateInput = {
+  account_type: FundAccountType;
+  fund_account_id: number;
+  direction: "IN" | "OUT";
+  transaction_type: FundTransactionType;
+  transaction_time: string;
+  amount?: number;
+  actual_balance?: number;
+  related_fund_account_id?: number;
+  description?: string | null;
+  note?: string | null;
+};
+
+export type FundTransactionCreateOutput = {
+  created_ids: number[];
+  reference_codes: string[];
+};
