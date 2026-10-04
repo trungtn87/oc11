@@ -300,3 +300,23 @@ export function createPurchaseReceipt(
     body: JSON.stringify(payload)
   });
 }
+
+
+export function updatePurchaseReceipt(
+  id: number,
+  payload: PurchaseReceiptInput
+): Promise<PurchaseReceipt> {
+  return request<PurchaseReceipt>(`/api/purchase-receipts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function voidPurchaseReceiptForReentry(
+  id: number
+): Promise<PurchaseReceipt> {
+  return request<PurchaseReceipt>(
+    `/api/purchase-receipts/${id}/void-for-reentry`,
+    { method: "POST" }
+  );
+}
