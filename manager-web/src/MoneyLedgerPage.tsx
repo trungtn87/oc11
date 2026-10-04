@@ -15,13 +15,16 @@ import type { TableProps } from "antd";
 
 import {
   createFundTransaction,
+  createFundTransactionCategory,
   getFundAccounts,
+  getFundTransactionCategories,
   getFundTransactions
 } from "./api";
 import type {
   FundAccount,
   FundAccountType,
   FundTransaction,
+  FundTransactionCategory,
   FundTransactionCreateInput,
   FundTransactionType
 } from "./types";
@@ -34,6 +37,7 @@ type LedgerRow = {
   transaction_time: string | null;
   receipt_code: string | null;
   payment_code: string | null;
+  category_name: string | null;
   description: string;
   amount_in: number;
   amount_out: number;
@@ -45,14 +49,20 @@ type LedgerRow = {
 type VoucherDirection = "IN" | "OUT";
 
 type VoucherForm = {
+  account_type: FundAccountType;
   fund_account_id: number;
   transaction_type: FundTransactionType;
   transaction_time: string;
+  category_id?: number;
   amount?: number;
   actual_balance?: number;
   related_fund_account_id?: number;
   description?: string;
   note?: string;
+};
+
+type QuickCategoryForm = {
+  name: string;
 };
 
 function formatMoney(value: number) {
@@ -95,6 +105,7 @@ function transactionToRow(item: FundTransaction): LedgerRow {
     transaction_time: item.transaction_time,
     receipt_code: item.direction === "IN" ? item.reference_code : null,
     payment_code: item.direction === "OUT" ? item.reference_code : null,
+    category_name: item.category_name,
     description: item.description || item.note || item.transaction_type,
     amount_in: item.direction === "IN" ? item.amount : 0,
     amount_out: item.direction === "OUT" ? item.amount : 0,
@@ -115,6 +126,7 @@ function MoneyLedgerPage({
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
   const [allAccounts, setAllAccounts] = useState<FundAccount[]>([]);
+  const [categories, setCategories] = useState<FundTransactionCategory[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | "all">("all");
   const [fromDate, setFromDate] = useState(initialRange.from);
   const [toDate, setToDate] = useState(initialRange.to);
@@ -126,8 +138,12 @@ function MoneyLedgerPage({
   const [voucherOpen, setVoucherOpen] = useState(false);
   const [voucherDirection, setVoucherDirection] = useState<VoucherDirection>("IN");
   const [voucherSaving, setVoucherSaving] = useState(false);
+  const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
+  const [quickCategorySaving, setQuickCategorySaving] = useState(false);
   const [form] = Form.useForm<VoucherForm>();
+  const [quickCategoryForm] = Form.useForm<QuickCategoryForm>();
   const transactionType = Form.useWatch("transaction_type", form);
+  const voucherAccountType = Form.useWatch("account_type", form);
   const voucherAccountId = Form.useWatch("fund_account_id", form);
   const actualBalance = Form.useWatch("actual_balance", form);
   const [messageApi, messageContext] = message.useMessage();
@@ -143,6 +159,16 @@ function MoneyLedgerPage({
     } catch (error) {
       messageApi.error(
         error instanceof Error ? error.message : "Không tải được danh sách quỹ."
+      );
+    }
+  };
+
+  const loadCategories = async () => {
+    try {
+      setCategories(await getFundTransactionCategories());
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không tải được loại thu/chi."
       );
     }
   };
@@ -164,6 +190,7 @@ function MoneyLedgerPage({
           transaction_time: null,
           receipt_code: null,
           payment_code: null,
+          category_name: null,
           description: "Số tồn đầu kỳ",
           amount_in: 0,
           amount_out: 0,
@@ -187,14 +214,24 @@ function MoneyLedgerPage({
 
   useEffect(() => {
     void loadAccounts();
+    void loadCategories();
   }, [accountType]);
 
   useEffect(() => {
     void loadLedger();
   }, [accountType]);
 
+  const voucherAccounts = allAccounts.filter(
+    (account) => account.is_active && account.type === voucherAccountType
+  );
+
   const selectedVoucherAccount =
-    accounts.find((account) => account.id === voucherAccountId) ?? null;
+    allAccounts.find((account) => account.id === voucherAccountId) ?? null;
+
+  const activeCategories = categories.filter(
+    (category) =>
+      category.is_active && category.direction === voucherDirection
+  );
 
   const adjustmentDifference =
     transactionType === "BALANCE_ADJUSTMENT" &&
@@ -215,6 +252,7 @@ function MoneyLedgerPage({
     setVoucherDirection(direction);
     form.resetFields();
     form.setFieldsValue({
+      account_type: accountType,
       fund_account_id: firstAccount?.id,
       transaction_type: "NORMAL",
       transaction_time: toLocalDateTimeInput(new Date())
@@ -227,17 +265,32 @@ function MoneyLedgerPage({
     form.resetFields();
   };
 
+  const changeAccountType = (nextType: FundAccountType) => {
+    const first = allAccounts.find(
+      (account) => account.is_active && account.type === nextType
+    );
+    form.setFieldsValue({
+      account_type: nextType,
+      fund_account_id: first?.id,
+      related_fund_account_id: undefined
+    });
+  };
+
   const saveVoucher = async () => {
     try {
       const values = await form.validateFields();
       setVoucherSaving(true);
 
       const payload: FundTransactionCreateInput = {
-        account_type: accountType,
+        account_type: values.account_type,
         fund_account_id: values.fund_account_id,
         direction: voucherDirection,
         transaction_type: values.transaction_type,
         transaction_time: values.transaction_time,
+        category_id:
+          values.transaction_type === "NORMAL"
+            ? values.category_id
+            : undefined,
         amount:
           values.transaction_type === "BALANCE_ADJUSTMENT"
             ? undefined
@@ -267,6 +320,32 @@ function MoneyLedgerPage({
       }
     } finally {
       setVoucherSaving(false);
+    }
+  };
+
+  const saveQuickCategory = async () => {
+    try {
+      const values = await quickCategoryForm.validateFields();
+      setQuickCategorySaving(true);
+      const created = await createFundTransactionCategory({
+        name: values.name.trim(),
+        direction: voucherDirection,
+        is_active: true,
+        sort_order: 0
+      });
+      await loadCategories();
+      form.setFieldValue("category_id", created.id);
+      setQuickCategoryOpen(false);
+      quickCategoryForm.resetFields();
+      messageApi.success(
+        `Đã thêm loại ${voucherDirection === "IN" ? "thu" : "chi"}.`
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        messageApi.error(error.message);
+      }
+    } finally {
+      setQuickCategorySaving(false);
     }
   };
 
@@ -300,6 +379,13 @@ function MoneyLedgerPage({
       dataIndex: "payment_code",
       key: "payment_code",
       width: 135,
+      render: (value: string | null) => value || ""
+    },
+    {
+      title: "Loại thu/chi",
+      dataIndex: "category_name",
+      key: "category_name",
+      width: 150,
       render: (value: string | null) => value || ""
     },
     {
@@ -414,23 +500,23 @@ function MoneyLedgerPage({
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1350 }}
           locale={{ emptyText: "Chưa có phát sinh." }}
           summary={() => (
             <Table.Summary.Row>
-              <Table.Summary.Cell index={0} colSpan={4}>
+              <Table.Summary.Cell index={0} colSpan={5}>
                 <Text strong>Tổng phát sinh trong kỳ</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={4} align="right">
+              <Table.Summary.Cell index={5} align="right">
                 <Text strong>{formatMoney(totalIn)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={5} align="right">
+              <Table.Summary.Cell index={6} align="right">
                 <Text strong>{formatMoney(totalOut)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={6} align="right">
+              <Table.Summary.Cell index={7} align="right">
                 <Text strong>{formatMoney(closingBalance)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={7} />
+              <Table.Summary.Cell index={8} />
             </Table.Summary.Row>
           )}
         />
@@ -438,7 +524,7 @@ function MoneyLedgerPage({
 
       <Modal
         open={voucherOpen}
-        width={620}
+        width={650}
         title={voucherDirection === "IN" ? "Phiếu thu" : "Phiếu chi"}
         okText="Lưu phiếu"
         cancelText="Hủy"
@@ -449,21 +535,37 @@ function MoneyLedgerPage({
         <Form<VoucherForm> form={form} layout="vertical">
           <div className="supplier-form-grid">
             <Form.Item
-              label={accountLabel}
-              name="fund_account_id"
-              rules={[{ required: true, message: `Chọn ${accountLabel.toLowerCase()}.` }]}
+              label="Loại tiền"
+              name="account_type"
+              rules={[{ required: true, message: "Chọn loại tiền." }]}
             >
               <Select
-                placeholder={`Chọn ${accountLabel.toLowerCase()}`}
-                options={accounts
-                  .filter((account) => account.is_active)
-                  .map((account) => ({
-                    value: account.id,
-                    label: `${account.name} — ${formatMoney(account.current_balance)} đ`
-                  }))}
+                onChange={changeAccountType}
+                options={[
+                  { value: "CASH", label: "Tiền mặt" },
+                  { value: "BANK", label: "Tiền gửi" }
+                ]}
               />
             </Form.Item>
 
+            <Form.Item
+              label="Quỹ / tài khoản"
+              name="fund_account_id"
+              rules={[{ required: true, message: "Chọn quỹ / tài khoản." }]}
+            >
+              <Select
+                showSearch
+                optionFilterProp="label"
+                placeholder="Chọn quỹ / tài khoản"
+                options={voucherAccounts.map((account) => ({
+                  value: account.id,
+                  label: `${account.name} — ${formatMoney(account.current_balance)} đ`
+                }))}
+              />
+            </Form.Item>
+          </div>
+
+          <div className="supplier-form-grid">
             <Form.Item
               label="Ngày chứng từ"
               name="transaction_time"
@@ -471,15 +573,47 @@ function MoneyLedgerPage({
             >
               <Input type="datetime-local" />
             </Form.Item>
+
+            <Form.Item
+              label="Loại giao dịch"
+              name="transaction_type"
+              rules={[{ required: true, message: "Chọn loại giao dịch." }]}
+            >
+              <Select options={transactionTypeOptions} />
+            </Form.Item>
           </div>
 
-          <Form.Item
-            label="Loại giao dịch"
-            name="transaction_type"
-            rules={[{ required: true, message: "Chọn loại giao dịch." }]}
-          >
-            <Select options={transactionTypeOptions} />
-          </Form.Item>
+          {transactionType === "NORMAL" && (
+            <Form.Item label="Loại thu/chi" required>
+              <Space.Compact style={{ width: "100%" }}>
+                <Form.Item
+                  name="category_id"
+                  noStyle
+                  rules={[{ required: true, message: "Chọn loại thu/chi." }]}
+                >
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder={voucherDirection === "IN" ? "Chọn loại thu" : "Chọn loại chi"}
+                    options={activeCategories.map((category) => ({
+                      value: category.id,
+                      label: category.name
+                    }))}
+                  />
+                </Form.Item>
+                <Button
+                  type="default"
+                  aria-label="Thêm nhanh loại thu chi"
+                  onClick={() => {
+                    quickCategoryForm.resetFields();
+                    setQuickCategoryOpen(true);
+                  }}
+                >
+                  +
+                </Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
 
           {transactionType === "TRANSFER" && (
             <Form.Item
@@ -502,7 +636,7 @@ function MoneyLedgerPage({
                   )
                   .map((account) => ({
                     value: account.id,
-                    label: `${account.name} (${account.type === "CASH" ? "Tiền mặt" : "Ngân hàng"})`
+                    label: `${account.name} (${account.type === "CASH" ? "Tiền mặt" : "Tiền gửi"})`
                   }))}
               />
             </Form.Item>
@@ -580,12 +714,22 @@ function MoneyLedgerPage({
             </Form.Item>
           )}
 
-          <Form.Item label="Diễn giải" name="description">
+          <Form.Item
+            label={transactionType === "NORMAL" ? "Mục đích thu/chi" : "Diễn giải"}
+            name="description"
+            rules={
+              transactionType === "NORMAL"
+                ? [{ required: true, whitespace: true, message: "Nhập mục đích thu/chi." }]
+                : undefined
+            }
+          >
             <Input
               placeholder={
                 transactionType === "OPENING_BALANCE"
                   ? "Số dư khi bắt đầu sử dụng OC11"
-                  : "Nội dung thu / chi"
+                  : transactionType === "NORMAL"
+                    ? "Nhập mục đích thu/chi..."
+                    : "Nội dung giao dịch"
               }
             />
           </Form.Item>
@@ -604,6 +748,29 @@ function MoneyLedgerPage({
                 </Text>.
               </Text>
             )}
+        </Form>
+      </Modal>
+
+      <Modal
+        open={quickCategoryOpen}
+        width={430}
+        title={voucherDirection === "IN" ? "Thêm loại thu" : "Thêm loại chi"}
+        okText="Lưu"
+        cancelText="Hủy"
+        confirmLoading={quickCategorySaving}
+        onCancel={() => setQuickCategoryOpen(false)}
+        onOk={() => void saveQuickCategory()}
+      >
+        <Form<QuickCategoryForm> form={quickCategoryForm} layout="vertical">
+          <Form.Item
+            label="Tên loại"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên loại thu/chi." }
+            ]}
+          >
+            <Input autoFocus placeholder={voucherDirection === "IN" ? "Ví dụ: Thu khác" : "Ví dụ: Điện nước"} />
+          </Form.Item>
         </Form>
       </Modal>
     </>
