@@ -30,6 +30,7 @@ class PurchaseReceiptInput(BaseModel):
     shipping_fee: int = Field(default=0, ge=0)
     payment_status: str
     payment: PurchasePaymentInput | None = None
+    replaces_receipt_id: int | None = None
     items: list[PurchaseReceiptItemInput] = Field(min_length=1)
 
 
@@ -60,7 +61,16 @@ class PurchaseReceiptOutput(BaseModel):
     total_amount: int
     payment_status: str
     payment_reference_code: str | None
+    payment_fund_account_id: int | None
+    payment_account_type: str | None
+    replaces_receipt_id: int | None
+    replaces_receipt_code: str | None
+    replacement_receipt_id: int | None
+    replacement_receipt_code: str | None
+    is_void: bool
+    voided_at: str | None
     created_at: str
+    updated_at: str | None
     items: list[PurchaseReceiptItemOutput] = []
 
 
@@ -155,6 +165,25 @@ def get_item_and_conversion(
     return row
 
 
+def prepare_items(
+    connection: sqlite3.Connection,
+    lines: list[PurchaseReceiptItemInput],
+) -> tuple[list[tuple[PurchaseReceiptItemInput, sqlite3.Row, int, float]], int]:
+    prepared: list[tuple[PurchaseReceiptItemInput, sqlite3.Row, int, float]] = []
+    goods_total = 0
+
+    for line in lines:
+        item = get_item_and_conversion(connection, line.item_id, line.unit_id)
+        line_total = int(round(line.quantity * line.unit_price))
+        quantity_in_smallest = (
+            line.quantity * float(item["quantity_in_smallest_unit"])
+        )
+        goods_total += line_total
+        prepared.append((line, item, line_total, quantity_in_smallest))
+
+    return prepared, goods_total
+
+
 def get_or_create_supplier_payment_category(connection: sqlite3.Connection) -> int:
     row = connection.execute(
         """
@@ -184,14 +213,13 @@ def next_payment_reference(
     transaction_time: str,
 ) -> str:
     dt = parse_datetime(transaction_time)
-    prefix = "PC"
     day_key = dt.strftime("%Y%m%d")
-    pattern = f"{prefix}-{day_key}-%"
+    pattern = f"PC-{day_key}-%"
     row = connection.execute(
         "SELECT COUNT(*) AS total FROM fund_transactions WHERE reference_code LIKE ?",
         (pattern,),
     ).fetchone()
-    return f"{prefix}-{day_key}-{int(row['total']) + 1:03d}"
+    return f"PC-{day_key}-{int(row['total']) + 1:03d}"
 
 
 def create_payment_transaction(
@@ -284,7 +312,73 @@ def create_payment_transaction(
     return reference_code
 
 
-def select_receipt(connection: sqlite3.Connection, receipt_id: int) -> sqlite3.Row | None:
+def insert_receipt_lines(
+    connection: sqlite3.Connection,
+    *,
+    receipt_id: int,
+    receipt_code: str,
+    receipt_time: str,
+    prepared_items: list[
+        tuple[PurchaseReceiptItemInput, sqlite3.Row, int, float]
+    ],
+) -> None:
+    for line, item, line_total, quantity_in_smallest in prepared_items:
+        item_cursor = connection.execute(
+            """
+            INSERT INTO purchase_receipt_items (
+                purchase_receipt_id,
+                item_id,
+                unit_id,
+                quantity,
+                conversion_factor,
+                quantity_in_smallest_unit,
+                unit_price,
+                line_total,
+                note
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt_id,
+                line.item_id,
+                line.unit_id,
+                line.quantity,
+                float(item["quantity_in_smallest_unit"]),
+                quantity_in_smallest,
+                line.unit_price,
+                line_total,
+                clean_text(line.note),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO inventory_movements (
+                item_id,
+                movement_time,
+                quantity_delta,
+                source_type,
+                source_id,
+                source_line_id,
+                note,
+                created_at
+            )
+            VALUES (?, ?, ?, 'PURCHASE_RECEIPT', ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                line.item_id,
+                receipt_time,
+                quantity_in_smallest,
+                str(receipt_id),
+                str(int(item_cursor.lastrowid)),
+                f"Nhập hàng {receipt_code}",
+            ),
+        )
+
+
+def select_receipt(
+    connection: sqlite3.Connection,
+    receipt_id: int,
+) -> sqlite3.Row | None:
     return connection.execute(
         """
         SELECT
@@ -299,7 +393,11 @@ def select_receipt(connection: sqlite3.Connection, receipt_id: int) -> sqlite3.R
             r.total_amount,
             r.payment_status,
             r.payment_reference_code,
-            r.created_at
+            r.replaces_receipt_id,
+            r.is_void,
+            r.voided_at,
+            r.created_at,
+            r.updated_at
         FROM purchase_receipts AS r
         JOIN suppliers AS s ON s.id = r.supplier_id
         WHERE r.id = ?
@@ -338,6 +436,75 @@ def select_receipt_items(
     ).fetchall()
 
 
+def select_payment_info(
+    connection: sqlite3.Connection,
+    receipt_id: int,
+    payment_reference_code: str | None,
+) -> sqlite3.Row | None:
+    if payment_reference_code:
+        row = connection.execute(
+            """
+            SELECT
+                ft.fund_account_id,
+                fa.type AS account_type
+            FROM fund_transactions AS ft
+            JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+            WHERE ft.reference_code = ?
+              AND ft.direction = 'OUT'
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (payment_reference_code,),
+        ).fetchone()
+        if row is not None:
+            return row
+
+    return connection.execute(
+        """
+        SELECT
+            ft.fund_account_id,
+            fa.type AS account_type
+        FROM fund_transactions AS ft
+        JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+        WHERE ft.source_type = 'PURCHASE_RECEIPT'
+          AND ft.source_id = ?
+          AND ft.direction = 'OUT'
+        ORDER BY ft.id DESC
+        LIMIT 1
+        """,
+        (str(receipt_id),),
+    ).fetchone()
+
+
+def select_receipt_link(
+    connection: sqlite3.Connection,
+    receipt_id: int | None,
+) -> sqlite3.Row | None:
+    if receipt_id is None:
+        return None
+    return connection.execute(
+        "SELECT id, receipt_code FROM purchase_receipts WHERE id = ?",
+        (receipt_id,),
+    ).fetchone()
+
+
+def select_active_replacement(
+    connection: sqlite3.Connection,
+    receipt_id: int,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        """
+        SELECT id, receipt_code
+        FROM purchase_receipts
+        WHERE replaces_receipt_id = ?
+          AND is_void = 0
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (receipt_id,),
+    ).fetchone()
+
+
 def row_to_output(
     connection: sqlite3.Connection,
     row: sqlite3.Row,
@@ -364,6 +531,14 @@ def row_to_output(
             for item in select_receipt_items(connection, row["id"])
         ]
 
+    payment = select_payment_info(
+        connection,
+        row["id"],
+        row["payment_reference_code"],
+    )
+    replaces = select_receipt_link(connection, row["replaces_receipt_id"])
+    replacement = select_active_replacement(connection, row["id"])
+
     return PurchaseReceiptOutput(
         id=row["id"],
         receipt_code=row["receipt_code"],
@@ -376,9 +551,45 @@ def row_to_output(
         total_amount=row["total_amount"],
         payment_status=row["payment_status"],
         payment_reference_code=row["payment_reference_code"],
+        payment_fund_account_id=payment["fund_account_id"] if payment else None,
+        payment_account_type=payment["account_type"] if payment else None,
+        replaces_receipt_id=row["replaces_receipt_id"],
+        replaces_receipt_code=replaces["receipt_code"] if replaces else None,
+        replacement_receipt_id=replacement["id"] if replacement else None,
+        replacement_receipt_code=replacement["receipt_code"] if replacement else None,
+        is_void=bool(row["is_void"]),
+        voided_at=row["voided_at"],
         created_at=row["created_at"],
+        updated_at=row["updated_at"],
         items=items,
     )
+
+
+def validate_replacement(
+    connection: sqlite3.Connection,
+    replaces_receipt_id: int | None,
+) -> None:
+    if replaces_receipt_id is None:
+        return
+
+    old = select_receipt(connection, replaces_receipt_id)
+    if old is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy phiếu nhập cần thay thế.",
+        )
+    if not bool(old["is_void"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Chỉ được nhập lại từ phiếu đã hủy.",
+        )
+
+    replacement = select_active_replacement(connection, replaces_receipt_id)
+    if replacement is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Phiếu này đã được thay thế bởi {replacement['receipt_code']}.",
+        )
 
 
 @router.get("", response_model=list[PurchaseReceiptOutput])
@@ -422,7 +633,11 @@ def list_purchase_receipts(
                 r.total_amount,
                 r.payment_status,
                 r.payment_reference_code,
-                r.created_at
+                r.replaces_receipt_id,
+                r.is_void,
+                r.voided_at,
+                r.created_at,
+                r.updated_at
             FROM purchase_receipts AS r
             JOIN suppliers AS s ON s.id = r.supplier_id
             {where}
@@ -459,27 +674,19 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Phiếu đã thanh toán cần chọn loại tiền và quỹ/tài khoản.",
         )
+    if payment_status == "DEBT" and payload.payment is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
+        )
 
     with connect() as connection:
+        validate_replacement(connection, payload.replaces_receipt_id)
         supplier = ensure_supplier(connection, payload.supplier_id)
-        prepared_items: list[tuple[PurchaseReceiptItemInput, sqlite3.Row, int, float]] = []
-        goods_total = 0
-
-        for line in payload.items:
-            item = get_item_and_conversion(
-                connection,
-                line.item_id,
-                line.unit_id,
-            )
-            line_total = int(round(line.quantity * line.unit_price))
-            quantity_in_smallest = (
-                line.quantity * float(item["quantity_in_smallest_unit"])
-            )
-            goods_total += line_total
-            prepared_items.append((line, item, line_total, quantity_in_smallest))
-
+        prepared_items, goods_total = prepare_items(connection, payload.items)
         total_amount = goods_total + payload.shipping_fee
         receipt_code = next_receipt_code(connection)
+
         cursor = connection.execute(
             """
             INSERT INTO purchase_receipts (
@@ -491,9 +698,11 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 shipping_fee,
                 total_amount,
                 payment_status,
-                created_at
+                replaces_receipt_id,
+                created_at,
+                updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 receipt_code,
@@ -504,61 +713,18 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 payload.shipping_fee,
                 total_amount,
                 payment_status,
+                payload.replaces_receipt_id,
             ),
         )
         receipt_id = int(cursor.lastrowid)
 
-        for line, item, line_total, quantity_in_smallest in prepared_items:
-            item_cursor = connection.execute(
-                """
-                INSERT INTO purchase_receipt_items (
-                    purchase_receipt_id,
-                    item_id,
-                    unit_id,
-                    quantity,
-                    conversion_factor,
-                    quantity_in_smallest_unit,
-                    unit_price,
-                    line_total,
-                    note
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    receipt_id,
-                    line.item_id,
-                    line.unit_id,
-                    line.quantity,
-                    float(item["quantity_in_smallest_unit"]),
-                    quantity_in_smallest,
-                    line.unit_price,
-                    line_total,
-                    clean_text(line.note),
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO inventory_movements (
-                    item_id,
-                    movement_time,
-                    quantity_delta,
-                    source_type,
-                    source_id,
-                    source_line_id,
-                    note,
-                    created_at
-                )
-                VALUES (?, ?, ?, 'PURCHASE_RECEIPT', ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (
-                    line.item_id,
-                    payload.receipt_time,
-                    quantity_in_smallest,
-                    str(receipt_id),
-                    str(int(item_cursor.lastrowid)),
-                    f"Nhập hàng {receipt_code}",
-                ),
-            )
+        insert_receipt_lines(
+            connection,
+            receipt_id=receipt_id,
+            receipt_code=receipt_code,
+            receipt_time=payload.receipt_time,
+            prepared_items=prepared_items,
+        )
 
         if payment_status == "PAID" and payload.payment is not None:
             payment_reference = create_payment_transaction(
@@ -574,17 +740,228 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
             connection.execute(
                 """
                 UPDATE purchase_receipts
-                SET payment_reference_code = ?
+                SET payment_reference_code = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (payment_reference, receipt_id),
             )
 
         connection.commit()
-
         row = select_receipt(connection, receipt_id)
         assert row is not None
         output = row_to_output(connection, row)
 
     backup_database(reason="purchase-receipt-created")
+    return output
+
+
+@router.put("/{receipt_id}", response_model=PurchaseReceiptOutput)
+def update_purchase_receipt(
+    receipt_id: int,
+    payload: PurchaseReceiptInput,
+) -> PurchaseReceiptOutput:
+    payment_status = normalize_payment_status(payload.payment_status)
+    parse_datetime(payload.receipt_time)
+
+    if payment_status != "DEBT":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phiếu trả nợ chỉ được sửa khi vẫn ở trạng thái Trả nợ. Dùng chức năng Trả nợ để thanh toán.",
+        )
+    if payload.payment is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
+        )
+
+    with connect() as connection:
+        existing = select_receipt(connection, receipt_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy phiếu nhập.",
+            )
+        if bool(existing["is_void"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Phiếu đã hủy không thể sửa.",
+            )
+        if existing["payment_status"] != "DEBT":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Phiếu đã thanh toán không được sửa. Hãy dùng Hủy để nhập lại.",
+            )
+
+        ensure_supplier(connection, payload.supplier_id)
+        prepared_items, goods_total = prepare_items(connection, payload.items)
+        total_amount = goods_total + payload.shipping_fee
+
+        connection.execute(
+            """
+            DELETE FROM inventory_movements
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+            """,
+            (str(receipt_id),),
+        )
+        connection.execute(
+            "DELETE FROM purchase_receipt_items WHERE purchase_receipt_id = ?",
+            (receipt_id,),
+        )
+        connection.execute(
+            """
+            UPDATE purchase_receipts
+            SET supplier_id = ?,
+                receipt_time = ?,
+                description = ?,
+                goods_total = ?,
+                shipping_fee = ?,
+                total_amount = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                payload.supplier_id,
+                payload.receipt_time,
+                clean_text(payload.description),
+                goods_total,
+                payload.shipping_fee,
+                total_amount,
+                receipt_id,
+            ),
+        )
+        insert_receipt_lines(
+            connection,
+            receipt_id=receipt_id,
+            receipt_code=existing["receipt_code"],
+            receipt_time=payload.receipt_time,
+            prepared_items=prepared_items,
+        )
+        connection.commit()
+
+        row = select_receipt(connection, receipt_id)
+        assert row is not None
+        output = row_to_output(connection, row)
+
+    backup_database(reason="purchase-receipt-updated")
+    return output
+
+
+@router.post(
+    "/{receipt_id}/void-for-reentry",
+    response_model=PurchaseReceiptOutput,
+)
+def void_purchase_receipt_for_reentry(
+    receipt_id: int,
+) -> PurchaseReceiptOutput:
+    with connect() as connection:
+        receipt = select_receipt(connection, receipt_id)
+        if receipt is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy phiếu nhập.",
+            )
+        if bool(receipt["is_void"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Phiếu nhập đã được hủy trước đó.",
+            )
+        if receipt["payment_status"] != "PAID":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chỉ phiếu đã thanh toán mới dùng Hủy để nhập lại.",
+            )
+
+        payment = connection.execute(
+            """
+            SELECT
+                ft.id,
+                ft.fund_account_id,
+                ft.amount,
+                ft.reference_code
+            FROM fund_transactions AS ft
+            WHERE ft.direction = 'OUT'
+              AND ft.is_void = 0
+              AND (
+                    (ft.source_type = 'PURCHASE_RECEIPT' AND ft.source_id = ?)
+                    OR (? IS NOT NULL AND ft.reference_code = ?)
+                  )
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (
+                str(receipt_id),
+                receipt["payment_reference_code"],
+                receipt["payment_reference_code"],
+            ),
+        ).fetchone()
+
+        if payment is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Không tìm thấy phiếu chi liên quan nên chưa thể hủy phiếu nhập an toàn.",
+            )
+        if int(payment["amount"]) != int(receipt["total_amount"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Số tiền phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi hủy.",
+            )
+
+        connection.execute(
+            """
+            UPDATE fund_accounts
+            SET current_balance = current_balance + ?
+            WHERE id = ?
+            """,
+            (payment["amount"], payment["fund_account_id"]),
+        )
+        connection.execute(
+            "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+            (payment["id"],),
+        )
+
+        receipt_items = select_receipt_items(connection, receipt_id)
+        for item in receipt_items:
+            connection.execute(
+                """
+                INSERT INTO inventory_movements (
+                    item_id,
+                    movement_time,
+                    quantity_delta,
+                    source_type,
+                    source_id,
+                    source_line_id,
+                    note,
+                    created_at
+                )
+                VALUES (?, ?, ?, 'PURCHASE_RECEIPT_VOID', ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    item["item_id"],
+                    receipt["receipt_time"],
+                    -float(item["quantity_in_smallest_unit"]),
+                    str(receipt_id),
+                    str(item["id"]),
+                    f"Hủy để nhập lại {receipt['receipt_code']}",
+                ),
+            )
+
+        connection.execute(
+            """
+            UPDATE purchase_receipts
+            SET is_void = 1,
+                voided_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (receipt_id,),
+        )
+        connection.commit()
+
+        row = select_receipt(connection, receipt_id)
+        assert row is not None
+        output = row_to_output(connection, row)
+
+    backup_database(reason="purchase-receipt-voided")
     return output
