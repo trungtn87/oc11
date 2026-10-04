@@ -56,6 +56,8 @@ class FundTransactionCreateInput(BaseModel):
     related_fund_account_id: int | None = None
     description: str | None = Field(default=None, max_length=500)
     note: str | None = Field(default=None, max_length=1000)
+    source_type: str | None = Field(default=None, max_length=60)
+    source_id: str | None = Field(default=None, max_length=80)
 
 
 class FundTransactionCreateOutput(BaseModel):
@@ -190,6 +192,8 @@ def insert_transaction(
     group_id: str | None,
     description: str | None,
     note: str | None,
+    source_type: str | None = None,
+    source_id: str | None = None,
 ) -> int:
     cursor = connection.execute(
         """
@@ -202,12 +206,14 @@ def insert_transaction(
             amount,
             reference_code,
             group_id,
+            source_type,
+            source_id,
             description,
             note,
             created_at,
             is_void
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
         """,
         (
             fund_account_id,
@@ -218,10 +224,28 @@ def insert_transaction(
             amount,
             reference_code,
             group_id,
+            source_type,
+            source_id,
             description,
             note,
         ),
     )
+
+    if (
+        direction == "OUT"
+        and source_type == "PURCHASE_RECEIPT"
+        and source_id is not None
+    ):
+        connection.execute(
+            """
+            UPDATE purchase_receipts
+            SET payment_status = 'PAID',
+                payment_reference_code = ?
+            WHERE id = ?
+              AND payment_status = 'DEBT'
+            """,
+            (reference_code, source_id),
+        )
 
     delta = amount if direction == "IN" else -amount
     connection.execute(
@@ -488,6 +512,8 @@ def create_fund_transaction(
                     group_id=None,
                     description=description,
                     note=note,
+                    source_type=clean_text(payload.source_type),
+                    source_id=clean_text(payload.source_id),
                 )
             )
             reference_codes.append(reference)
