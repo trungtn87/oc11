@@ -154,6 +154,15 @@ def init_db() -> None:
         )
         connection.execute(
             """
+            INSERT OR IGNORE INTO fund_transaction_categories (
+                name, direction, is_active, sort_order
+            )
+            VALUES ('Thanh toán nhà cung cấp', 'OUT', 1, 0)
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS fund_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 fund_account_id INTEGER NOT NULL,
@@ -266,6 +275,69 @@ def init_db() -> None:
                 FOREIGN KEY (unit_id) REFERENCES units(id),
                 UNIQUE (item_id, unit_id)
             )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS purchase_receipts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_code TEXT NOT NULL UNIQUE,
+                supplier_id INTEGER NOT NULL,
+                receipt_time TEXT NOT NULL,
+                description TEXT,
+                goods_total INTEGER NOT NULL DEFAULT 0 CHECK (goods_total >= 0),
+                shipping_fee INTEGER NOT NULL DEFAULT 0 CHECK (shipping_fee >= 0),
+                total_amount INTEGER NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+                payment_status TEXT NOT NULL
+                    CHECK (payment_status IN ('PAID', 'DEBT')),
+                payment_reference_code TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS purchase_receipt_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                purchase_receipt_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                quantity REAL NOT NULL CHECK (quantity > 0),
+                conversion_factor REAL NOT NULL CHECK (conversion_factor > 0),
+                quantity_in_smallest_unit REAL NOT NULL
+                    CHECK (quantity_in_smallest_unit > 0),
+                unit_price INTEGER NOT NULL DEFAULT 0 CHECK (unit_price >= 0),
+                line_total INTEGER NOT NULL DEFAULT 0 CHECK (line_total >= 0),
+                note TEXT,
+                FOREIGN KEY (purchase_receipt_id)
+                    REFERENCES purchase_receipts(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES items(id),
+                FOREIGN KEY (unit_id) REFERENCES units(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inventory_movements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_id INTEGER NOT NULL,
+                movement_time TEXT NOT NULL,
+                quantity_delta REAL NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT,
+                source_line_id TEXT,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (item_id) REFERENCES items(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_item_time
+            ON inventory_movements (item_id, movement_time)
             """
         )
 
