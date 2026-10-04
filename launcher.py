@@ -5,6 +5,15 @@ import webbrowser
 from pathlib import Path
 
 
+# PyInstaller --windowed sets stdout/stderr to None on Windows.
+# Uvicorn and some dependencies expect file-like streams during startup,
+# so point them at os.devnull while keeping the app completely hidden.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
