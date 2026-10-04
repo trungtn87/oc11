@@ -389,7 +389,7 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
 
     with connect() as connection:
         existing = connection.execute(
-            "SELECT id FROM items WHERE id = ?",
+            "SELECT id, smallest_unit_id FROM items WHERE id = ?",
             (item_id,),
         ).fetchone()
 
@@ -405,6 +405,25 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
             item_group_id=payload.item_group_id,
             unit_ids=unit_ids,
         )
+
+        if payload.smallest_unit_id != existing["smallest_unit_id"]:
+            has_inventory_history = connection.execute(
+                """
+                SELECT 1
+                FROM inventory_movements
+                WHERE item_id = ?
+                LIMIT 1
+                """,
+                (item_id,),
+            ).fetchone()
+            if has_inventory_history is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Không thể đổi đơn vị nhỏ nhất vì hàng hóa đã có "
+                        "phát sinh tồn kho."
+                    ),
+                )
 
         connection.execute(
             """
