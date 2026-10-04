@@ -26,7 +26,8 @@ import type {
   FundTransaction,
   FundTransactionCategory,
   FundTransactionCreateInput,
-  FundTransactionType
+  FundTransactionType,
+  VoucherPrefill
 } from "./types";
 
 const { Title, Text } = Typography;
@@ -117,11 +118,15 @@ function transactionToRow(item: FundTransaction): LedgerRow {
 function MoneyLedgerPage({
   accountType,
   title,
-  accountLabel
+  accountLabel,
+  initialVoucher,
+  onInitialVoucherConsumed
 }: {
   accountType: FundAccountType;
   title: string;
   accountLabel: string;
+  initialVoucher?: VoucherPrefill | null;
+  onInitialVoucherConsumed?: () => void;
 }) {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
@@ -140,6 +145,10 @@ function MoneyLedgerPage({
   const [voucherSaving, setVoucherSaving] = useState(false);
   const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
   const [quickCategorySaving, setQuickCategorySaving] = useState(false);
+  const [voucherSource, setVoucherSource] = useState<{
+    source_type?: string | null;
+    source_id?: string | null;
+  } | null>(null);
   const [form] = Form.useForm<VoucherForm>();
   const [quickCategoryForm] = Form.useForm<QuickCategoryForm>();
   const transactionType = Form.useWatch("transaction_type", form);
@@ -221,6 +230,42 @@ function MoneyLedgerPage({
     void loadLedger();
   }, [accountType]);
 
+  useEffect(() => {
+    if (!initialVoucher || allAccounts.length === 0 || categories.length === 0) {
+      return;
+    }
+
+    const firstAccount = allAccounts.find(
+      (account) => account.is_active && account.type === accountType
+    );
+    const category = categories.find(
+      (item) =>
+        item.is_active &&
+        item.direction === initialVoucher.direction &&
+        item.name.toLocaleLowerCase("vi") ===
+          (initialVoucher.category_name ?? "").toLocaleLowerCase("vi")
+    );
+
+    setVoucherDirection(initialVoucher.direction);
+    setVoucherSource({
+      source_type: initialVoucher.source_type ?? null,
+      source_id: initialVoucher.source_id ?? null
+    });
+    form.resetFields();
+    form.setFieldsValue({
+      account_type: accountType,
+      fund_account_id: firstAccount?.id,
+      transaction_type: "NORMAL",
+      transaction_time: toLocalDateTimeInput(new Date()),
+      category_id: category?.id,
+      amount: initialVoucher.amount,
+      description: initialVoucher.description,
+      note: initialVoucher.note ?? undefined
+    });
+    setVoucherOpen(true);
+    onInitialVoucherConsumed?.();
+  }, [initialVoucher, allAccounts, categories, accountType]);
+
   const voucherAccounts = allAccounts.filter(
     (account) => account.is_active && account.type === voucherAccountType
   );
@@ -250,6 +295,7 @@ function MoneyLedgerPage({
           );
 
     setVoucherDirection(direction);
+    setVoucherSource(null);
     form.resetFields();
     form.setFieldsValue({
       account_type: accountType,
@@ -262,6 +308,7 @@ function MoneyLedgerPage({
 
   const closeVoucher = () => {
     setVoucherOpen(false);
+    setVoucherSource(null);
     form.resetFields();
   };
 
@@ -304,7 +351,9 @@ function MoneyLedgerPage({
             ? values.related_fund_account_id
             : undefined,
         description: values.description?.trim() || null,
-        note: values.note?.trim() || null
+        note: values.note?.trim() || null,
+        source_type: voucherSource?.source_type ?? null,
+        source_id: voucherSource?.source_id ?? null
       };
 
       const saved = await createFundTransaction(payload);
@@ -777,22 +826,38 @@ function MoneyLedgerPage({
   );
 }
 
-export function CashLedgerPage() {
+export function CashLedgerPage({
+  initialVoucher,
+  onInitialVoucherConsumed
+}: {
+  initialVoucher?: VoucherPrefill | null;
+  onInitialVoucherConsumed?: () => void;
+}) {
   return (
     <MoneyLedgerPage
       accountType="CASH"
       title="Sổ tiền mặt"
       accountLabel="Quỹ tiền mặt"
+      initialVoucher={initialVoucher}
+      onInitialVoucherConsumed={onInitialVoucherConsumed}
     />
   );
 }
 
-export function BankLedgerPage() {
+export function BankLedgerPage({
+  initialVoucher,
+  onInitialVoucherConsumed
+}: {
+  initialVoucher?: VoucherPrefill | null;
+  onInitialVoucherConsumed?: () => void;
+}) {
   return (
     <MoneyLedgerPage
       accountType="BANK"
       title="Sổ tiền gửi"
       accountLabel="Tài khoản ngân hàng"
+      initialVoucher={initialVoucher}
+      onInitialVoucherConsumed={onInitialVoucherConsumed}
     />
   );
 }
