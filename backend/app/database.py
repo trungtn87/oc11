@@ -203,6 +203,55 @@ def init_db() -> None:
             """
         )
 
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cashflow_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                direction TEXT NOT NULL CHECK (direction IN ('IN', 'OUT')),
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                UNIQUE (name, direction)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cashflow_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                direction TEXT NOT NULL CHECK (direction IN ('IN', 'OUT')),
+                category_id INTEGER NOT NULL,
+                fund_account_id INTEGER NOT NULL,
+                transaction_time TEXT NOT NULL,
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                supplier_id INTEGER,
+                description TEXT NOT NULL,
+                note TEXT,
+                fund_transaction_id INTEGER NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES cashflow_categories(id),
+                FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id),
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (fund_transaction_id) REFERENCES fund_transactions(id)
+            )
+            """
+        )
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO cashflow_categories (name, direction, is_active)
+            VALUES (?, ?, 1)
+            """,
+            [
+                ("Bán hàng / doanh thu khác", "IN"),
+                ("Thu hồi công nợ", "IN"),
+                ("Thu khác", "IN"),
+                ("Điện nước", "OUT"),
+                ("Mua vật tư", "OUT"),
+                ("Chi phí vận hành", "OUT"),
+                ("Sửa chữa - bảo trì", "OUT"),
+                ("Chi khác", "OUT"),
+            ],
+        )
+
         migrate_legacy_items(connection)
 
         connection.execute(
