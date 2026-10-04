@@ -292,11 +292,59 @@ def init_db() -> None:
                 payment_status TEXT NOT NULL
                     CHECK (payment_status IN ('PAID', 'DEBT')),
                 payment_reference_code TEXT,
+                replaces_receipt_id INTEGER,
+                is_void INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_void IN (0, 1)),
+                voided_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+                updated_at TEXT,
+                FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+                FOREIGN KEY (replaces_receipt_id) REFERENCES purchase_receipts(id)
             )
             """
         )
+
+        purchase_receipt_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(purchase_receipts)"
+            ).fetchall()
+        }
+        if "replaces_receipt_id" not in purchase_receipt_columns:
+            connection.execute(
+                "ALTER TABLE purchase_receipts ADD COLUMN replaces_receipt_id INTEGER"
+            )
+        if "is_void" not in purchase_receipt_columns:
+            connection.execute(
+                """
+                ALTER TABLE purchase_receipts
+                ADD COLUMN is_void INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_void IN (0, 1))
+                """
+            )
+        if "voided_at" not in purchase_receipt_columns:
+            connection.execute(
+                "ALTER TABLE purchase_receipts ADD COLUMN voided_at TEXT"
+            )
+        if "updated_at" not in purchase_receipt_columns:
+            connection.execute(
+                "ALTER TABLE purchase_receipts ADD COLUMN updated_at TEXT"
+            )
+            connection.execute(
+                """
+                UPDATE purchase_receipts
+                SET updated_at = created_at
+                WHERE updated_at IS NULL
+                """
+            )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_purchase_receipts_replaces
+            ON purchase_receipts (replaces_receipt_id)
+            """
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS purchase_receipt_items (
