@@ -139,6 +139,21 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS fund_transaction_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                direction TEXT NOT NULL
+                    CHECK (direction IN ('IN', 'OUT')),
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (name, direction)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS fund_transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 fund_account_id INTEGER NOT NULL,
@@ -164,6 +179,21 @@ def init_db() -> None:
             )
             """
         )
+
+        fund_transaction_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(fund_transactions)"
+            ).fetchall()
+        }
+        if "category_id" not in fund_transaction_columns:
+            connection.execute(
+                """
+                ALTER TABLE fund_transactions
+                ADD COLUMN category_id INTEGER
+                REFERENCES fund_transaction_categories(id)
+                """
+            )
 
 
         connection.execute(
