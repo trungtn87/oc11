@@ -350,3 +350,145 @@ def test_legacy_item_schema_is_migrated(tmp_path, monkeypatch):
         assert body["default_unit_name"] == "kg"
         assert body["smallest_unit_name"] == "kg"
         assert body["conversions"][0]["quantity_in_smallest_unit"] == 1
+
+
+
+def test_smallest_unit_is_locked_after_inventory_movement(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        group = create_group(client, "Đồ uống")
+        thung = create_unit(client, "thùng")
+        lon = create_unit(client, "lon")
+
+        created = client.post(
+            "/api/items",
+            json=item_payload(
+                group["id"],
+                thung["id"],
+                lon["id"],
+                name="Bia Hà Nội",
+                conversions=[
+                    {
+                        "unit_id": thung["id"],
+                        "quantity_in_smallest_unit": 24,
+                        "is_active": True,
+                    }
+                ],
+            ),
+        ).json()
+
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO inventory_movements (
+                    item_id,
+                    movement_time,
+                    quantity_delta,
+                    source_type,
+                    source_id,
+                    source_line_id,
+                    note
+                )
+                VALUES (?, '2026-10-05T08:00', 24, 'PURCHASE_RECEIPT', '1', '1', 'test')
+                """,
+                (created["id"],),
+            )
+            connection.commit()
+
+        response = client.put(
+            f"/api/items/{created['id']}",
+            json=item_payload(
+                group["id"],
+                thung["id"],
+                thung["id"],
+                name="Bia Hà Nội",
+                conversions=[],
+            ),
+        )
+
+        assert response.status_code == 409
+        assert "đơn vị nhỏ nhất" in response.json()["detail"].lower()
+
+
+def test_sale_inventory_source_line_is_unique(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        group = create_group(client, "Đồ uống")
+        lon = create_unit(client, "lon")
+        created = client.post(
+            "/api/items",
+            json=item_payload(
+                group["id"],
+                lon["id"],
+                lon["id"],
+                name="Nước ngọt",
+            ),
+        ).json()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO inventory_movements (
+                item_id,
+                movement_time,
+                quantity_delta,
+                source_type,
+                source_id,
+                source_line_id,
+                note
+            )
+            VALUES (?, '2026-10-05T20:00', -1, 'SALE', 'HD000001', 'LINE-1', 'Bán hàng')
+            """,
+            (created["id"],),
+        )
+        connection.commit()
+
+        try:
+            connection.execute(
+                """
+                INSERT INTO inventory_movements (
+                    item_id,
+                    movement_time,
+                    quantity_delta,
+                    source_type,
+                    source_id,
+                    source_line_id,
+                    note
+                )
+                VALUES (?, '2026-10-05T20:01', -1, 'SALE', 'HD000001', 'LINE-1', 'Bán hàng')
+                """,
+                (created["id"],),
+            )
+            connection.commit()
+            duplicated = True
+        except sqlite3.IntegrityError:
+            duplicated = False
+
+    assert duplicated is False
+
+
+def test_stock_adjustment_tables_are_initialized(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app):
+        pass
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                """
+            ).fetchall()
+        }
+
+    assert "stock_adjustments" in tables
+    assert "stock_adjustment_items" in tables
