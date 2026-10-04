@@ -69,6 +69,7 @@ import {
 import { BankAccountsPage, CashFundsPage } from "./FundAccountsPage";
 import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
+import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import type {
   BackupStatus,
   InventoryItem,
@@ -78,7 +79,8 @@ import type {
   Supplier,
   SupplierInput,
   Unit,
-  UnitInput
+  UnitInput,
+  VoucherPrefill
 } from "./types";
 
 const { Header, Content, Sider } = Layout;
@@ -269,7 +271,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
 
   const quickActions = [
     { label: "Bán hàng (POS)", target: "sales-pos", disabled: true },
-    { label: "Nhập hàng", target: "purchase-orders", disabled: true },
+    { label: "Nhập hàng", target: "purchase-orders", disabled: false },
     { label: "Thu chi", target: "cash-transactions", disabled: true },
     { label: "Thêm hàng hóa", target: "item-list", disabled: false },
     { label: "Nhóm hàng hóa", target: "item-groups", disabled: false }
@@ -2250,6 +2252,7 @@ const pageTitles: Record<string, string> = {
 function App() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
+  const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
   const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
   const renderPage = () => {
@@ -2273,6 +2276,17 @@ function App() {
       return <SuppliersPage />;
     }
 
+    if (page === "purchase-orders") {
+      return (
+        <PurchaseOrdersPage
+          onPayDebt={(prefill) => {
+            setVoucherPrefill(prefill);
+            setPage("cash-ledger");
+          }}
+        />
+      );
+    }
+
     if (page === "cash-funds") {
       return <CashFundsPage />;
     }
@@ -2282,11 +2296,21 @@ function App() {
     }
 
     if (page === "cash-ledger") {
-      return <CashLedgerPage />;
+      return (
+        <CashLedgerPage
+          initialVoucher={voucherPrefill}
+          onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+        />
+      );
     }
 
     if (page === "bank-ledger") {
-      return <BankLedgerPage />;
+      return (
+        <BankLedgerPage
+          initialVoucher={voucherPrefill}
+          onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+        />
+      );
     }
 
     if (page === "cash-categories") {
