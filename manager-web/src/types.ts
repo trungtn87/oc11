@@ -145,6 +145,8 @@ export type FundTransactionCreateInput = {
   related_fund_account_id?: number;
   description?: string | null;
   note?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
 };
 
 export type FundTransactionCreateOutput = {
@@ -167,4 +169,67 @@ export type FundTransactionCategoryInput = {
   direction: "IN" | "OUT";
   is_active: boolean;
   sort_order: number;
+};
+
+
+export type PurchasePaymentStatus = "PAID" | "DEBT";
+
+export type PurchaseReceiptItem = {
+  id: number;
+  item_id: number;
+  item_name: string;
+  unit_id: number;
+  unit_name: string;
+  quantity: number;
+  conversion_factor: number;
+  quantity_in_smallest_unit: number;
+  smallest_unit_name: string;
+  unit_price: number;
+  line_total: number;
+  note: string | null;
+};
+
+export type PurchaseReceipt = {
+  id: number;
+  receipt_code: string;
+  supplier_id: number;
+  supplier_name: string;
+  receipt_time: string;
+  description: string | null;
+  goods_total: number;
+  shipping_fee: number;
+  total_amount: number;
+  payment_status: PurchasePaymentStatus;
+  payment_reference_code: string | null;
+  created_at: string;
+  items: PurchaseReceiptItem[];
+};
+
+export type PurchaseReceiptInput = {
+  supplier_id: number;
+  receipt_time: string;
+  description?: string | null;
+  shipping_fee: number;
+  payment_status: PurchasePaymentStatus;
+  payment?: {
+    account_type: FundAccountType;
+    fund_account_id: number;
+  } | null;
+  items: Array<{
+    item_id: number;
+    unit_id: number;
+    quantity: number;
+    unit_price: number;
+    note?: string | null;
+  }>;
+};
+
+export type VoucherPrefill = {
+  direction: "OUT";
+  amount: number;
+  description: string;
+  note?: string | null;
+  category_name?: string;
+  source_type?: string;
+  source_id?: string;
 };
