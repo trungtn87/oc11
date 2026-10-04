@@ -434,6 +434,12 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_stock_adjustment_items_item
+            ON stock_adjustment_items (item_id, stock_adjustment_id)
+            """
+        )
 
         legacy_items_without_conversions = connection.execute(
             """
