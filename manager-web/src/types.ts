@@ -460,9 +460,6 @@ export type MenuItemInput = {
   menu_group_id: number;
   sale_unit_id: number;
   base_price: number;
-  alert_threshold_percent: number;
-  reference_cost: number | null;
-  has_open_alert: boolean;
   display_order: number;
   is_active: boolean;
   note: string | null;
@@ -524,6 +521,9 @@ export type MenuItem = {
   sale_unit_id: number;
   sale_unit_name: string;
   base_price: number;
+  alert_threshold_percent: number;
+  reference_cost: number | null;
+  has_open_alert: boolean;
   display_order: number;
   is_active: boolean;
   note: string | null;
