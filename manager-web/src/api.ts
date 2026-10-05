@@ -25,7 +25,6 @@ import type {
   MenuGroupInput,
   MenuItem,
   MenuItemInput,
-  MenuItemOption,
   CostAlert,
   CostIngredientPrice,
   CostRecipe,
