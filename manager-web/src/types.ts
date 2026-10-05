@@ -441,6 +441,12 @@ export type MenuComponentInput = {
   quantity: number;
 };
 
+export type MenuIngredientInput = {
+  item_id: number;
+  unit_id: number;
+  quantity: number;
+};
+
 export type MenuItemOptionInput = {
   service_option_id: number;
   extra_price: number;
@@ -458,7 +464,20 @@ export type MenuItemInput = {
   display_order: number;
   is_active: boolean;
   note: string | null;
+  ingredients: MenuIngredientInput[];
   options: MenuItemOptionInput[];
+};
+
+export type MenuIngredient = {
+  id: number;
+  item_id: number;
+  item_name: string;
+  unit_id: number;
+  unit_name: string;
+  quantity: number;
+  unit_cost: number | null;
+  line_cost: number | null;
+  cost_complete: boolean;
 };
 
 export type MenuComponent = {
@@ -506,6 +525,7 @@ export type MenuItem = {
   display_order: number;
   is_active: boolean;
   note: string | null;
+  ingredients: MenuIngredient[];
   options: MenuItemOption[];
 };
 
