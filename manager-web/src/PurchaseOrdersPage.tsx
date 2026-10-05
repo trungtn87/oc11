@@ -226,9 +226,16 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
     setReplacingReceiptId(null);
     form.resetFields();
 
-    const firstCashAccount = accounts.find(
-      (account) => account.is_active && account.type === "CASH"
-    );
+    const firstCashAccount =
+      accounts.find(
+        (account) =>
+          account.is_active &&
+          account.type === "CASH" &&
+          account.is_default
+      ) ??
+      accounts.find(
+        (account) => account.is_active && account.type === "CASH"
+      );
 
     form.setFieldsValue({
       receipt_time: toLocalDateTimeInput(new Date()),
