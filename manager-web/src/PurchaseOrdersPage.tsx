@@ -17,10 +17,12 @@ import {
 import type { TableProps } from "antd";
 
 import {
+  createInventoryItem,
   createPurchaseReceipt,
   createSupplier,
   getFundAccounts,
   getInventoryItems,
+  getItemGroups,
   getPurchaseReceipt,
   getPurchaseReceipts,
   getSuppliers,
@@ -33,6 +35,7 @@ import type {
   FundAccount,
   FundAccountType,
   InventoryItem,
+  ItemGroup,
   PurchasePaymentStatus,
   PurchaseReceipt,
   PurchaseReceiptInput,
@@ -68,6 +71,12 @@ type ReceiptForm = {
 
 type QuickSupplierForm = {
   name: string;
+};
+
+type QuickItemForm = {
+  name: string;
+  item_group_id: number;
+  unit_id: number;
 };
 
 type QuickConversionForm = {
@@ -107,6 +116,7 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [itemGroups, setItemGroups] = useState<ItemGroup[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +129,8 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   const [replacingReceiptId, setReplacingReceiptId] = useState<number | null>(null);
   const [lines, setLines] = useState<ReceiptLineDraft[]>([newLine()]);
   const [quickSupplierOpen, setQuickSupplierOpen] = useState(false);
+  const [quickItemOpen, setQuickItemOpen] = useState(false);
+  const [quickItemLineKey, setQuickItemLineKey] = useState<string | null>(null);
   const [quickConversionOpen, setQuickConversionOpen] = useState(false);
   const [conversionLineKey, setConversionLineKey] = useState<string | null>(null);
   const [conversionItem, setConversionItem] = useState<InventoryItem | null>(null);
@@ -127,6 +139,7 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   const [viewLoading, setViewLoading] = useState(false);
   const [form] = Form.useForm<ReceiptForm>();
   const [quickSupplierForm] = Form.useForm<QuickSupplierForm>();
+  const [quickItemForm] = Form.useForm<QuickItemForm>();
   const [quickConversionForm] = Form.useForm<QuickConversionForm>();
   const paymentStatus = Form.useWatch("payment_status", form);
   const accountType = Form.useWatch("account_type", form);
@@ -140,14 +153,16 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
   );
 
   const loadMasterData = async () => {
-    const [nextSuppliers, nextItems, nextUnits, nextAccounts] = await Promise.all([
+    const [nextSuppliers, nextItems, nextGroups, nextUnits, nextAccounts] = await Promise.all([
       getSuppliers(),
       getInventoryItems(),
+      getItemGroups(),
       getUnits(),
       getFundAccounts()
     ]);
     setSuppliers(nextSuppliers);
     setItems(nextItems);
+    setItemGroups(nextGroups);
     setUnits(nextUnits);
     setAccounts(nextAccounts);
   };
@@ -210,10 +225,17 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
     setEditingReceipt(null);
     setReplacingReceiptId(null);
     form.resetFields();
+
+    const firstCashAccount = accounts.find(
+      (account) => account.is_active && account.type === "CASH"
+    );
+
     form.setFieldsValue({
       receipt_time: toLocalDateTimeInput(new Date()),
       shipping_fee: 0,
-      payment_status: "DEBT"
+      payment_status: "PAID",
+      account_type: "CASH",
+      fund_account_id: firstCashAccount?.id
     });
     setLines([newLine()]);
     setModalOpen(true);
@@ -387,6 +409,53 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
       if (error instanceof Error) messageApi.error(error.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openQuickItem = (lineKey: string) => {
+    const firstGroup = itemGroups.find((group) => group.is_active);
+    const firstUnit = units.find((unit) => unit.is_active);
+
+    setQuickItemLineKey(lineKey);
+    quickItemForm.resetFields();
+    quickItemForm.setFieldsValue({
+      item_group_id: firstGroup?.id,
+      unit_id: firstUnit?.id
+    });
+    setQuickItemOpen(true);
+  };
+
+  const saveQuickItem = async () => {
+    if (!quickItemLineKey) return;
+
+    try {
+      const values = await quickItemForm.validateFields();
+      setQuickSaving(true);
+
+      const created = await createInventoryItem({
+        name: values.name.trim(),
+        item_group_id: values.item_group_id,
+        default_unit_id: values.unit_id,
+        smallest_unit_id: values.unit_id,
+        note: null,
+        is_active: true,
+        conversions: []
+      });
+
+      const nextItems = await getInventoryItems();
+      setItems(nextItems);
+      updateLine(quickItemLineKey, {
+        item_id: created.id,
+        unit_id: created.default_unit_id
+      });
+      setQuickItemOpen(false);
+      setQuickItemLineKey(null);
+      quickItemForm.resetFields();
+      messageApi.success("Đã thêm hàng hóa và chọn vào phiếu nhập.");
+    } catch (error) {
+      if (error instanceof Error) messageApi.error(error.message);
+    } finally {
+      setQuickSaving(false);
     }
   };
 
@@ -783,17 +852,26 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
                 const conversions = item?.conversions.filter((row) => row.is_active) ?? [];
                 return (
                   <div className="purchase-line" key={line.key}>
-                    <Select
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="Chọn hàng hóa"
-                      value={line.item_id}
-                      onChange={(value) => chooseItem(line.key, value)}
-                      options={activeItems.map((candidate) => ({
-                        value: candidate.id,
-                        label: candidate.name
-                      }))}
-                    />
+                    <Space.Compact style={{ width: "100%" }}>
+                      <Select
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="Chọn hàng hóa"
+                        value={line.item_id}
+                        onChange={(value) => chooseItem(line.key, value)}
+                        options={activeItems.map((candidate) => ({
+                          value: candidate.id,
+                          label: candidate.name
+                        }))}
+                      />
+                      <Button
+                        className="quick-add-button"
+                        title="Thêm nhanh hàng hóa"
+                        onClick={() => openQuickItem(line.key)}
+                      >
+                        +
+                      </Button>
+                    </Space.Compact>
 
                     <Space.Compact style={{ width: "100%" }}>
                       <Select
@@ -886,6 +964,68 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
               </div>
             </div>
           </Card>
+        </Form>
+      </Modal>
+
+      <Modal
+        open={quickItemOpen}
+        title="Thêm nhanh hàng hóa"
+        width={500}
+        okText="Lưu và chọn"
+        cancelText="Hủy"
+        confirmLoading={quickSaving}
+        onCancel={() => {
+          setQuickItemOpen(false);
+          setQuickItemLineKey(null);
+        }}
+        onOk={() => void saveQuickItem()}
+      >
+        <Form<QuickItemForm> form={quickItemForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="Tên hàng hóa"
+            rules={[
+              { required: true, whitespace: true, message: "Nhập tên hàng hóa." },
+              { max: 150, message: "Tên hàng hóa tối đa 150 ký tự." }
+            ]}
+          >
+            <Input autoFocus placeholder="Ví dụ: Bia Hà Nội, Ốc hương..." />
+          </Form.Item>
+
+          <Form.Item
+            name="item_group_id"
+            label="Nhóm hàng hóa"
+            rules={[{ required: true, message: "Chọn nhóm hàng hóa." }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={itemGroups
+                .filter((group) => group.is_active)
+                .map((group) => ({ value: group.id, label: group.name }))}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="unit_id"
+            label="Đơn vị"
+            rules={[{ required: true, message: "Chọn đơn vị." }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={activeUnits.map((unit) => ({
+                value: unit.id,
+                label: unit.name
+              }))}
+            />
+          </Form.Item>
+
+          <Text type="secondary">
+            Thêm nhanh dùng cùng một đơn vị cho mặc định và tồn kho. Nếu hàng nhập theo
+            thùng/lốc nhưng tồn theo lon/chai, tạo hàng trước rồi bấm dấu + ở cột ĐVT để
+            thêm quy đổi ngay trên phiếu.
+          </Text>
         </Form>
       </Modal>
 
