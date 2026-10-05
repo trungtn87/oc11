@@ -283,6 +283,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS purchase_receipts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 receipt_code TEXT NOT NULL UNIQUE,
+                client_sync_id TEXT,
                 supplier_id INTEGER NOT NULL,
                 receipt_time TEXT NOT NULL,
                 description TEXT,
@@ -310,6 +311,10 @@ def init_db() -> None:
                 "PRAGMA table_info(purchase_receipts)"
             ).fetchall()
         }
+        if "client_sync_id" not in purchase_receipt_columns:
+            connection.execute(
+                "ALTER TABLE purchase_receipts ADD COLUMN client_sync_id TEXT"
+            )
         if "replaces_receipt_id" not in purchase_receipt_columns:
             connection.execute(
                 "ALTER TABLE purchase_receipts ADD COLUMN replaces_receipt_id INTEGER"
@@ -337,6 +342,14 @@ def init_db() -> None:
                 WHERE updated_at IS NULL
                 """
             )
+
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_receipts_client_sync_id
+            ON purchase_receipts (client_sync_id)
+            WHERE client_sync_id IS NOT NULL
+            """
+        )
 
         connection.execute(
             """
