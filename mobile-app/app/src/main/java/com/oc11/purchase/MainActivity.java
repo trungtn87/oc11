@@ -19,7 +19,6 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.annotation.Nullable;
 import android.app.Activity;
 
 import org.json.JSONArray;
@@ -99,7 +98,7 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onCreate(@Nullable Bundle savedInstanceState) {
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         store = new LocalStore(this);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -301,7 +300,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void showReceiptForm(@Nullable LocalStore.PendingReceipt editing) {
+    private void showReceiptForm(LocalStore.PendingReceipt editing) {
         JSONArray suppliers = LocalStore.asArray(store.getCache("suppliers"));
         JSONArray items = LocalStore.asArray(store.getCache("items"));
         JSONArray funds = LocalStore.asArray(store.getCache("fund_accounts"));
