@@ -91,6 +91,7 @@ export type FundAccount = {
   account_name: string | null;
   current_balance: number;
   is_active: boolean;
+  is_default: boolean;
   note: string | null;
   can_delete: boolean;
 };
