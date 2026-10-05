@@ -18,6 +18,7 @@ class FundAccountInput(BaseModel):
     account_name: str | None = Field(default=None, max_length=150)
     note: str | None = Field(default=None, max_length=500)
     is_active: bool = True
+    is_default: bool = False
 
 
 class FundAccountOutput(FundAccountInput):
@@ -95,6 +96,7 @@ def row_to_output(row: sqlite3.Row, *, can_delete: bool) -> FundAccountOutput:
         account_name=row["account_name"],
         note=row["note"],
         is_active=bool(row["is_active"]),
+        is_default=bool(row["is_default"]),
         current_balance=row["current_balance"],
         can_delete=can_delete,
     )
@@ -123,10 +125,11 @@ def list_fund_accounts(
                 account_name,
                 note,
                 is_active,
+                is_default,
                 current_balance
             FROM fund_accounts
             {where}
-            ORDER BY is_active DESC, name COLLATE NOCASE ASC, id ASC
+            ORDER BY is_default DESC, is_active DESC, name COLLATE NOCASE ASC, id ASC
             """,
             params,
         ).fetchall()
@@ -154,8 +157,33 @@ def create_fund_account(payload: FundAccountInput) -> FundAccountOutput:
             detail="Tên quỹ/tài khoản không được để trống.",
         )
 
+    if payload.is_default and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Quỹ/tài khoản mặc định phải ở trạng thái đang sử dụng.",
+        )
+
     with connect() as connection:
         ensure_name_unique(connection, name, account_type)
+
+        existing_default = connection.execute(
+            """
+            SELECT id
+            FROM fund_accounts
+            WHERE type = ? AND is_default = 1
+            LIMIT 1
+            """,
+            (account_type,),
+        ).fetchone()
+        make_default = bool(payload.is_default) or (
+            payload.is_active and existing_default is None
+        )
+
+        if make_default:
+            connection.execute(
+                "UPDATE fund_accounts SET is_default = 0 WHERE type = ?",
+                (account_type,),
+            )
 
         cursor = connection.execute(
             """
@@ -167,9 +195,10 @@ def create_fund_account(payload: FundAccountInput) -> FundAccountOutput:
                 account_name,
                 current_balance,
                 is_active,
+                is_default,
                 note
             )
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
             """,
             (
                 name,
@@ -178,6 +207,7 @@ def create_fund_account(payload: FundAccountInput) -> FundAccountOutput:
                 clean_text(payload.account_number),
                 clean_text(payload.account_name),
                 int(payload.is_active),
+                int(make_default),
                 clean_text(payload.note),
             ),
         )
@@ -218,9 +248,15 @@ def update_fund_account(
             detail="Tên quỹ/tài khoản không được để trống.",
         )
 
+    if payload.is_default and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Quỹ/tài khoản mặc định phải ở trạng thái đang sử dụng.",
+        )
+
     with connect() as connection:
         existing = connection.execute(
-            "SELECT id, type FROM fund_accounts WHERE id = ?",
+            "SELECT id, type, is_default FROM fund_accounts WHERE id = ?",
             (account_id,),
         ).fetchone()
         if existing is None:
@@ -242,6 +278,20 @@ def update_fund_account(
             exclude_id=account_id,
         )
 
+        if payload.is_default:
+            connection.execute(
+                """
+                UPDATE fund_accounts
+                SET is_default = 0
+                WHERE type = ? AND id <> ?
+                """,
+                (account_type, account_id),
+            )
+
+        next_default = int(payload.is_default)
+        if bool(existing["is_default"]) and payload.is_active and not payload.is_default:
+            next_default = 1
+
         connection.execute(
             """
             UPDATE fund_accounts
@@ -252,6 +302,7 @@ def update_fund_account(
                 account_number = ?,
                 account_name = ?,
                 is_active = ?,
+                is_default = ?,
                 note = ?
             WHERE id = ?
             """,
@@ -262,10 +313,29 @@ def update_fund_account(
                 clean_text(payload.account_number),
                 clean_text(payload.account_name),
                 int(payload.is_active),
+                next_default,
                 clean_text(payload.note),
                 account_id,
             ),
         )
+
+        if bool(existing["is_default"]) and not payload.is_active:
+            replacement = connection.execute(
+                """
+                SELECT id
+                FROM fund_accounts
+                WHERE type = ? AND is_active = 1 AND id <> ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (account_type, account_id),
+            ).fetchone()
+            if replacement is not None:
+                connection.execute(
+                    "UPDATE fund_accounts SET is_default = 1 WHERE id = ?",
+                    (replacement["id"],),
+                )
+
         connection.commit()
 
         row = connection.execute(
@@ -311,10 +381,33 @@ def delete_fund_account(account_id: int) -> dict[str, bool]:
                 detail="Quỹ/tài khoản đã có giao dịch nên không thể xóa.",
             )
 
+        deleted = connection.execute(
+            "SELECT type, is_default FROM fund_accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+
         connection.execute(
             "DELETE FROM fund_accounts WHERE id = ?",
             (account_id,),
         )
+
+        if deleted is not None and bool(deleted["is_default"]):
+            replacement = connection.execute(
+                """
+                SELECT id
+                FROM fund_accounts
+                WHERE type = ? AND is_active = 1
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (deleted["type"],),
+            ).fetchone()
+            if replacement is not None:
+                connection.execute(
+                    "UPDATE fund_accounts SET is_default = 1 WHERE id = ?",
+                    (replacement["id"],),
+                )
+
         connection.commit()
 
     backup_database(reason="fund-account-deleted")
