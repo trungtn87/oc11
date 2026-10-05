@@ -137,6 +137,54 @@ def init_db() -> None:
                     f"ALTER TABLE fund_accounts ADD COLUMN {column_name} TEXT"
                 )
 
+        fund_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(fund_accounts)").fetchall()
+        }
+        if "is_default" not in fund_columns:
+            connection.execute(
+                """
+                ALTER TABLE fund_accounts
+                ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0
+                    CHECK (is_default IN (0, 1))
+                """
+            )
+
+        for account_type in ("CASH", "BANK"):
+            has_default = connection.execute(
+                """
+                SELECT 1
+                FROM fund_accounts
+                WHERE type = ? AND is_default = 1
+                LIMIT 1
+                """,
+                (account_type,),
+            ).fetchone()
+            if has_default is None:
+                first_active = connection.execute(
+                    """
+                    SELECT id
+                    FROM fund_accounts
+                    WHERE type = ? AND is_active = 1
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (account_type,),
+                ).fetchone()
+                if first_active is not None:
+                    connection.execute(
+                        "UPDATE fund_accounts SET is_default = 1 WHERE id = ?",
+                        (first_active["id"],),
+                    )
+
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_accounts_default_type
+            ON fund_accounts (type)
+            WHERE is_default = 1
+            """
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS fund_transaction_categories (
