@@ -100,6 +100,23 @@ function currentMonthRange() {
   };
 }
 
+function preferredAccount(
+  accounts: FundAccount[],
+  accountType: FundAccountType
+) {
+  return (
+    accounts.find(
+      (account) =>
+        account.is_active &&
+        account.type === accountType &&
+        account.is_default
+    ) ??
+    accounts.find(
+      (account) => account.is_active && account.type === accountType
+    )
+  );
+}
+
 function transactionToRow(item: FundTransaction): LedgerRow {
   return {
     key: String(item.id),
@@ -235,9 +252,7 @@ function MoneyLedgerPage({
       return;
     }
 
-    const firstAccount = allAccounts.find(
-      (account) => account.is_active && account.type === accountType
-    );
+    const firstAccount = preferredAccount(allAccounts, accountType);
     const category = categories.find(
       (item) =>
         item.is_active &&
@@ -289,7 +304,7 @@ function MoneyLedgerPage({
   const openVoucher = (direction: VoucherDirection) => {
     const firstAccount =
       selectedAccountId === "all"
-        ? accounts.find((account) => account.is_active)
+        ? preferredAccount(accounts, accountType)
         : accounts.find(
             (account) => account.id === selectedAccountId && account.is_active
           );
@@ -313,9 +328,7 @@ function MoneyLedgerPage({
   };
 
   const changeAccountType = (nextType: FundAccountType) => {
-    const first = allAccounts.find(
-      (account) => account.is_active && account.type === nextType
-    );
+    const first = preferredAccount(allAccounts, nextType);
     form.setFieldsValue({
       account_type: nextType,
       fund_account_id: first?.id,
