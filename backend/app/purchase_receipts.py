@@ -24,6 +24,7 @@ class PurchasePaymentInput(BaseModel):
 
 
 class PurchaseReceiptInput(BaseModel):
+    client_sync_id: str | None = Field(default=None, max_length=80)
     supplier_id: int
     receipt_time: str
     description: str | None = Field(default=None, max_length=500)
@@ -681,6 +682,21 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         )
 
     with connect() as connection:
+        if payload.client_sync_id:
+            existing_sync = connection.execute(
+                """
+                SELECT id
+                FROM purchase_receipts
+                WHERE client_sync_id = ?
+                LIMIT 1
+                """,
+                (payload.client_sync_id.strip(),),
+            ).fetchone()
+            if existing_sync is not None:
+                existing_row = select_receipt(connection, int(existing_sync["id"]))
+                assert existing_row is not None
+                return row_to_output(connection, existing_row)
+
         validate_replacement(connection, payload.replaces_receipt_id)
         supplier = ensure_supplier(connection, payload.supplier_id)
         prepared_items, goods_total = prepare_items(connection, payload.items)
@@ -691,6 +707,7 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
             """
             INSERT INTO purchase_receipts (
                 receipt_code,
+                client_sync_id,
                 supplier_id,
                 receipt_time,
                 description,
@@ -702,10 +719,11 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 receipt_code,
+                payload.client_sync_id.strip() if payload.client_sync_id else None,
                 payload.supplier_id,
                 payload.receipt_time,
                 clean_text(payload.description),

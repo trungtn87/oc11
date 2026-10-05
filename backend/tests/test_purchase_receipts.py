@@ -290,3 +290,42 @@ def test_void_paid_receipt_reverses_money_and_stock_then_allows_reentry(
     assert active_payment_count == 0
     assert void_movement_time == voided_body["voided_at"]
     assert void_movement_time != receipt["receipt_time"]
+
+
+def test_mobile_client_sync_id_is_idempotent(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        supplier = create_supplier(client)
+        item, unit = create_item(client)
+
+        payload = receipt_payload(
+            supplier["id"],
+            item["id"],
+            unit["id"],
+            quantity=3,
+            unit_price=120_000,
+        )
+        payload["client_sync_id"] = "mobile-test-001"
+
+        first = client.post("/api/purchase-receipts", json=payload)
+        second = client.post("/api/purchase-receipts", json=payload)
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert second.json()["id"] == first.json()["id"]
+        assert second.json()["receipt_code"] == first.json()["receipt_code"]
+
+    with sqlite3.connect(db_path) as connection:
+        receipt_count = connection.execute(
+            "SELECT COUNT(*) FROM purchase_receipts WHERE client_sync_id = ?",
+            ("mobile-test-001",),
+        ).fetchone()[0]
+        stock = connection.execute(
+            "SELECT COALESCE(SUM(quantity_delta), 0) FROM inventory_movements WHERE item_id = ?",
+            (item["id"],),
+        ).fetchone()[0]
+
+    assert receipt_count == 1
+    assert stock == 3
