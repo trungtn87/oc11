@@ -71,7 +71,7 @@ import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
-import oc11HomeLogo from "./assets/oc11-home-logo.svg";
+import oc11HomeLogo from "./assets/oc11-logo.jpg";
 import type {
   BackupStatus,
   InventoryItem,
