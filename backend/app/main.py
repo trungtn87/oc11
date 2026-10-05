@@ -9,6 +9,7 @@ from .backup import backup_database
 from .backup_routes import router as backup_router
 from .database import init_db
 from .cost_recipes import router as cost_router
+from .consumption import router as consumption_router
 from .fund_accounts import router as fund_accounts_router
 from .fund_transaction_categories import router as fund_transaction_categories_router
 from .fund_transactions import router as fund_transactions_router
@@ -36,6 +37,7 @@ app = FastAPI(
 
 app.include_router(item_groups_router)
 app.include_router(cost_router)
+app.include_router(consumption_router)
 app.include_router(fund_accounts_router)
 app.include_router(fund_transaction_categories_router)
 app.include_router(fund_transactions_router)
