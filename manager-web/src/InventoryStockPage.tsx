@@ -256,12 +256,6 @@ export default function InventoryStockPage() {
       width: 150
     },
     {
-      title: "ĐVT",
-      dataIndex: "smallest_unit_name",
-      key: "smallest_unit_name",
-      width: 90
-    },
-    {
       title: "Tồn theo dữ liệu",
       dataIndex: "stock_quantity",
       key: "stock_quantity",
@@ -276,6 +270,12 @@ export default function InventoryStockPage() {
           {number(value)}
         </Text>
       )
+    },
+    {
+      title: "ĐVT",
+      dataIndex: "smallest_unit_name",
+      key: "smallest_unit_name",
+      width: 90
     },
     {
       title: "Giá nhập gần nhất",
