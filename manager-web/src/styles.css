@@ -805,13 +805,14 @@ body {
 
 .brand-home-logo {
   display: block;
-  width: min(100%, 205px);
-  height: auto;
+  width: 92px;
+  height: 92px;
   object-fit: contain;
 }
 
 .brand-collapsed .brand-home-logo {
-  width: 54px;
+  width: 48px;
+  height: 48px;
 }
 
 .brand-logo-mark {
