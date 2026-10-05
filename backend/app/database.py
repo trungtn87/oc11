@@ -635,9 +635,17 @@ def init_db() -> None:
             """
         )
         connection.execute(
+            "DROP INDEX IF EXISTS ux_inventory_sale_source_line"
+        )
+        connection.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_sale_source_line
-            ON inventory_movements (source_type, source_id, source_line_id)
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_sale_source_line_item
+            ON inventory_movements (
+                source_type,
+                source_id,
+                source_line_id,
+                item_id
+            )
             WHERE source_type = 'SALE'
               AND source_id IS NOT NULL
               AND source_line_id IS NOT NULL
