@@ -450,7 +450,6 @@ export type MenuIngredientInput = {
 export type MenuItemOptionInput = {
   service_option_id: number;
   extra_price: number;
-  alert_threshold_percent: number;
   display_order: number;
   is_active: boolean;
   components: MenuComponentInput[];
@@ -461,6 +460,9 @@ export type MenuItemInput = {
   menu_group_id: number;
   sale_unit_id: number;
   base_price: number;
+  alert_threshold_percent: number;
+  reference_cost: number | null;
+  has_open_alert: boolean;
   display_order: number;
   is_active: boolean;
   note: string | null;
@@ -531,11 +533,8 @@ export type MenuItem = {
 
 export type MenuCostAlert = {
   id: number;
-  menu_item_option_id: number;
   menu_item_id: number;
   menu_item_name: string;
-  service_option_id: number;
-  service_option_name: string;
   reference_cost: number;
   current_cost: number;
   change_percent: number;
