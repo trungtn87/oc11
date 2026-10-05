@@ -80,7 +80,7 @@ import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
-import oc11HomeLogo from "./assets/oc11-logo.png";
+import { oc11LogoDataUri } from "./oc11LogoData";
 import type {
   BackupStatus,
   FundAccount,
@@ -236,7 +236,7 @@ function BrandLogo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={`brand ${collapsed ? "brand-collapsed" : ""}`}>
       <img
-        src={oc11HomeLogo}
+        src={oc11LogoDataUri}
         alt="Ốc 11"
         className="brand-home-logo"
       />
@@ -2521,7 +2521,7 @@ const pageTitles: Record<string, string> = {
 
 function App() {
   const [page, setPage] = useState("dashboard");
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
   const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
@@ -2630,7 +2630,6 @@ function App() {
           theme="dark"
           mode="inline"
           selectedKeys={[page]}
-          defaultOpenKeys={["sales", "items", "menu", "purchases"]}
           items={menuItems}
           onClick={({ key }) => setPage(key)}
           className="main-menu"
