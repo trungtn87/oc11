@@ -420,3 +420,106 @@ export type CostIngredientPrice = {
   price_source_receipt_code: string | null;
   price_source_receipt_time: string | null;
 };
+
+
+export type MenuGroup = {
+  id: number;
+  name: string;
+  display_order: number;
+  is_active: boolean;
+  note: string | null;
+};
+
+export type MenuGroupInput = Omit<MenuGroup, "id">;
+
+export type MenuComponentInput = {
+  component_type: "ITEM" | "RECIPE";
+  item_id: number | null;
+  unit_id: number | null;
+  recipe_id: number | null;
+  quantity: number;
+};
+
+export type MenuItemOptionInput = {
+  service_option_id: number;
+  extra_price: number;
+  alert_threshold_percent: number;
+  display_order: number;
+  is_active: boolean;
+  components: MenuComponentInput[];
+};
+
+export type MenuItemInput = {
+  name: string;
+  menu_group_id: number;
+  sale_unit_id: number;
+  base_price: number;
+  display_order: number;
+  is_active: boolean;
+  note: string | null;
+  options: MenuItemOptionInput[];
+};
+
+export type MenuComponent = {
+  id: number;
+  component_type: "ITEM" | "RECIPE";
+  item_id: number | null;
+  item_name: string | null;
+  unit_id: number | null;
+  unit_name: string | null;
+  recipe_id: number | null;
+  recipe_name: string | null;
+  recipe_output_unit_name: string | null;
+  quantity: number;
+  unit_cost: number | null;
+  line_cost: number | null;
+  cost_complete: boolean;
+};
+
+export type MenuItemOption = {
+  id: number;
+  service_option_id: number;
+  service_option_name: string;
+  extra_price: number;
+  sale_price: number;
+  alert_threshold_percent: number;
+  display_order: number;
+  is_active: boolean;
+  reference_cost: number | null;
+  current_cost: number | null;
+  change_percent: number | null;
+  cost_percent: number | null;
+  cost_complete: boolean;
+  has_open_alert: boolean;
+  components: MenuComponent[];
+};
+
+export type MenuItem = {
+  id: number;
+  name: string;
+  menu_group_id: number;
+  menu_group_name: string;
+  sale_unit_id: number;
+  sale_unit_name: string;
+  base_price: number;
+  display_order: number;
+  is_active: boolean;
+  note: string | null;
+  options: MenuItemOption[];
+};
+
+export type MenuCostAlert = {
+  id: number;
+  menu_item_option_id: number;
+  menu_item_id: number;
+  menu_item_name: string;
+  service_option_id: number;
+  service_option_name: string;
+  reference_cost: number;
+  current_cost: number;
+  change_percent: number;
+  alert_threshold_percent: number;
+  status: "OPEN" | "RESOLVED";
+  detected_at: string;
+  resolved_at: string | null;
+};
