@@ -25,6 +25,7 @@ import {
   AppstoreOutlined,
   AuditOutlined,
   BarChartOutlined,
+  BookOutlined,
   BarsOutlined,
   CalendarOutlined,
   ContainerOutlined,
@@ -75,6 +76,7 @@ import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
+import CostRecipesPage from "./CostRecipesPage";
 import oc11HomeLogo from "./assets/oc11-logo.png";
 import type {
   BackupStatus,
@@ -158,6 +160,18 @@ const menuItems: MenuProps["items"] = [
       { key: "item-list", icon: <BarsOutlined />, label: "Danh sách hàng hóa" },
       { key: "item-groups", icon: <TagsOutlined />, label: "Nhóm hàng hóa" },
       { key: "units", icon: <ContainerOutlined />, label: "Đơn vị tính" }
+    ]
+  },
+  {
+    key: "menu",
+    icon: <BookOutlined />,
+    label: "Thực đơn",
+    children: [
+      {
+        key: "menu-cost",
+        icon: <AuditOutlined />,
+        label: "Kiểu chế biến & Cost"
+      }
     ]
   },
   {
@@ -2472,6 +2486,7 @@ const pageTitles: Record<string, string> = {
   "sales-returns": "Trả hàng",
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
+  "menu-cost": "Kiểu chế biến & Cost",
   "purchase-orders": "Phiếu nhập",
   "suppliers": "Nhà cung cấp",
   stock: "Tồn kho thực tế",
@@ -2514,6 +2529,10 @@ function App() {
 
     if (page === "suppliers") {
       return <SuppliersPage />;
+    }
+
+    if (page === "menu-cost") {
+      return <CostRecipesPage />;
     }
 
     if (page === "purchase-orders") {
@@ -2584,7 +2603,7 @@ function App() {
           theme="dark"
           mode="inline"
           selectedKeys={[page]}
-          defaultOpenKeys={["sales", "items", "purchases"]}
+          defaultOpenKeys={["sales", "items", "menu", "purchases"]}
           items={menuItems}
           onClick={({ key }) => setPage(key)}
           className="main-menu"
