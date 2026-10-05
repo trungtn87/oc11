@@ -7,13 +7,14 @@ from pydantic import BaseModel, Field
 from .cost_recipes import get_item_conversion, select_recipe, select_recipe_items
 from .database import connect
 from .inventory import current_quantity, last_reconciliation
-from .menu import select_components
+from .menu import select_components, select_menu_ingredients
 
 router = APIRouter(prefix="/api/inventory/consumption", tags=["inventory-consumption"])
 
 
 class ConsumptionPreviewInput(BaseModel):
-    menu_item_option_id: int
+    menu_item_id: int | None = None
+    menu_item_option_id: int | None = None
     quantity: float = Field(gt=0)
 
 
@@ -29,9 +30,9 @@ class ConsumptionBreakdownItem(BaseModel):
 class ConsumptionPreviewOutput(BaseModel):
     menu_item_id: int
     menu_item_name: str
-    menu_item_option_id: int
-    service_option_id: int
-    service_option_name: str
+    menu_item_option_id: int | None
+    service_option_id: int | None
+    service_option_name: str | None
     sale_unit_name: str
     sold_quantity: float
     items: list[ConsumptionBreakdownItem]
@@ -105,20 +106,115 @@ def option_identity(connection, menu_item_option_id: int):
     return row
 
 
+def menu_item_identity(connection, menu_item_id: int):
+    row = connection.execute(
+        """
+        SELECT
+            mi.id AS menu_item_id,
+            mi.name AS menu_item_name,
+            mi.sale_unit_id,
+            su.name AS sale_unit_name
+        FROM menu_items AS mi
+        JOIN units AS su ON su.id = mi.sale_unit_id
+        WHERE mi.id = ?
+        """,
+        (menu_item_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy món.",
+        )
+    return row
+
+
+def expand_menu_item_to_raw_items(
+    connection,
+    menu_item_id: int,
+    sold_quantity: float,
+) -> list[ConsumptionBreakdownItem]:
+    identity = menu_item_identity(connection, menu_item_id)
+    ingredients = select_menu_ingredients(connection, int(identity["menu_item_id"]))
+    if not ingredients:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Món chưa có nguyên liệu trừ kho.",
+        )
+
+    quantities: dict[int, float] = defaultdict(float)
+    for ingredient in ingredients:
+        item_id = int(ingredient["item_id"])
+        conversion = get_item_conversion(
+            connection,
+            item_id,
+            int(ingredient["unit_id"]),
+        )
+        quantities[item_id] += (
+            float(ingredient["quantity"])
+            * sold_quantity
+            * float(conversion["conversion_factor"])
+        )
+
+    placeholders = ",".join("?" for _ in quantities)
+    rows = connection.execute(
+        f"""
+        SELECT
+            i.id,
+            i.name,
+            i.item_group_id,
+            g.name AS item_group_name,
+            i.smallest_unit_id,
+            u.name AS smallest_unit_name
+        FROM items AS i
+        JOIN item_groups AS g ON g.id = i.item_group_id
+        JOIN units AS u ON u.id = i.smallest_unit_id
+        WHERE i.id IN ({placeholders})
+        ORDER BY g.name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC
+        """,
+        tuple(quantities.keys()),
+    ).fetchall()
+
+    return [
+        ConsumptionBreakdownItem(
+            item_id=int(row["id"]),
+            item_name=row["name"],
+            item_group_name=row["item_group_name"],
+            smallest_unit_id=int(row["smallest_unit_id"]),
+            smallest_unit_name=row["smallest_unit_name"],
+            quantity=quantities[int(row["id"])],
+        )
+        for row in rows
+    ]
+
+
 def expand_menu_option_to_raw_items(
     connection,
     menu_item_option_id: int,
     sold_quantity: float,
 ) -> list[ConsumptionBreakdownItem]:
-    option_identity(connection, menu_item_option_id)
+    identity = option_identity(connection, menu_item_option_id)
+    ingredients = select_menu_ingredients(connection, int(identity["menu_item_id"]))
     components = select_components(connection, menu_item_option_id)
-    if not components:
+    if not ingredients and not components:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Món/kiểu chế biến chưa có định lượng.",
         )
 
     quantities: dict[int, float] = defaultdict(float)
+
+    for ingredient in ingredients:
+        item_id = int(ingredient["item_id"])
+        conversion = get_item_conversion(
+            connection,
+            item_id,
+            int(ingredient["unit_id"]),
+        )
+        quantities[item_id] += (
+            float(ingredient["quantity"])
+            * sold_quantity
+            * float(conversion["conversion_factor"])
+        )
 
     for component in components:
         component_type = component["component_type"]
@@ -205,20 +301,37 @@ def record_sale_consumption(
     source_id: str,
     source_line_id: str,
     movement_time: str,
-    menu_item_option_id: int,
     sold_quantity: float,
+    menu_item_option_id: int | None = None,
+    menu_item_id: int | None = None,
 ) -> None:
     """
     Internal service for the future POS/sales module.
     One sales line is expanded and snapshotted into inventory_movements.
     Retrying the same source line replaces its SALE movements, preventing duplicates.
     """
-    identity = option_identity(connection, menu_item_option_id)
-    items = expand_menu_option_to_raw_items(
-        connection,
-        menu_item_option_id,
-        sold_quantity,
-    )
+    if menu_item_option_id is not None:
+        identity = option_identity(connection, menu_item_option_id)
+        menu_item_id = int(identity["menu_item_id"])
+        service_option_name = identity["service_option_name"]
+        items = expand_menu_option_to_raw_items(
+            connection,
+            menu_item_option_id,
+            sold_quantity,
+        )
+    elif menu_item_id is not None:
+        identity = menu_item_identity(connection, menu_item_id)
+        service_option_name = None
+        items = expand_menu_item_to_raw_items(
+            connection,
+            menu_item_id,
+            sold_quantity,
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cần menu_item_id hoặc menu_item_option_id để trừ kho.",
+        )
 
     connection.execute(
         """
@@ -230,10 +343,10 @@ def record_sale_consumption(
         (source_id, source_line_id),
     )
 
-    note = (
-        f"Bán {identity['menu_item_name']} - "
-        f"{identity['service_option_name']} x {sold_quantity:g}"
-    )
+    note = f"Bán {identity['menu_item_name']}"
+    if service_option_name:
+        note += f" - {service_option_name}"
+    note += f" x {sold_quantity:g}"
     for item in items:
         connection.execute(
             """
@@ -263,19 +376,50 @@ def record_sale_consumption(
 @router.post("/preview", response_model=ConsumptionPreviewOutput)
 def preview_consumption(payload: ConsumptionPreviewInput) -> ConsumptionPreviewOutput:
     with connect() as connection:
-        identity = option_identity(connection, payload.menu_item_option_id)
-        items = expand_menu_option_to_raw_items(
+        if payload.menu_item_option_id is not None:
+            identity = option_identity(connection, payload.menu_item_option_id)
+            if (
+                payload.menu_item_id is not None
+                and payload.menu_item_id != int(identity["menu_item_id"])
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Món và kiểu chế biến không khớp nhau.",
+                )
+            items = expand_menu_option_to_raw_items(
+                connection,
+                payload.menu_item_option_id,
+                float(payload.quantity),
+            )
+            return ConsumptionPreviewOutput(
+                menu_item_id=int(identity["menu_item_id"]),
+                menu_item_name=identity["menu_item_name"],
+                menu_item_option_id=int(identity["id"]),
+                service_option_id=int(identity["service_option_id"]),
+                service_option_name=identity["service_option_name"],
+                sale_unit_name=identity["sale_unit_name"],
+                sold_quantity=float(payload.quantity),
+                items=items,
+            )
+
+        if payload.menu_item_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cần chọn món để tính nguyên liệu trừ kho.",
+            )
+
+        identity = menu_item_identity(connection, payload.menu_item_id)
+        items = expand_menu_item_to_raw_items(
             connection,
-            payload.menu_item_option_id,
+            payload.menu_item_id,
             float(payload.quantity),
         )
-
         return ConsumptionPreviewOutput(
             menu_item_id=int(identity["menu_item_id"]),
             menu_item_name=identity["menu_item_name"],
-            menu_item_option_id=int(identity["id"]),
-            service_option_id=int(identity["service_option_id"]),
-            service_option_name=identity["service_option_name"],
+            menu_item_option_id=None,
+            service_option_id=None,
+            service_option_name=None,
             sale_unit_name=identity["sale_unit_name"],
             sold_quantity=float(payload.quantity),
             items=items,
