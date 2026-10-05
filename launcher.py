@@ -245,8 +245,19 @@ def handle_existing_instance(started_from_windows: bool) -> bool:
     if runtime is not None:
         old_pid = int(runtime.get("pid") or 0)
         old_executable = str(runtime.get("executable") or "")
+        old_build = str(runtime.get("build_version") or "")
+        current_build = build_version()
+        same_path = (
+            bool(old_executable)
+            and normalize_path(old_executable) == current_executable
+        )
+        same_build = bool(old_build) and old_build == current_build
 
-        if old_executable and normalize_path(old_executable) == current_executable:
+        # Important for in-place updates:
+        # Windows can keep the old OC11 process alive even after OC11.exe
+        # has been replaced on disk. The path is therefore not enough to
+        # identify the running version; compare the build fingerprint too.
+        if same_path and same_build:
             if not started_from_windows and os.getenv("OC11_NO_BROWSER") != "1":
                 open_manager()
             return True
