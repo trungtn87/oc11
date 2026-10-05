@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .backup import backup_database
+from .cost_recipes import refresh_cost_alerts_for_items
 from .database import connect
 
 router = APIRouter(prefix="/api/purchase-receipts", tags=["purchase-receipts"])
@@ -770,6 +771,7 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         assert row is not None
         output = row_to_output(connection, row)
 
+    refresh_cost_alerts_for_items([line.item_id for line in payload.items])
     backup_database(reason="purchase-receipt-created")
     return output
 
@@ -862,6 +864,7 @@ def update_purchase_receipt(
         assert row is not None
         output = row_to_output(connection, row)
 
+    refresh_cost_alerts_for_items([line.item_id for line in payload.items])
     backup_database(reason="purchase-receipt-updated")
     return output
 
@@ -941,6 +944,7 @@ def void_purchase_receipt_for_reentry(
 
         void_time = datetime.now().isoformat(timespec="microseconds")
         receipt_items = select_receipt_items(connection, receipt_id)
+        affected_item_ids = [int(item["item_id"]) for item in receipt_items]
         for item in receipt_items:
             connection.execute(
                 """
@@ -982,5 +986,6 @@ def void_purchase_receipt_for_reentry(
         assert row is not None
         output = row_to_output(connection, row)
 
+    refresh_cost_alerts_for_items(affected_item_ids)
     backup_database(reason="purchase-receipt-voided")
     return output
