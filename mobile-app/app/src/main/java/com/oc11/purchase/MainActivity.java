@@ -5,12 +5,15 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -521,7 +524,10 @@ public class MainActivity extends Activity {
 
         LinearLayout form = vertical();
         form.setPadding(dp(16), dp(4), dp(16), dp(8));
-        Spinner itemSpinner = new Spinner(this);
+        AutoCompleteTextView itemInput = new AutoCompleteTextView(this);
+        itemInput.setSingleLine(true);
+        itemInput.setHint("Gõ tên hàng hóa...");
+        itemInput.setThreshold(0);
         List<String> itemNames = new ArrayList<>();
         List<JSONObject> activeItems = new ArrayList<>();
         for (int i = 0; i < items.length(); i++) {
@@ -530,9 +536,13 @@ public class MainActivity extends Activity {
             activeItems.add(it);
             itemNames.add(it.optString("name"));
         }
-        itemSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, itemNames));
+        itemInput.setAdapter(new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_dropdown_item_1line,
+                itemNames));
+        itemInput.setOnClickListener(v -> itemInput.showDropDown());
         form.addView(text("Hàng hóa", 13, true));
-        form.addView(itemSpinner);
+        form.addView(itemInput);
 
         TextView info = text("", 12, false);
         info.setTextColor(Color.DKGRAY);
@@ -553,11 +563,20 @@ public class MainActivity extends Activity {
         form.addView(price);
 
         final List<Integer> unitIds = new ArrayList<>();
+        final JSONObject[] selectedItem = new JSONObject[]{null};
 
         Runnable refreshItem = () -> {
-            if (activeItems.isEmpty()) return;
-            JSONObject item = activeItems.get(itemSpinner.getSelectedItemPosition());
+            JSONObject item = selectedItem[0];
             unitIds.clear();
+            if (item == null) {
+                unitSpinner.setAdapter(new ArrayAdapter<>(
+                        this,
+                        android.R.layout.simple_spinner_dropdown_item,
+                        new ArrayList<String>()));
+                info.setText("Gõ tên hàng hóa rồi chọn trong danh sách.");
+                return;
+            }
+
             List<String> unitNames = new ArrayList<>();
             JSONArray conversions = item.optJSONArray("conversions");
             if (conversions != null) {
@@ -568,7 +587,10 @@ public class MainActivity extends Activity {
                     unitNames.add(c.optString("unit_name"));
                 }
             }
-            unitSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, unitNames));
+            unitSpinner.setAdapter(new ArrayAdapter<>(
+                    this,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    unitNames));
 
             JSONObject stock = findInventory(inventory, item.optInt("id"));
             if (stock != null) {
@@ -585,10 +607,25 @@ public class MainActivity extends Activity {
                 info.setText("Chưa có dữ liệu tồn / giá gần nhất.");
             }
         };
-        itemSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> p, View v, int pos, long id) { refreshItem.run(); }
-            @Override public void onNothingSelected(AdapterView<?> p) {}
+
+        itemInput.setOnItemClickListener((parent, view, position, id) -> {
+            String chosenName = String.valueOf(parent.getItemAtPosition(position));
+            selectedItem[0] = findItemByName(activeItems, chosenName);
+            refreshItem.run();
         });
+
+        itemInput.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                JSONObject chosen = selectedItem[0];
+                if (chosen != null && !chosen.optString("name").equalsIgnoreCase(s.toString().trim())) {
+                    selectedItem[0] = null;
+                    refreshItem.run();
+                }
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+
         refreshItem.run();
 
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -601,11 +638,16 @@ public class MainActivity extends Activity {
         dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
                 if (activeItems.isEmpty()) throw new Exception("Không có hàng hóa.");
+                JSONObject item = selectedItem[0];
+                if (item == null) {
+                    item = findItemByName(activeItems, itemInput.getText().toString());
+                    selectedItem[0] = item;
+                }
+                if (item == null) throw new Exception("Hãy chọn hàng hóa trong danh sách gợi ý.");
                 if (unitIds.isEmpty() || unitSpinner.getSelectedItemPosition() < 0) throw new Exception("Hàng hóa chưa có đơn vị nhập.");
                 double q = Double.parseDouble(qty.getText().toString().trim().replace(",", "."));
                 if (q <= 0) throw new Exception("Số lượng phải lớn hơn 0.");
                 long p = parseLong(price.getText().toString());
-                JSONObject item = activeItems.get(itemSpinner.getSelectedItemPosition());
                 JSONObject line = new JSONObject();
                 line.put("item_id", item.optInt("id"));
                 line.put("unit_id", unitIds.get(unitSpinner.getSelectedItemPosition()));
@@ -620,6 +662,14 @@ public class MainActivity extends Activity {
             }
         }));
         dialog.show();
+    }
+
+    private JSONObject findItemByName(List<JSONObject> items, String name) {
+        String wanted = name == null ? "" : name.trim();
+        for (JSONObject item : items) {
+            if (item.optString("name").equalsIgnoreCase(wanted)) return item;
+        }
+        return null;
     }
 
     private JSONObject findInventory(JSONArray inventory, int itemId) {
