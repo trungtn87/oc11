@@ -558,9 +558,9 @@ export type ConsumptionBreakdownItem = {
 export type ConsumptionPreview = {
   menu_item_id: number;
   menu_item_name: string;
-  menu_item_option_id: number;
-  service_option_id: number;
-  service_option_name: string;
+  menu_item_option_id: number | null;
+  service_option_id: number | null;
+  service_option_name: string | null;
   sale_unit_name: string;
   sold_quantity: number;
   items: ConsumptionBreakdownItem[];
