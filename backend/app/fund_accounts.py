@@ -350,6 +350,7 @@ def update_fund_account(
                 account_name,
                 note,
                 is_active,
+                is_default,
                 current_balance
             FROM fund_accounts
             WHERE id = ?
