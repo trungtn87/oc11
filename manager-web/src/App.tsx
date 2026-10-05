@@ -71,6 +71,7 @@ import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
+import oc11HomeLogo from "./assets/oc11-home-logo.svg";
 import type {
   BackupStatus,
   InventoryItem,
@@ -199,61 +200,11 @@ const menuItems: MenuProps["items"] = [
 function BrandLogo({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={`brand ${collapsed ? "brand-collapsed" : ""}`}>
-      <div className="brand-logo-wrap">
-        <svg
-          className="brand-logo-mark"
-          viewBox="0 0 92 76"
-          role="img"
-          aria-label="Logo Ốc 11"
-        >
-          <defs>
-            <linearGradient id="oc11-gold" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#ffe39a" />
-              <stop offset="50%" stopColor="#f2bd54" />
-              <stop offset="100%" stopColor="#d7972e" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M18 54c0-20 13-35 31-35 16 0 28 11 28 25 0 12-8 21-20 21H37c-11 0-19-7-19-17 0-9 7-15 15-15 8 0 14 5 14 12 0 6-4 10-9 10-4 0-7-3-7-6 0-3 2-5 5-5"
-            fill="none"
-            stroke="url(#oc11-gold)"
-            strokeWidth="5.2"
-            strokeLinecap="round"
-          />
-          <path
-            d="M16 64c17 5 41 5 61 0M23 70c15 4 33 4 49 0"
-            fill="none"
-            stroke="url(#oc11-gold)"
-            strokeWidth="3.2"
-            strokeLinecap="round"
-          />
-          <path
-            d="M37 14 42 5l6 7 7-8 6 10"
-            fill="none"
-            stroke="url(#oc11-gold)"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <circle cx="42" cy="5" r="2.3" fill="#f6c65f" />
-          <circle cx="55" cy="4" r="2.3" fill="#f6c65f" />
-          <circle cx="61" cy="14" r="2.3" fill="#f6c65f" />
-        </svg>
-
-        {!collapsed && (
-          <div className="brand-copy">
-            <div className="brand-title">
-              <span>Ốc</span>
-              <span className="brand-title-number">11</span>
-            </div>
-            <div className="brand-subtitle">
-              Ăn hải sản trên núi
-              <br />
-              chất lượng như ở biển
-            </div>
-          </div>
-        )}
-      </div>
+      <img
+        src={oc11HomeLogo}
+        alt="Ốc 11"
+        className="brand-home-logo"
+      />
     </div>
   );
 }
