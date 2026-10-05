@@ -458,6 +458,28 @@ def init_db() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS menu_item_ingredients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                menu_item_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                quantity REAL NOT NULL CHECK (quantity > 0),
+                FOREIGN KEY (menu_item_id)
+                    REFERENCES menu_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES items(id),
+                FOREIGN KEY (unit_id) REFERENCES units(id),
+                UNIQUE (menu_item_id, item_id, unit_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_menu_item_ingredients_item
+            ON menu_item_ingredients (item_id, menu_item_id)
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS menu_item_options (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 menu_item_id INTEGER NOT NULL,
