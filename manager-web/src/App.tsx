@@ -54,8 +54,12 @@ import {
   createUnit,
   deleteSupplier,
   getBackupStatus,
+  getFundAccounts,
+  getFundTransactions,
   getInventoryItems,
+  getInventoryStock,
   getItemGroups,
+  getPurchaseReceipts,
   getSuppliers,
   getUnits,
   runBackup,
@@ -74,10 +78,14 @@ import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import oc11HomeLogo from "./assets/oc11-logo.jpg";
 import type {
   BackupStatus,
+  FundAccount,
+  FundTransaction,
   InventoryItem,
   InventoryItemInput,
+  InventoryStock,
   ItemGroup,
   ItemGroupInput,
+  PurchaseReceipt,
   Supplier,
   SupplierInput,
   Unit,
@@ -213,20 +221,198 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value) + " đ";
 }
 
+function localDateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return typeof value === "string" ? value.slice(0, 10) : "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
 function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
+  const [loading, setLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
+  const [purchaseReceipts, setPurchaseReceipts] = useState<PurchaseReceipt[]>([]);
+  const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]);
+  const [fundTransactions, setFundTransactions] = useState<FundTransaction[]>([]);
+  const [inventoryStock, setInventoryStock] = useState<InventoryStock[]>([]);
+
+  const todayKey = localDateKey(new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setLoading(true);
+      setDashboardError("");
+
+      try {
+        const [receipts, accounts, cashLedger, bankLedger, stock] =
+          await Promise.all([
+            getPurchaseReceipts(),
+            getFundAccounts(),
+            getFundTransactions({ account_type: "CASH" }),
+            getFundTransactions({ account_type: "BANK" }),
+            getInventoryStock()
+          ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setPurchaseReceipts(receipts);
+        setFundAccounts(accounts);
+        setFundTransactions([...cashLedger.items, ...bankLedger.items]);
+        setInventoryStock(stock);
+      } catch (error) {
+        if (!cancelled) {
+          setDashboardError(
+            error instanceof Error
+              ? error.message
+              : "Không tải được dữ liệu tổng quan."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const activeReceipts = purchaseReceipts.filter((receipt) => !receipt.is_void);
+  const todayReceipts = activeReceipts.filter(
+    (receipt) => localDateKey(receipt.receipt_time) === todayKey
+  );
+  const todayTransactions = fundTransactions.filter(
+    (transaction) => localDateKey(transaction.transaction_time) === todayKey
+  );
+  const normalTodayTransactions = todayTransactions.filter(
+    (transaction) => transaction.transaction_type === "NORMAL"
+  );
+
+  const todayPurchaseTotal = todayReceipts.reduce(
+    (sum, receipt) => sum + receipt.total_amount,
+    0
+  );
+  const todayExpenseTotal = normalTodayTransactions
+    .filter((transaction) => transaction.direction === "OUT")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const todayIncomeTotal = normalTodayTransactions
+    .filter((transaction) => transaction.direction === "IN")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const totalFundBalance = fundAccounts.reduce(
+    (sum, account) => sum + account.current_balance,
+    0
+  );
+
+  const stockAvailableCount = inventoryStock.filter(
+    (item) => item.stock_quantity > 0
+  ).length;
+  const stockEmptyCount = inventoryStock.filter(
+    (item) => item.stock_quantity <= 0
+  ).length;
+  const stockPercent =
+    inventoryStock.length > 0
+      ? Math.round((stockAvailableCount / inventoryStock.length) * 100)
+      : 0;
+
+  const recentActivities = [
+    ...activeReceipts.map((receipt) => ({
+      id: `purchase-${receipt.id}`,
+      time: receipt.receipt_time,
+      title: `Nhập hàng ${receipt.receipt_code}`,
+      description: receipt.supplier_name,
+      amount: receipt.total_amount,
+      direction: "PURCHASE" as const
+    })),
+    ...fundTransactions
+      .filter((transaction) => transaction.transaction_type === "NORMAL")
+      .map((transaction) => ({
+        id: `fund-${transaction.id}`,
+        time: transaction.transaction_time,
+        title:
+          transaction.direction === "IN"
+            ? `Phiếu thu ${transaction.reference_code ?? ""}`.trim()
+            : `Phiếu chi ${transaction.reference_code ?? ""}`.trim(),
+        description:
+          transaction.description ||
+          transaction.category_name ||
+          transaction.fund_account_name,
+        amount: transaction.amount,
+        direction: transaction.direction
+      }))
+  ]
+    .sort(
+      (a, b) =>
+        new Date(b.time).getTime() - new Date(a.time).getTime()
+    )
+    .slice(0, 6);
+
   const metricCards = [
-    { label: "Doanh thu hôm nay", value: 0, suffix: "đ", tone: "green" },
-    { label: "Chi phí hôm nay", value: 0, suffix: "đ", tone: "red" },
-    { label: "Lợi nhuận tạm tính", value: 0, suffix: "đ", tone: "blue" },
-    { label: "Số hóa đơn", value: 0, suffix: "", tone: "orange" }
+    {
+      label: "Nhập hàng hôm nay",
+      value: todayPurchaseTotal,
+      suffix: "đ",
+      tone: "blue",
+      note: `${todayReceipts.length} phiếu nhập`
+    },
+    {
+      label: "Chi hôm nay",
+      value: todayExpenseTotal,
+      suffix: "đ",
+      tone: "red",
+      note: "Không tính chuyển quỹ / cân đối"
+    },
+    {
+      label: "Tổng số dư quỹ",
+      value: totalFundBalance,
+      suffix: "đ",
+      tone: "green",
+      note: `${fundAccounts.length} quỹ / tài khoản`
+    },
+    {
+      label: "Phiếu nhập hôm nay",
+      value: todayReceipts.length,
+      suffix: "",
+      tone: "orange",
+      note:
+        todayReceipts.length > 0
+          ? `Tổng tiền ${formatMoney(todayPurchaseTotal)}`
+          : "Chưa phát sinh"
+    }
   ];
 
   const quickActions = [
     { label: "Bán hàng (POS)", target: "sales-pos", disabled: true },
     { label: "Nhập hàng", target: "purchase-orders", disabled: false },
-    { label: "Thu chi", target: "cash-transactions", disabled: true },
+    { label: "Sổ tiền mặt", target: "cash-ledger", disabled: false },
     { label: "Thêm hàng hóa", target: "item-list", disabled: false },
-    { label: "Nhóm hàng hóa", target: "item-groups", disabled: false }
+    { label: "Tồn kho", target: "stock", disabled: false }
   ];
 
   return (
@@ -235,15 +421,24 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <div>
           <Title level={2}>Tổng quan</Title>
           <Text type="secondary">
-            Dữ liệu sẽ tự cập nhật khi từng nghiệp vụ được triển khai.
+            Các phần đã có dữ liệu thật được cập nhật trực tiếp từ hệ thống.
           </Text>
+          {dashboardError ? (
+            <div className="dashboard-error">
+              <Text type="danger">{dashboardError}</Text>
+            </div>
+          ) : null}
         </div>
       </div>
 
       <Row gutter={[14, 14]} className="metrics-row">
         {metricCards.map((metric) => (
           <Col xs={24} sm={12} xl={6} key={metric.label}>
-            <Card className={`metric-card metric-${metric.tone}`} bordered={false}>
+            <Card
+              className={`metric-card metric-${metric.tone}`}
+              bordered={false}
+              loading={loading}
+            >
               <Statistic
                 title={metric.label}
                 value={metric.value}
@@ -256,7 +451,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
                 }
               />
               <Text type="secondary" className="metric-note">
-                Chưa có dữ liệu
+                {metric.note}
               </Text>
             </Card>
           </Col>
@@ -268,70 +463,162 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
           <Card
             className="dashboard-card"
             title="Doanh thu 7 ngày gần nhất"
-            extra={<Select value="7 ngày" options={[{ value: "7 ngày", label: "7 ngày" }]} />}
+            extra={
+              <Select
+                value="7 ngày"
+                options={[{ value: "7 ngày", label: "7 ngày" }]}
+              />
+            }
           >
             <div className="empty-chart">
               <div className="chart-bars" aria-hidden="true">
                 {[18, 28, 24, 40, 34, 48, 42].map((height, index) => (
                   <div className="chart-column" key={index}>
-                    <div className="chart-bar" style={{ height: `${height}%` }} />
+                    <div
+                      className="chart-bar"
+                      style={{ height: `${height}%` }}
+                    />
                   </div>
                 ))}
               </div>
               <div className="empty-overlay">
                 <Text strong>Chưa có dữ liệu bán hàng</Text>
-                <Text type="secondary">Biểu đồ sẽ xuất hiện khi POS được triển khai.</Text>
+                <Text type="secondary">
+                  Biểu đồ doanh thu sẽ hoạt động khi POS được triển khai.
+                </Text>
               </div>
             </div>
           </Card>
         </Col>
 
         <Col xs={24} xl={8}>
-          <Card className="dashboard-card" title="Cơ cấu doanh thu theo nhóm hàng">
-            <div className="donut-placeholder">
-              <Progress
-                type="circle"
-                percent={0}
-                size={190}
-                format={() => "0%"}
-                strokeWidth={14}
-              />
-              <Text type="secondary">Chưa có dữ liệu doanh thu.</Text>
-            </div>
+          <Card className="dashboard-card" title="Tình trạng tồn kho" loading={loading}>
+            {inventoryStock.length > 0 ? (
+              <div className="dashboard-stock-summary">
+                <Progress
+                  type="circle"
+                  percent={stockPercent}
+                  size={150}
+                  format={() => `${stockAvailableCount}/${inventoryStock.length}`}
+                  strokeWidth={12}
+                />
+                <div className="dashboard-stock-copy">
+                  <Text strong>{stockAvailableCount} mặt hàng đang có tồn</Text>
+                  <Text type={stockEmptyCount > 0 ? "danger" : "secondary"}>
+                    {stockEmptyCount} mặt hàng hết hoặc âm kho
+                  </Text>
+                  <Button size="small" onClick={() => onNavigate("stock")}>
+                    Xem tồn kho
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="compact-empty">
+                <Text strong>Chưa có dữ liệu tồn kho</Text>
+                <Text type="secondary">
+                  Dữ liệu sẽ xuất hiện sau khi có hàng hóa và nhập kho.
+                </Text>
+              </div>
+            )}
           </Card>
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Top món bán chạy hôm nay">
-            <div className="compact-empty">
-              <Text strong>Chưa có dữ liệu bán hàng</Text>
-              <Text type="secondary">Top món sẽ được tính từ hóa đơn POS.</Text>
+          <Card className="dashboard-card" title="Dòng tiền hôm nay" loading={loading}>
+            <div className="dashboard-money-summary">
+              <div>
+                <Text type="secondary">Thu</Text>
+                <Text strong className="dashboard-money-in">
+                  {formatMoney(todayIncomeTotal)}
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary">Chi</Text>
+                <Text strong type="danger">
+                  {formatMoney(todayExpenseTotal)}
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary">Chênh lệch</Text>
+                <Text strong>
+                  {formatMoney(todayIncomeTotal - todayExpenseTotal)}
+                </Text>
+              </div>
             </div>
+            <Text type="secondary" className="dashboard-section-note">
+              Chỉ tính phiếu thu/chi thông thường, không tính chuyển quỹ và cân đối.
+            </Text>
           </Card>
         </Col>
 
         <Col xs={24} lg={8}>
           <Card
             className="dashboard-card"
-            title="Tồn kho sắp hết"
-            extra={<Tag>0 mặt hàng</Tag>}
+            title="Nhập hàng gần đây"
+            extra={<Tag>{activeReceipts.length} phiếu</Tag>}
+            loading={loading}
           >
-            <div className="compact-empty">
-              <Text strong>Chưa có dữ liệu tồn kho</Text>
-              <Text type="secondary">Sẽ hoạt động sau khi xây Hàng hóa và Nhập hàng.</Text>
-            </div>
+            {activeReceipts.length > 0 ? (
+              <div className="dashboard-mini-list">
+                {activeReceipts
+                  .slice()
+                  .sort(
+                    (a, b) =>
+                      new Date(b.receipt_time).getTime() -
+                      new Date(a.receipt_time).getTime()
+                  )
+                  .slice(0, 4)
+                  .map((receipt) => (
+                    <div className="dashboard-mini-row" key={receipt.id}>
+                      <div>
+                        <Text strong>{receipt.receipt_code}</Text>
+                        <div>
+                          <Text type="secondary">
+                            {receipt.supplier_name} • {formatDateTime(receipt.receipt_time)}
+                          </Text>
+                        </div>
+                      </div>
+                      <Text strong>{formatMoney(receipt.total_amount)}</Text>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="compact-empty">
+                <Text strong>Chưa có phiếu nhập</Text>
+              </div>
+            )}
           </Card>
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Hoạt động gần đây">
-            <div className="activity-placeholder">
-              <div className="activity-dot" />
-              <div>
-                <Text strong>Khởi tạo hệ thống Ốc 11</Text>
-                <div><Text type="secondary">Trang quản lý đang được xây từng chức năng.</Text></div>
+          <Card className="dashboard-card" title="Hoạt động gần đây" loading={loading}>
+            {recentActivities.length > 0 ? (
+              <div className="dashboard-activity-list">
+                {recentActivities.map((activity) => (
+                  <div className="dashboard-activity-row" key={activity.id}>
+                    <div
+                      className={`activity-dot activity-dot-${activity.direction.toLowerCase()}`}
+                    />
+                    <div className="dashboard-activity-copy">
+                      <Text strong>{activity.title}</Text>
+                      <div>
+                        <Text type="secondary">
+                          {activity.description} • {formatDateTime(activity.time)}
+                        </Text>
+                      </div>
+                    </div>
+                    <Text strong>{formatMoney(activity.amount)}</Text>
+                  </div>
+                ))}
               </div>
-            </div>
+            ) : (
+              <div className="compact-empty">
+                <Text strong>Chưa có hoạt động</Text>
+                <Text type="secondary">
+                  Phiếu nhập và thu/chi mới sẽ hiển thị tại đây.
+                </Text>
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
@@ -359,9 +646,11 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
           <Card className="dashboard-card" title="Báo cáo nhanh">
             <div className="report-links">
               <Button disabled>Xem doanh thu</Button>
-              <Button disabled>Xem tồn kho</Button>
-              <Button disabled>Xem nhập hàng</Button>
-              <Button disabled>Xem thu chi</Button>
+              <Button onClick={() => onNavigate("stock")}>Xem tồn kho</Button>
+              <Button onClick={() => onNavigate("purchase-orders")}>
+                Xem nhập hàng
+              </Button>
+              <Button onClick={() => onNavigate("cash-ledger")}>Xem thu chi</Button>
             </div>
           </Card>
         </Col>
@@ -369,7 +658,6 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
     </>
   );
 }
-
 
 function InventoryItemsPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
