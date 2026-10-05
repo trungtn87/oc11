@@ -20,7 +20,7 @@ import type { TableProps } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 
 import {
-  acceptMenuOptionCurrentCost,
+  acceptMenuItemCurrentCost,
   createMenuItem,
   getCostIngredientPrices,
   getInventoryItems,
@@ -77,8 +77,7 @@ type OptionDraft = {
   id?: number;
   service_option_id?: number;
   extra_price: number;
-  alert_threshold_percent: number;
-  display_order: number;
+   display_order: number;
   is_active: boolean;
   components: ComponentDraft[];
 };
@@ -115,7 +114,7 @@ export default function MenuItemsPage() {
   const [alerts, setAlerts] = useState<MenuCostAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [acceptingOptionId, setAcceptingOptionId] = useState<number | null>(null);
+  const [acceptingItemId, setAcceptingItemId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [ingredientModalOpen, setIngredientModalOpen] = useState(false);
@@ -319,7 +318,6 @@ export default function MenuItemsPage() {
         id: option.id,
         service_option_id: option.service_option_id,
         extra_price: option.extra_price,
-        alert_threshold_percent: option.alert_threshold_percent,
         display_order: option.display_order,
         is_active: option.is_active,
         components: option.components.map((component) => ({
@@ -371,7 +369,6 @@ export default function MenuItemsPage() {
       {
         key: "option-" + Date.now() + "-" + current.length,
         extra_price: 0,
-        alert_threshold_percent: 5,
         display_order: current.length + 1,
         is_active: true,
         components: []
@@ -531,7 +528,6 @@ export default function MenuItemsPage() {
         options: optionDrafts.map((option) => ({
           service_option_id: Number(option.service_option_id),
           extra_price: Number(option.extra_price ?? 0),
-          alert_threshold_percent: Number(option.alert_threshold_percent ?? 5),
           display_order: Number(option.display_order ?? 0),
           is_active: option.is_active,
           components: option.components.map((component) => ({
@@ -564,18 +560,18 @@ export default function MenuItemsPage() {
     }
   };
 
-  const acceptCurrentCost = async (optionId: number) => {
+  const acceptCurrentCost = async (menuItemId: number) => {
     try {
-      setAcceptingOptionId(optionId);
-      await acceptMenuOptionCurrentCost(optionId);
-      messageApi.success("Đã dùng Cost món hiện tại làm mốc mới.");
+      setAcceptingItemId(menuItemId);
+      await acceptMenuItemCurrentCost(menuItemId);
+      messageApi.success("Đã dùng tổng Cost hiện tại của món làm mốc mới.");
       await loadData();
     } catch (error) {
       messageApi.error(
         error instanceof Error ? error.message : "Không cập nhật được mốc Cost."
       );
     } finally {
-      setAcceptingOptionId(null);
+      setAcceptingItemId(null);
     }
   };
 
@@ -634,14 +630,12 @@ export default function MenuItemsPage() {
       title: "Cảnh báo",
       key: "alerts",
       width: 120,
-      render: (_, row) => {
-        const count = row.options.filter((option) => option.has_open_alert).length;
-        return count > 0 ? (
-          <Tag color="error">{count} cảnh báo</Tag>
+      render: (_, row) =>
+        row.has_open_alert ? (
+          <Tag color="error">Cost tăng</Tag>
         ) : (
           <Tag color="success">Bình thường</Tag>
-        );
-      }
+        )
     },
     {
       title: "Trạng thái",
@@ -749,24 +743,6 @@ export default function MenuItemsPage() {
         if (!calc.complete || calc.cost === null || salePrice <= 0) return "—";
         return formatPercent((calc.cost / salePrice) * 100);
       }
-    },
-    {
-      title: "Cảnh báo %",
-      key: "threshold",
-      width: 110,
-      render: (_, option) => (
-        <InputNumber
-          min={0.01}
-          max={100}
-          value={option.alert_threshold_percent}
-          style={{ width: "100%" }}
-          onChange={(value) =>
-            updateOption(option.key, {
-              alert_threshold_percent: typeof value === "number" ? value : 5
-            })
-          }
-        />
-      )
     },
     {
       title: "",
@@ -1038,11 +1014,6 @@ export default function MenuItemsPage() {
       render: (value: string) => <Text strong>{value}</Text>
     },
     {
-      title: "Kiểu chế biến",
-      dataIndex: "service_option_name",
-      key: "service_option_name"
-    },
-    {
       title: "Cost mốc",
       dataIndex: "reference_cost",
       key: "reference_cost",
@@ -1078,8 +1049,8 @@ export default function MenuItemsPage() {
         <Button
           type="primary"
           ghost
-          loading={acceptingOptionId === row.menu_item_option_id}
-          onClick={() => void acceptCurrentCost(row.menu_item_option_id)}
+          loading={acceptingItemId === row.menu_item_id}
+          onClick={() => void acceptCurrentCost(row.menu_item_id)}
         >
           Dùng Cost mới làm mốc
         </Button>
@@ -1107,7 +1078,7 @@ export default function MenuItemsPage() {
           type="warning"
           showIcon
           className="cost-alert-banner"
-          message={"Có " + alerts.length + " món/kiểu chế biến tăng Cost vượt ngưỡng"}
+          message={"Có " + alerts.length + " món tăng tổng Cost vượt ngưỡng 3%"}
           description="Hệ thống chỉ cảnh báo. Giá bán và phụ thu không tự thay đổi."
         />
       )}
@@ -1273,8 +1244,8 @@ export default function MenuItemsPage() {
 
         <div className="cost-reference-note">
           <Text type="secondary">
-            Khi tạo mới hoặc thay đổi định lượng, Cost hiện tại được chốt làm mốc.
-            Giá nguyên liệu/sốt tăng đủ ngưỡng sẽ cảnh báo, không thay giá bán.
+            Khi tạo mới hoặc thay đổi định lượng, tổng Cost hiện tại được chốt làm mốc.
+            Cảnh báo áp dụng ở cấp món với ngưỡng mặc định 3%, không cảnh báo riêng từng kiểu chế biến.
           </Text>
         </div>
       </Modal>
