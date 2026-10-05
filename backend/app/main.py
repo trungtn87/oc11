@@ -55,6 +55,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/runtime")
+def runtime_info() -> dict[str, str | int]:
+    return {
+        "app": "OC11",
+        "pid": os.getpid(),
+        "runtime_token": os.getenv("OC11_RUNTIME_TOKEN", ""),
+        "executable": os.getenv("OC11_EXECUTABLE", ""),
+        "build_version": os.getenv("OC11_BUILD_VERSION", ""),
+    }
+
+
 static_dir = os.getenv("OC11_STATIC_DIR")
 if static_dir:
     static_path = Path(static_dir)
