@@ -523,3 +523,45 @@ export type MenuCostAlert = {
   detected_at: string;
   resolved_at: string | null;
 };
+
+
+export type ConsumptionBreakdownItem = {
+  item_id: number;
+  item_name: string;
+  item_group_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  quantity: number;
+};
+
+export type ConsumptionPreview = {
+  menu_item_id: number;
+  menu_item_name: string;
+  menu_item_option_id: number;
+  service_option_id: number;
+  service_option_name: string;
+  sale_unit_name: string;
+  sold_quantity: number;
+  items: ConsumptionBreakdownItem[];
+};
+
+export type ConsumptionSummaryItem = {
+  item_id: number;
+  item_name: string;
+  item_group_id: number;
+  item_group_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  consumed_quantity: number;
+  sale_line_count: number;
+  last_sale_time: string | null;
+  stock_quantity: number;
+  last_reconciled_at: string | null;
+  last_reconciled_quantity: number | null;
+};
+
+export type ConsumptionSummary = {
+  from_time: string;
+  to_time: string;
+  items: ConsumptionSummaryItem[];
+};
