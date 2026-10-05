@@ -18,6 +18,8 @@ import type {
   ItemGroupInput,
   PurchaseReceipt,
   PurchaseReceiptInput,
+  ConsumptionPreview,
+  ConsumptionSummary,
   MenuCostAlert,
   MenuGroup,
   MenuGroupInput,
@@ -485,5 +487,37 @@ export function acceptMenuOptionCurrentCost(
   return request<MenuItemOption>(
     `/api/menu/item-options/${menuItemOptionId}/accept-current-cost`,
     { method: "POST" }
+  );
+}
+
+
+export function previewConsumption(payload: {
+  menu_item_option_id: number;
+  quantity: number;
+}): Promise<ConsumptionPreview> {
+  return request<ConsumptionPreview>("/api/inventory/consumption/preview", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getConsumptionSummary(params: {
+  from: string;
+  to: string;
+  search?: string;
+  group_id?: number;
+}): Promise<ConsumptionSummary> {
+  const query = new URLSearchParams({
+    from: params.from,
+    to: params.to
+  });
+  if (params.search?.trim()) {
+    query.set("search", params.search.trim());
+  }
+  if (params.group_id) {
+    query.set("group_id", String(params.group_id));
+  }
+  return request<ConsumptionSummary>(
+    `/api/inventory/consumption?${query.toString()}`
   );
 }
