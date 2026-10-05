@@ -574,6 +574,7 @@ public class MainActivity extends Activity {
                         android.R.layout.simple_spinner_dropdown_item,
                         new ArrayList<String>()));
                 info.setText("Gõ tên hàng hóa rồi chọn trong danh sách.");
+                price.setText("");
                 return;
             }
 
@@ -642,6 +643,7 @@ public class MainActivity extends Activity {
                 if (item == null) {
                     item = findItemByName(activeItems, itemInput.getText().toString());
                     selectedItem[0] = item;
+                    if (item != null) refreshItem.run();
                 }
                 if (item == null) throw new Exception("Hãy chọn hàng hóa trong danh sách gợi ý.");
                 if (unitIds.isEmpty() || unitSpinner.getSelectedItemPosition() < 0) throw new Exception("Hàng hóa chưa có đơn vị nhập.");
