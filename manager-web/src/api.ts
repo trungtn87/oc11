@@ -18,6 +18,12 @@ import type {
   ItemGroupInput,
   PurchaseReceipt,
   PurchaseReceiptInput,
+  MenuCostAlert,
+  MenuGroup,
+  MenuGroupInput,
+  MenuItem,
+  MenuItemInput,
+  MenuItemOption,
   CostAlert,
   CostIngredientPrice,
   CostRecipe,
@@ -415,6 +421,69 @@ export function getCostAlerts(includeResolved = false): Promise<CostAlert[]> {
 export function acceptCurrentRecipeCost(recipeId: number): Promise<CostRecipe> {
   return request<CostRecipe>(
     `/api/cost/recipes/${recipeId}/accept-current-cost`,
+    { method: "POST" }
+  );
+}
+
+
+export function getMenuGroups(): Promise<MenuGroup[]> {
+  return request<MenuGroup[]>("/api/menu/groups");
+}
+
+export function createMenuGroup(payload: MenuGroupInput): Promise<MenuGroup> {
+  return request<MenuGroup>("/api/menu/groups", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateMenuGroup(
+  id: number,
+  payload: MenuGroupInput
+): Promise<MenuGroup> {
+  return request<MenuGroup>(`/api/menu/groups/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getMenuItems(): Promise<MenuItem[]> {
+  return request<MenuItem[]>("/api/menu/items");
+}
+
+export function getMenuItem(id: number): Promise<MenuItem> {
+  return request<MenuItem>(`/api/menu/items/${id}`);
+}
+
+export function createMenuItem(payload: MenuItemInput): Promise<MenuItem> {
+  return request<MenuItem>("/api/menu/items", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateMenuItem(
+  id: number,
+  payload: MenuItemInput
+): Promise<MenuItem> {
+  return request<MenuItem>(`/api/menu/items/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getMenuCostAlerts(
+  includeResolved = false
+): Promise<MenuCostAlert[]> {
+  const query = includeResolved ? "?include_resolved=true" : "";
+  return request<MenuCostAlert[]>(`/api/menu/alerts${query}`);
+}
+
+export function acceptMenuOptionCurrentCost(
+  menuItemOptionId: number
+): Promise<MenuItemOption> {
+  return request<MenuItemOption>(
+    `/api/menu/item-options/${menuItemOptionId}/accept-current-cost`,
     { method: "POST" }
   );
 }
