@@ -18,6 +18,11 @@ import type {
   ItemGroupInput,
   PurchaseReceipt,
   PurchaseReceiptInput,
+  CostAlert,
+  CostIngredientPrice,
+  CostRecipe,
+  ServiceOptionCost,
+  ServiceOptionCostInput,
   Supplier,
   SupplierInput,
   Unit,
@@ -372,4 +377,44 @@ export function createStockAdjustment(
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+
+export function getServiceOptionCosts(): Promise<ServiceOptionCost[]> {
+  return request<ServiceOptionCost[]>("/api/cost/service-options");
+}
+
+export function createServiceOptionCost(
+  payload: ServiceOptionCostInput
+): Promise<ServiceOptionCost> {
+  return request<ServiceOptionCost>("/api/cost/service-options", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateServiceOptionCost(
+  id: number,
+  payload: ServiceOptionCostInput
+): Promise<ServiceOptionCost> {
+  return request<ServiceOptionCost>(`/api/cost/service-options/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getCostIngredientPrices(): Promise<CostIngredientPrice[]> {
+  return request<CostIngredientPrice[]>("/api/cost/ingredient-prices");
+}
+
+export function getCostAlerts(includeResolved = false): Promise<CostAlert[]> {
+  const query = includeResolved ? "?include_resolved=true" : "";
+  return request<CostAlert[]>(`/api/cost/alerts${query}`);
+}
+
+export function acceptCurrentRecipeCost(recipeId: number): Promise<CostRecipe> {
+  return request<CostRecipe>(
+    `/api/cost/recipes/${recipeId}/accept-current-cost`,
+    { method: "POST" }
+  );
 }
