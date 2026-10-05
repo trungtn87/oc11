@@ -2283,8 +2283,8 @@ function App() {
   return (
     <Layout className="app-shell">
       <Sider
-        width={238}
-        collapsedWidth={68}
+        width={202}
+        collapsedWidth={58}
         className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}
         collapsible
         collapsed={collapsed}
