@@ -368,6 +368,144 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS menu_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                note TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_groups_name_nocase
+            ON menu_groups (name COLLATE NOCASE)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS menu_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                menu_group_id INTEGER NOT NULL,
+                sale_unit_id INTEGER NOT NULL,
+                base_price INTEGER NOT NULL DEFAULT 0
+                    CHECK (base_price >= 0),
+                display_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                note TEXT,
+                FOREIGN KEY (menu_group_id) REFERENCES menu_groups(id),
+                FOREIGN KEY (sale_unit_id) REFERENCES units(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_items_group_name_nocase
+            ON menu_items (menu_group_id, name COLLATE NOCASE)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS menu_item_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                menu_item_id INTEGER NOT NULL,
+                service_option_id INTEGER NOT NULL,
+                extra_price INTEGER NOT NULL DEFAULT 0
+                    CHECK (extra_price >= 0),
+                alert_threshold_percent REAL NOT NULL DEFAULT 5
+                    CHECK (
+                        alert_threshold_percent > 0
+                        AND alert_threshold_percent <= 100
+                    ),
+                reference_cost REAL,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                FOREIGN KEY (menu_item_id)
+                    REFERENCES menu_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (service_option_id)
+                    REFERENCES service_options(id),
+                UNIQUE (menu_item_id, service_option_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS menu_item_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                menu_item_option_id INTEGER NOT NULL,
+                component_type TEXT NOT NULL
+                    CHECK (component_type IN ('ITEM', 'RECIPE')),
+                item_id INTEGER,
+                unit_id INTEGER,
+                recipe_id INTEGER,
+                quantity REAL NOT NULL CHECK (quantity > 0),
+                FOREIGN KEY (menu_item_option_id)
+                    REFERENCES menu_item_options(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES items(id),
+                FOREIGN KEY (unit_id) REFERENCES units(id),
+                FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+                CHECK (
+                    (
+                        component_type = 'ITEM'
+                        AND item_id IS NOT NULL
+                        AND unit_id IS NOT NULL
+                        AND recipe_id IS NULL
+                    )
+                    OR
+                    (
+                        component_type = 'RECIPE'
+                        AND item_id IS NULL
+                        AND unit_id IS NULL
+                        AND recipe_id IS NOT NULL
+                    )
+                )
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_menu_item_components_item
+            ON menu_item_components (item_id, menu_item_option_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_menu_item_components_recipe
+            ON menu_item_components (recipe_id, menu_item_option_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS menu_cost_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                menu_item_option_id INTEGER NOT NULL,
+                reference_cost REAL NOT NULL,
+                current_cost REAL NOT NULL,
+                change_percent REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'OPEN'
+                    CHECK (status IN ('OPEN', 'RESOLVED')),
+                detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                FOREIGN KEY (menu_item_option_id)
+                    REFERENCES menu_item_options(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_cost_alerts_open_option
+            ON menu_cost_alerts (menu_item_option_id)
+            WHERE status = 'OPEN'
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS purchase_receipts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 receipt_code TEXT NOT NULL UNIQUE,
