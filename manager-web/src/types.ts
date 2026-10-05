@@ -327,3 +327,96 @@ export type StockAdjustment = {
   note: string | null;
   created_at: string;
 };
+
+
+export type RecipeIngredientInput = {
+  item_id: number;
+  unit_id: number;
+  quantity: number;
+};
+
+export type CostRecipeInput = {
+  output_quantity: number;
+  output_unit_id: number;
+  waste_percent: number;
+  alert_threshold_percent: number;
+  is_active: boolean;
+  items: RecipeIngredientInput[];
+};
+
+export type ServiceOptionCostInput = {
+  name: string;
+  note: string | null;
+  display_order: number;
+  is_active: boolean;
+  recipe: CostRecipeInput | null;
+};
+
+export type CostRecipeItem = {
+  id: number;
+  item_id: number;
+  item_name: string;
+  unit_id: number;
+  unit_name: string;
+  quantity: number;
+  conversion_factor: number;
+  quantity_in_smallest_unit: number;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  current_price_per_smallest_unit: number | null;
+  line_cost: number | null;
+  price_source_receipt_code: string | null;
+  price_source_receipt_time: string | null;
+};
+
+export type CostRecipe = {
+  id: number;
+  service_option_id: number;
+  output_quantity: number;
+  output_unit_id: number;
+  output_unit_name: string;
+  waste_percent: number;
+  alert_threshold_percent: number;
+  is_active: boolean;
+  reference_unit_cost: number | null;
+  base_cost: number | null;
+  total_cost: number | null;
+  current_unit_cost: number | null;
+  change_percent: number | null;
+  cost_complete: boolean;
+  has_open_alert: boolean;
+  items: CostRecipeItem[];
+};
+
+export type ServiceOptionCost = {
+  id: number;
+  name: string;
+  note: string | null;
+  display_order: number;
+  is_active: boolean;
+  recipe: CostRecipe | null;
+};
+
+export type CostAlert = {
+  id: number;
+  recipe_id: number;
+  service_option_id: number;
+  service_option_name: string;
+  reference_unit_cost: number;
+  current_unit_cost: number;
+  change_percent: number;
+  alert_threshold_percent: number;
+  status: "OPEN" | "RESOLVED";
+  detected_at: string;
+  resolved_at: string | null;
+};
+
+export type CostIngredientPrice = {
+  item_id: number;
+  item_name: string;
+  smallest_unit_id: number;
+  smallest_unit_name: string;
+  current_price_per_smallest_unit: number | null;
+  price_source_receipt_code: string | null;
+  price_source_receipt_time: string | null;
+};
