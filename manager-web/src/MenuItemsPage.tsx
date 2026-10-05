@@ -8,6 +8,7 @@ import {
   InputNumber,
   Modal,
   Select,
+  Space,
   Switch,
   Table,
   Tabs,
@@ -63,6 +64,14 @@ type ComponentDraft = {
   quantity?: number;
 };
 
+type IngredientDraft = {
+  key: string;
+  id?: number;
+  item_id?: number;
+  unit_id?: number;
+  quantity?: number;
+};
+
 type OptionDraft = {
   key: string;
   id?: number;
@@ -109,9 +118,11 @@ export default function MenuItemsPage() {
   const [acceptingOptionId, setAcceptingOptionId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [ingredientModalOpen, setIngredientModalOpen] = useState(false);
   const [componentModalOpen, setComponentModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editingOptionKey, setEditingOptionKey] = useState<string | null>(null);
+  const [ingredientDrafts, setIngredientDrafts] = useState<IngredientDraft[]>([]);
   const [optionDrafts, setOptionDrafts] = useState<OptionDraft[]>([]);
   const [form] = Form.useForm<MenuItemForm>();
   const [messageApi, messageContext] = message.useMessage();
@@ -228,11 +239,39 @@ export default function MenuItemsPage() {
     };
   };
 
-  const optionCost = (option: OptionDraft) => {
-    if (option.components.length === 0) {
-      return { complete: false, cost: null as number | null };
+  const ingredientCost = (ingredient: IngredientDraft) =>
+    componentCost({
+      key: ingredient.key,
+      component_type: "ITEM",
+      item_id: ingredient.item_id,
+      unit_id: ingredient.unit_id,
+      quantity: ingredient.quantity
+    });
+
+  const baseIngredientCost = () => {
+    if (ingredientDrafts.length === 0) {
+      return { complete: true, cost: 0 };
     }
     let cost = 0;
+    for (const ingredient of ingredientDrafts) {
+      const calc = ingredientCost(ingredient);
+      if (calc.lineCost === null) {
+        return { complete: false, cost: null as number | null };
+      }
+      cost += calc.lineCost;
+    }
+    return { complete: true, cost };
+  };
+
+  const optionCost = (option: OptionDraft) => {
+    if (option.components.length === 0 && ingredientDrafts.length === 0) {
+      return { complete: false, cost: null as number | null };
+    }
+    const base = baseIngredientCost();
+    if (!base.complete || base.cost === null) {
+      return { complete: false, cost: null as number | null };
+    }
+    let cost = base.cost;
     for (const component of option.components) {
       const calc = componentCost(component);
       if (calc.lineCost === null) return { complete: false, cost: null };
@@ -243,6 +282,7 @@ export default function MenuItemsPage() {
 
   const openCreate = () => {
     setEditingItem(null);
+    setIngredientDrafts([]);
     setOptionDrafts([]);
     form.resetFields();
     form.setFieldsValue({
@@ -264,6 +304,15 @@ export default function MenuItemsPage() {
       is_active: row.is_active,
       note: row.note ?? undefined
     });
+    setIngredientDrafts(
+      row.ingredients.map((ingredient) => ({
+        key: String(ingredient.id),
+        id: ingredient.id,
+        item_id: ingredient.item_id,
+        unit_id: ingredient.unit_id,
+        quantity: ingredient.quantity
+      }))
+    );
     setOptionDrafts(
       row.options.map((option) => ({
         key: String(option.id),
@@ -288,11 +337,32 @@ export default function MenuItemsPage() {
 
   const closeModal = () => {
     setModalOpen(false);
+    setIngredientModalOpen(false);
     setComponentModalOpen(false);
     setEditingOptionKey(null);
     setEditingItem(null);
+    setIngredientDrafts([]);
     setOptionDrafts([]);
     form.resetFields();
+  };
+
+  const addIngredient = () => {
+    setIngredientDrafts((current) => [
+      ...current,
+      {
+        key: "ingredient-" + Date.now() + "-" + current.length
+      }
+    ]);
+  };
+
+  const updateIngredient = (key: string, patch: Partial<IngredientDraft>) => {
+    setIngredientDrafts((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row))
+    );
+  };
+
+  const removeIngredient = (key: string) => {
+    setIngredientDrafts((current) => current.filter((row) => row.key !== key));
   };
 
   const addOption = () => {
@@ -376,6 +446,27 @@ export default function MenuItemsPage() {
     );
   };
 
+  const validateIngredients = () => {
+    const seen = new Set<string>();
+    for (const ingredient of ingredientDrafts) {
+      if (!ingredient.item_id || !ingredient.unit_id) {
+        messageApi.error("Chọn đủ nguyên liệu và đơn vị để trừ kho.");
+        return false;
+      }
+      if (!ingredient.quantity || ingredient.quantity <= 0) {
+        messageApi.error("Định lượng nguyên liệu phải lớn hơn 0.");
+        return false;
+      }
+      const key = ingredient.item_id + ":" + ingredient.unit_id;
+      if (seen.has(key)) {
+        messageApi.error("Một nguyên liệu cùng đơn vị chỉ được thêm một lần.");
+        return false;
+      }
+      seen.add(key);
+    }
+    return true;
+  };
+
   const validateOptions = () => {
     const selected = new Set<number>();
     for (const option of optionDrafts) {
@@ -389,7 +480,7 @@ export default function MenuItemsPage() {
       }
       selected.add(option.service_option_id);
 
-      if (option.components.length === 0) {
+      if (option.components.length === 0 && ingredientDrafts.length === 0) {
         const name = serviceOptionMap.get(option.service_option_id)?.name ?? "kiểu chế biến";
         messageApi.error("Chưa có định lượng cho " + name + ".");
         return false;
@@ -422,7 +513,7 @@ export default function MenuItemsPage() {
   const save = async () => {
     try {
       const values = await form.validateFields();
-      if (!validateOptions()) return;
+      if (!validateIngredients() || !validateOptions()) return;
 
       const payload: MenuItemInput = {
         name: values.name.trim(),
@@ -432,6 +523,11 @@ export default function MenuItemsPage() {
         display_order: Number(values.display_order ?? 0),
         is_active: values.is_active,
         note: values.note?.trim() || null,
+        ingredients: ingredientDrafts.map((ingredient) => ({
+          item_id: Number(ingredient.item_id),
+          unit_id: Number(ingredient.unit_id),
+          quantity: Number(ingredient.quantity)
+        })),
         options: optionDrafts.map((option) => ({
           service_option_id: Number(option.service_option_id),
           extra_price: Number(option.extra_price ?? 0),
@@ -517,7 +613,18 @@ export default function MenuItemsPage() {
         const complete = row.options
           .filter((option) => option.current_cost !== null)
           .map((option) => option.current_cost as number);
-        if (complete.length === 0) return <Text type="secondary">—</Text>;
+        if (complete.length === 0) {
+          if (row.ingredients.length === 0) return <Text type="secondary">—</Text>;
+          if (row.ingredients.some((ingredient) => !ingredient.cost_complete)) {
+            return <Tag color="warning">Chưa đủ giá</Tag>;
+          }
+          return formatMoney(
+            row.ingredients.reduce(
+              (sum, ingredient) => sum + Number(ingredient.line_cost ?? 0),
+              0
+            )
+          );
+        }
         const min = Math.min(...complete);
         const max = Math.max(...complete);
         return min === max ? formatMoney(min) : formatMoney(min) + " – " + formatMoney(max);
@@ -822,6 +929,107 @@ export default function MenuItemsPage() {
     }
   ];
 
+  const ingredientColumns: TableProps<IngredientDraft>["columns"] = [
+    {
+      title: "Nguyên liệu",
+      key: "item",
+      render: (_, ingredient) => (
+        <Select
+          showSearch
+          optionFilterProp="label"
+          value={ingredient.item_id}
+          style={{ width: "100%" }}
+          placeholder="Chọn hàng hóa"
+          options={inventoryItems.map((item) => ({
+            value: item.id,
+            label: item.name,
+            disabled: !item.is_active
+          }))}
+          onChange={(itemId) => {
+            const item = itemMap.get(itemId);
+            const preferred =
+              item?.conversions.find((row) => row.unit_id === item.default_unit_id) ??
+              item?.conversions[0];
+            updateIngredient(ingredient.key, {
+              item_id: itemId,
+              unit_id: preferred?.unit_id,
+              quantity: undefined
+            });
+          }}
+        />
+      )
+    },
+    {
+      title: "Số lượng",
+      key: "quantity",
+      width: 140,
+      render: (_, ingredient) => (
+        <InputNumber
+          min={0.000001}
+          step="any"
+          value={ingredient.quantity}
+          style={{ width: "100%" }}
+          onChange={(value) =>
+            updateIngredient(ingredient.key, {
+              quantity: typeof value === "number" ? value : undefined
+            })
+          }
+        />
+      )
+    },
+    {
+      title: "ĐVT",
+      key: "unit",
+      width: 140,
+      render: (_, ingredient) => {
+        const item = ingredient.item_id ? itemMap.get(ingredient.item_id) : undefined;
+        return (
+          <Select
+            value={ingredient.unit_id}
+            style={{ width: "100%" }}
+            disabled={!item}
+            options={(item?.conversions ?? []).map((row) => ({
+              value: row.unit_id,
+              label: row.unit_name,
+              disabled: !row.is_active
+            }))}
+            onChange={(unitId) => updateIngredient(ingredient.key, { unit_id: unitId })}
+          />
+        );
+      }
+    },
+    {
+      title: "Cost / ĐVT",
+      key: "unit_cost",
+      width: 140,
+      render: (_, ingredient) => {
+        const calc = ingredientCost(ingredient);
+        return calc.unitCost === null
+          ? <Tag color="warning">Thiếu giá</Tag>
+          : formatMoney(calc.unitCost);
+      }
+    },
+    {
+      title: "Thành tiền",
+      key: "line_cost",
+      width: 140,
+      render: (_, ingredient) => {
+        const calc = ingredientCost(ingredient);
+        return calc.lineCost === null ? "—" : formatMoney(calc.lineCost);
+      }
+    },
+    {
+      title: "",
+      key: "remove",
+      width: 60,
+      render: (_, ingredient) => (
+        <Button danger type="text" onClick={() => removeIngredient(ingredient.key)}>
+          Xóa
+        </Button>
+      )
+    }
+  ];
+
   const alertColumns: TableProps<MenuCostAlert>["columns"] = [
     {
       title: "Món",
@@ -1038,9 +1246,17 @@ export default function MenuItemsPage() {
           className="menu-options-card"
           title="Kiểu chế biến & định lượng"
           extra={
-            <Button icon={<PlusOutlined />} onClick={addOption}>
-              Thêm kiểu chế biến
-            </Button>
+            <Space>
+              <Button
+                icon={<PlusOutlined />}
+                onClick={() => setIngredientModalOpen(true)}
+              >
+                Nguyên liệu{ingredientDrafts.length ? " (" + ingredientDrafts.length + ")" : ""}
+              </Button>
+              <Button icon={<PlusOutlined />} onClick={addOption}>
+                Thêm kiểu chế biến
+              </Button>
+            </Space>
           }
         >
           <Table<OptionDraft>
@@ -1061,6 +1277,52 @@ export default function MenuItemsPage() {
             Giá nguyên liệu/sốt tăng đủ ngưỡng sẽ cảnh báo, không thay giá bán.
           </Text>
         </div>
+      </Modal>
+
+      <Modal
+        open={ingredientModalOpen}
+        width={900}
+        title="Nguyên liệu trừ kho"
+        footer={
+          <Button type="primary" onClick={() => setIngredientModalOpen(false)}>
+            Xong
+          </Button>
+        }
+        onCancel={() => setIngredientModalOpen(false)}
+      >
+        <div className="menu-component-heading">
+          <div>
+            <Text strong>Nguyên liệu chung của món</Text>
+            <div>
+              <Text type="secondary">
+                Khi bán 1 món, kho sẽ trừ đúng định lượng này. Kiểu chế biến chỉ cần khai báo phần nguyên liệu thêm nếu có.
+              </Text>
+            </div>
+          </div>
+          <Button icon={<PlusOutlined />} onClick={addIngredient}>
+            Thêm nguyên liệu
+          </Button>
+        </div>
+
+        <Table<IngredientDraft>
+          rowKey="key"
+          dataSource={ingredientDrafts}
+          columns={ingredientColumns}
+          pagination={false}
+          size="small"
+          locale={{ emptyText: "Chưa có nguyên liệu trừ kho." }}
+        />
+
+        {ingredientDrafts.length > 0 && (
+          <div className="menu-component-total">
+            <Text type="secondary">Cost nguyên liệu chung</Text>
+            <Title level={4} style={{ margin: 0 }}>
+              {baseIngredientCost().complete
+                ? formatMoney(baseIngredientCost().cost)
+                : "Chưa đủ dữ liệu"}
+            </Title>
+          </div>
+        )}
       </Modal>
 
       <Modal
@@ -1090,10 +1352,10 @@ export default function MenuItemsPage() {
       >
         <div className="menu-component-heading">
           <div>
-            <Text strong>Thành phần của món sau khi chọn kiểu chế biến</Text>
+            <Text strong>Thành phần thêm theo kiểu chế biến</Text>
             <div>
               <Text type="secondary">
-                Dùng hàng hóa trực tiếp và sốt/bán thành phẩm đã tính ở tầng 1.
+                Chỉ khai báo phần phát sinh theo kiểu chế biến; nguyên liệu chung đã khai báo ở nút Nguyên liệu.
               </Text>
             </div>
           </div>
