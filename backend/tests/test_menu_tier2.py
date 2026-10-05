@@ -208,7 +208,6 @@ def test_menu_tier_2_uses_raw_item_and_sauce_recipe(tmp_path, monkeypatch):
                     {
                         "service_option_id": hap.json()["id"],
                         "extra_price": 0,
-                        "alert_threshold_percent": 5,
                         "display_order": 1,
                         "is_active": True,
                         "components": [
@@ -224,7 +223,6 @@ def test_menu_tier_2_uses_raw_item_and_sauce_recipe(tmp_path, monkeypatch):
                     {
                         "service_option_id": salted_body["id"],
                         "extra_price": 20_000,
-                        "alert_threshold_percent": 5,
                         "display_order": 2,
                         "is_active": True,
                         "components": [
@@ -271,20 +269,33 @@ def test_menu_tier_2_uses_raw_item_and_sauce_recipe(tmp_path, monkeypatch):
         alerts = client.get("/api/menu/alerts")
         assert alerts.status_code == 200
         alert_rows = alerts.json()
-        assert len(alert_rows) == 2
+        assert len(alert_rows) == 1
 
-        salted_alert = next(
-            row for row in alert_rows if row["service_option_name"] == "Trứng muối"
-        )
-        assert round(salted_alert["reference_cost"], 2) == 87_000
-        assert round(salted_alert["current_cost"], 2) == 102_000
-        assert round(salted_alert["change_percent"], 2) == 17.24
+        menu_alert = alert_rows[0]
+        assert menu_alert["menu_item_id"] == body["id"]
+        assert round(menu_alert["reference_cost"], 2) == 75_000
+        assert round(menu_alert["current_cost"], 2) == 90_000
+        assert round(menu_alert["change_percent"], 2) == 20.0
+        assert round(menu_alert["alert_threshold_percent"], 2) == 3.0
 
         accepted = client.post(
-            f"/api/menu/item-options/{salted_alert['menu_item_option_id']}/accept-current-cost"
+            f"/api/menu/items/{body['id']}/accept-current-cost"
         )
         assert accepted.status_code == 200
-        assert round(accepted.json()["reference_cost"], 2) == 102_000
+        accepted_body = accepted.json()
+        accepted_by_name = {
+            row["service_option_name"]: row
+            for row in accepted_body["options"]
+        }
+        assert round(accepted_by_name["Hấp"]["reference_cost"], 2) == 90_000
+        assert round(
+            accepted_by_name["Trứng muối"]["reference_cost"],
+            2,
+        ) == 102_000
+
+        alerts_after_accept = client.get("/api/menu/alerts")
+        assert alerts_after_accept.status_code == 200
+        assert alerts_after_accept.json() == []
 
 
 def test_menu_group_name_is_case_insensitive_unique(tmp_path, monkeypatch):
