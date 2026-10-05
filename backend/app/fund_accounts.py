@@ -224,6 +224,7 @@ def create_fund_account(payload: FundAccountInput) -> FundAccountOutput:
                 account_name,
                 note,
                 is_active,
+                is_default,
                 current_balance
             FROM fund_accounts
             WHERE id = ?
