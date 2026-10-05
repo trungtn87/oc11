@@ -77,6 +77,8 @@ import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import CostRecipesPage from "./CostRecipesPage";
+import MenuGroupsPage from "./MenuGroupsPage";
+import MenuItemsPage from "./MenuItemsPage";
 import oc11HomeLogo from "./assets/oc11-logo.png";
 import type {
   BackupStatus,
@@ -167,6 +169,16 @@ const menuItems: MenuProps["items"] = [
     icon: <BookOutlined />,
     label: "Thực đơn",
     children: [
+      {
+        key: "menu-items",
+        icon: <BarsOutlined />,
+        label: "Món thực đơn"
+      },
+      {
+        key: "menu-groups",
+        icon: <TagsOutlined />,
+        label: "Nhóm thực đơn"
+      },
       {
         key: "menu-cost",
         icon: <AuditOutlined />,
@@ -2486,6 +2498,8 @@ const pageTitles: Record<string, string> = {
   "sales-returns": "Trả hàng",
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
+  "menu-items": "Món thực đơn",
+  "menu-groups": "Nhóm thực đơn",
   "menu-cost": "Kiểu chế biến & Cost",
   "purchase-orders": "Phiếu nhập",
   "suppliers": "Nhà cung cấp",
@@ -2529,6 +2543,14 @@ function App() {
 
     if (page === "suppliers") {
       return <SuppliersPage />;
+    }
+
+    if (page === "menu-items") {
+      return <MenuItemsPage />;
+    }
+
+    if (page === "menu-groups") {
+      return <MenuGroupsPage />;
     }
 
     if (page === "menu-cost") {
