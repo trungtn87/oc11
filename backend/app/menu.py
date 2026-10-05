@@ -35,6 +35,12 @@ class MenuComponentInput(BaseModel):
     quantity: float = Field(gt=0)
 
 
+class MenuIngredientInput(BaseModel):
+    item_id: int
+    unit_id: int
+    quantity: float = Field(gt=0)
+
+
 class MenuItemOptionInput(BaseModel):
     service_option_id: int
     extra_price: int = Field(default=0, ge=0)
@@ -52,7 +58,20 @@ class MenuItemInput(BaseModel):
     display_order: int = Field(default=0, ge=0)
     is_active: bool = True
     note: str | None = Field(default=None, max_length=500)
+    ingredients: list[MenuIngredientInput] = Field(default_factory=list)
     options: list[MenuItemOptionInput] = Field(default_factory=list)
+
+
+class MenuIngredientOutput(BaseModel):
+    id: int
+    item_id: int
+    item_name: str
+    unit_id: int
+    unit_name: str
+    quantity: float
+    unit_cost: float | None
+    line_cost: float | None
+    cost_complete: bool
 
 
 class MenuComponentOutput(BaseModel):
@@ -100,6 +119,7 @@ class MenuItemOutput(BaseModel):
     display_order: int
     is_active: bool
     note: str | None
+    ingredients: list[MenuIngredientOutput]
     options: list[MenuItemOptionOutput]
 
 
@@ -259,6 +279,22 @@ def validate_component(
     )
 
 
+def validate_ingredients(
+    connection: sqlite3.Connection,
+    ingredients: list[MenuIngredientInput],
+) -> None:
+    seen: set[tuple[int, int]] = set()
+    for ingredient in ingredients:
+        get_item_conversion(connection, ingredient.item_id, ingredient.unit_id)
+        key = (ingredient.item_id, ingredient.unit_id)
+        if key in seen:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Một nguyên liệu cùng đơn vị chỉ được khai báo một lần.",
+            )
+        seen.add(key)
+
+
 def validate_options(
     connection: sqlite3.Connection,
     options: list[MenuItemOptionInput],
@@ -316,6 +352,29 @@ def select_menu_item(
     ).fetchone()
 
 
+def select_menu_ingredients(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT
+            mii.id,
+            mii.item_id,
+            i.name AS item_name,
+            mii.unit_id,
+            u.name AS unit_name,
+            mii.quantity
+        FROM menu_item_ingredients AS mii
+        JOIN items AS i ON i.id = mii.item_id
+        JOIN units AS u ON u.id = mii.unit_id
+        WHERE mii.menu_item_id = ?
+        ORDER BY mii.id ASC
+        """,
+        (menu_item_id,),
+    ).fetchall()
+
+
 def select_components(
     connection: sqlite3.Connection,
     menu_item_option_id: int,
@@ -346,16 +405,70 @@ def select_components(
     ).fetchall()
 
 
+def calculate_menu_ingredients(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> tuple[list[MenuIngredientOutput], float, bool]:
+    rows = select_menu_ingredients(connection, menu_item_id)
+    outputs: list[MenuIngredientOutput] = []
+    total_cost = 0.0
+    complete = True
+
+    for row in rows:
+        conversion = get_item_conversion(
+            connection,
+            int(row["item_id"]),
+            int(row["unit_id"]),
+        )
+        price = latest_item_cost(connection, int(row["item_id"]))
+        current_price = price["price"]
+        unit_cost: float | None = None
+        line_cost: float | None = None
+        if current_price is not None:
+            unit_cost = float(current_price) * float(conversion["conversion_factor"])
+            line_cost = float(row["quantity"]) * unit_cost
+            total_cost += line_cost
+        else:
+            complete = False
+
+        outputs.append(
+            MenuIngredientOutput(
+                id=int(row["id"]),
+                item_id=int(row["item_id"]),
+                item_name=row["item_name"],
+                unit_id=int(row["unit_id"]),
+                unit_name=row["unit_name"],
+                quantity=float(row["quantity"]),
+                unit_cost=unit_cost,
+                line_cost=line_cost,
+                cost_complete=line_cost is not None,
+            )
+        )
+
+    return outputs, total_cost, complete
+
+
 def calculate_menu_option(
     connection: sqlite3.Connection,
     menu_item_option_id: int,
 ) -> tuple[list[MenuComponentOutput], float | None, bool]:
+    option_row = connection.execute(
+        "SELECT menu_item_id FROM menu_item_options WHERE id = ?",
+        (menu_item_option_id,),
+    ).fetchone()
+    if option_row is None:
+        return [], None, False
+
+    base_ingredients, base_cost, base_complete = calculate_menu_ingredients(
+        connection,
+        int(option_row["menu_item_id"]),
+    )
     rows = select_components(connection, menu_item_option_id)
     outputs: list[MenuComponentOutput] = []
-    total_cost = 0.0
-    complete = True
+    total_cost = base_cost
+    complete = base_complete
 
-    if not rows:
+    if not rows and not base_ingredients:
         complete = False
 
     for row in rows:
@@ -517,7 +630,35 @@ def menu_item_to_output(
         display_order=int(row["display_order"]),
         is_active=bool(row["is_active"]),
         note=row["note"],
+        ingredients=calculate_menu_ingredients(
+            connection,
+            int(row["id"]),
+        )[0],
         options=options,
+    )
+
+
+def ingredient_signature_from_rows(rows: list[sqlite3.Row]) -> tuple:
+    return tuple(
+        (
+            int(row["item_id"]),
+            int(row["unit_id"]),
+            round(float(row["quantity"]), 9),
+        )
+        for row in rows
+    )
+
+
+def ingredient_signature_from_payload(
+    ingredients: list[MenuIngredientInput],
+) -> tuple:
+    return tuple(
+        (
+            ingredient.item_id,
+            ingredient.unit_id,
+            round(float(ingredient.quantity), 9),
+        )
+        for ingredient in ingredients
     )
 
 
@@ -688,17 +829,21 @@ def refresh_menu_cost_alerts_for_items(
     with connect() as connection:
         if item_ids:
             placeholders = ",".join("?" for _ in item_ids)
-            params = tuple(item_ids) + tuple(item_ids)
+            params = tuple(item_ids) + tuple(item_ids) + tuple(item_ids)
             rows = connection.execute(
                 f"""
                 SELECT DISTINCT mio.id
                 FROM menu_item_options AS mio
-                JOIN menu_item_components AS mic
+                LEFT JOIN menu_item_ingredients AS mii
+                  ON mii.menu_item_id = mio.menu_item_id
+                LEFT JOIN menu_item_components AS mic
                   ON mic.menu_item_option_id = mio.id
                 LEFT JOIN recipe_items AS ri
                   ON mic.component_type = 'RECIPE'
                  AND ri.recipe_id = mic.recipe_id
                 WHERE
+                    mii.item_id IN ({placeholders})
+                    OR
                     (
                         mic.component_type = 'ITEM'
                         AND mic.item_id IN ({placeholders})
@@ -738,6 +883,35 @@ def refresh_menu_cost_alerts_for_recipes(recipe_ids: list[int]) -> None:
         for row in rows:
             refresh_menu_option_alert(connection, int(row["id"]))
         connection.commit()
+
+
+def replace_menu_item_ingredients(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+    ingredients: list[MenuIngredientInput],
+) -> None:
+    connection.execute(
+        "DELETE FROM menu_item_ingredients WHERE menu_item_id = ?",
+        (menu_item_id,),
+    )
+    for ingredient in ingredients:
+        connection.execute(
+            """
+            INSERT INTO menu_item_ingredients (
+                menu_item_id,
+                item_id,
+                unit_id,
+                quantity
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                menu_item_id,
+                ingredient.item_id,
+                ingredient.unit_id,
+                ingredient.quantity,
+            ),
+        )
 
 
 def replace_option_components(
@@ -1026,6 +1200,7 @@ def create_menu_item(payload: MenuItemInput) -> MenuItemOutput:
             menu_group_id=payload.menu_group_id,
             name=name,
         )
+        validate_ingredients(connection, payload.ingredients)
         validate_options(connection, payload.options)
 
         cursor = connection.execute(
@@ -1052,6 +1227,7 @@ def create_menu_item(payload: MenuItemInput) -> MenuItemOutput:
             ),
         )
         menu_item_id = int(cursor.lastrowid)
+        replace_menu_item_ingredients(connection, menu_item_id, payload.ingredients)
         replace_menu_item_options(connection, menu_item_id, payload.options)
         connection.commit()
 
@@ -1091,7 +1267,14 @@ def update_menu_item(
             name=name,
             exclude_id=menu_item_id,
         )
+        validate_ingredients(connection, payload.ingredients)
         validate_options(connection, payload.options)
+        ingredients_changed = (
+            ingredient_signature_from_rows(
+                select_menu_ingredients(connection, menu_item_id)
+            )
+            != ingredient_signature_from_payload(payload.ingredients)
+        )
 
         connection.execute(
             """
@@ -1116,7 +1299,11 @@ def update_menu_item(
                 menu_item_id,
             ),
         )
+        replace_menu_item_ingredients(connection, menu_item_id, payload.ingredients)
         replace_menu_item_options(connection, menu_item_id, payload.options)
+        if ingredients_changed:
+            for option in select_options(connection, menu_item_id):
+                set_menu_reference_to_current(connection, int(option["id"]))
         connection.commit()
 
         row = select_menu_item(connection, menu_item_id)
