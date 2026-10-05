@@ -1717,3 +1717,52 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+/* Inventory consumption */
+.consumption-filter-card,
+.consumption-preview-card {
+  margin-bottom: 12px;
+}
+
+.consumption-filters {
+  display: grid;
+  grid-template-columns: 150px 150px 190px minmax(220px, 1fr) 190px 90px;
+  gap: 12px;
+  align-items: end;
+}
+
+.consumption-filters label,
+.consumption-preview-controls label {
+  display: grid;
+  gap: 6px;
+}
+
+.consumption-show-all {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.consumption-info {
+  margin-bottom: 12px;
+}
+
+.consumption-preview-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(200px, 1fr) 130px 140px;
+  gap: 12px;
+  align-items: end;
+}
+
+@media (max-width: 1150px) {
+  .consumption-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .consumption-preview-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
