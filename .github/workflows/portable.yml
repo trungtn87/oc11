@@ -50,6 +50,7 @@ jobs:
         shell: pwsh
         run: |
           $env:OC11_NO_BROWSER = "1"
+          $env:OC11_NO_STARTUP_REGISTER = "1"
           $process = Start-Process -FilePath "dist/OC11.exe" -PassThru -WindowStyle Hidden
           try {
             $healthy = $false
@@ -107,10 +108,16 @@ jobs:
           - oc11_latest.db la ban moi nhat.
           - oc11_YYYY-MM-DD.db la ban theo ngay.
 
+          Khoi dong cung Windows:
+          - Sau khi chay OC11.exe mot lan, ung dung tu dang ky vao Startup Apps.
+          - Khi Windows dang nhap, OC11 chay ngam va khong tu mo trinh duyet.
+          - Khi can dung, bam OC11.exe; neu server dang chay, trinh duyet se mo ngay.
+
           Cap nhat:
           - Tai ban OC11-Portable.zip moi.
-          - Dong OC11.exe cu.
-          - Thay file OC11.exe, GIU NGUYEN thu muc data.
+          - Chay OC11.exe ban moi.
+          - Ban moi se tu dong dong OC11.exe cu neu no dang chiem cong 8000.
+          - GIU NGUYEN thu muc data/oc11.db khi thay file OC11.exe.
           "@ | Set-Content -Encoding UTF8 "portable/OC11-Portable/HUONG-DAN.txt"
 
           @"
