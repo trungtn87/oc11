@@ -1495,3 +1495,118 @@ body {
   line-height: 19px;
   padding-inline: 6px;
 }
+
+
+/* Dashboard live data */
+.dashboard-error {
+  margin-top: 6px;
+}
+
+.dashboard-stock-summary {
+  display: flex;
+  min-height: 190px;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+.dashboard-stock-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-money-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-money-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #e8edf4;
+  border-radius: 9px;
+}
+
+.dashboard-money-in {
+  color: #389e0d;
+}
+
+.dashboard-section-note {
+  display: block;
+  margin-top: 12px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dashboard-mini-list,
+.dashboard-activity-list {
+  display: grid;
+  gap: 0;
+}
+
+.dashboard-mini-row,
+.dashboard-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 0;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.dashboard-mini-row:last-child,
+.dashboard-activity-row:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-mini-row > div:first-child,
+.dashboard-activity-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.dashboard-mini-row > .ant-typography:last-child,
+.dashboard-activity-row > .ant-typography:last-child {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dashboard-activity-row .activity-dot {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 0 4px #eaf2ff;
+}
+
+.dashboard-activity-row .activity-dot-in {
+  background: #52c41a;
+  box-shadow: 0 0 0 4px #f0f9eb;
+}
+
+.dashboard-activity-row .activity-dot-out {
+  background: #ff4d4f;
+  box-shadow: 0 0 0 4px #fff1f0;
+}
+
+.dashboard-activity-row .activity-dot-purchase {
+  background: #1677ff;
+}
+
+@media (max-width: 760px) {
+  .dashboard-stock-summary {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .dashboard-money-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-mini-row,
+  .dashboard-activity-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
