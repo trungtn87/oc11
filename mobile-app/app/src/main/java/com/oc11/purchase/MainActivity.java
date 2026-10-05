@@ -323,7 +323,24 @@ public class MainActivity extends Activity {
         }
 
         LinearLayout form = vertical();
-        form.setPadding(dp(16), dp(4), dp(16), dp(12));
+        form.setPadding(dp(12), dp(4), dp(12), dp(10));
+
+        LinearLayout tabBar = new LinearLayout(this);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        Button infoTabButton = button("1. Thông tin");
+        Button goodsTabButton = button("2. Hàng hóa");
+        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        infoTabButton.setLayoutParams(tabLp);
+        goodsTabButton.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        tabBar.addView(infoTabButton);
+        tabBar.addView(goodsTabButton);
+        form.addView(tabBar);
+        form.addView(spacer(6));
+
+        LinearLayout infoTab = vertical();
+        LinearLayout goodsTab = vertical();
+        form.addView(infoTab);
+        form.addView(goodsTab);
 
         TextView supplierLabel = text("Nhà cung cấp", 13, true);
         Spinner supplierSpinner = new Spinner(this);
@@ -336,41 +353,35 @@ public class MainActivity extends Activity {
             supplierIds.add(s.optInt("id"));
         }
         supplierSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, supplierNames));
-        form.addView(supplierLabel);
-        form.addView(supplierSpinner);
+        infoTab.addView(supplierLabel);
+        infoTab.addView(supplierSpinner);
 
-        form.addView(spacer(8));
-        form.addView(text("Thanh toán", 13, true));
+        infoTab.addView(spacer(8));
+        infoTab.addView(text("Thanh toán", 13, true));
         Spinner paymentSpinner = new Spinner(this);
         paymentSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Đã thanh toán", "Trả nợ"}));
-        form.addView(paymentSpinner);
+        infoTab.addView(paymentSpinner);
 
-        form.addView(text("Loại tiền", 13, true));
+        infoTab.addView(text("Loại tiền", 13, true));
         Spinner moneyType = new Spinner(this);
         moneyType.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Tiền mặt", "Ngân hàng"}));
-        form.addView(moneyType);
+        infoTab.addView(moneyType);
 
-        form.addView(text("Quỹ / tài khoản", 13, true));
+        infoTab.addView(text("Quỹ / tài khoản", 13, true));
         Spinner fundSpinner = new Spinner(this);
-        form.addView(fundSpinner);
+        infoTab.addView(fundSpinner);
 
         EditText shipping = new EditText(this);
         shipping.setHint("Phí vận chuyển");
         shipping.setInputType(InputType.TYPE_CLASS_NUMBER);
-        form.addView(shipping);
+        infoTab.addView(shipping);
 
         EditText note = new EditText(this);
         note.setHint("Ghi chú");
         note.setSingleLine(false);
-        form.addView(note);
-
-        form.addView(spacer(8));
-        TextView linesTitle = text("Hàng hóa", 15, true);
-        form.addView(linesTitle);
-        LinearLayout linesBox = vertical();
-        form.addView(linesBox);
+        infoTab.addView(note);
 
         final JSONArray lines = new JSONArray();
         if (existing != null) {
@@ -383,12 +394,48 @@ public class MainActivity extends Activity {
             }
         }
 
-        Button addLine = button("+ Thêm hàng hóa");
-        form.addView(addLine);
+        TextView goodsCount = text("", 13, false);
+        goodsCount.setTextColor(Color.DKGRAY);
+        goodsTab.addView(goodsCount);
+        goodsTab.addView(spacer(4));
 
-        Runnable refreshLines = () -> renderLines(linesBox, lines, items);
+        LinearLayout linesBox = vertical();
+        goodsTab.addView(linesBox);
+
+        Button addLine = button("+ Thêm hàng hóa");
+        goodsTab.addView(addLine);
+        goodsTab.addView(spacer(10));
+
+        LinearLayout totalRow = new LinearLayout(this);
+        totalRow.setOrientation(LinearLayout.HORIZONTAL);
+        totalRow.setGravity(Gravity.CENTER_VERTICAL);
+        totalRow.setPadding(dp(4), dp(8), dp(4), dp(8));
+        TextView totalLabel = text("TỔNG TIỀN", 15, true);
+        TextView totalText = text("0 đ", 20, true);
+        totalText.setGravity(Gravity.END);
+        totalRow.addView(totalLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        totalRow.addView(totalText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        goodsTab.addView(totalRow);
+
+        Runnable refreshLines = () -> {
+            renderLines(linesBox, lines, items);
+            goodsCount.setText(lines.length() + " mặt hàng");
+            long total = parseLong(shipping.getText().toString());
+            for (int i = 0; i < lines.length(); i++) {
+                JSONObject line = lines.optJSONObject(i);
+                if (line != null) {
+                    total += Math.round(line.optDouble("quantity", 0) * line.optLong("unit_price", 0));
+                }
+            }
+            totalText.setText(MONEY.format(total) + " đ");
+        };
         addLine.setOnClickListener(v -> showLineDialog(items, lines, refreshLines));
-        refreshLines.run();
+
+        shipping.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { refreshLines.run(); }
+            @Override public void afterTextChanged(Editable s) {}
+        });
 
         final Runnable refreshFunds = () -> {
             boolean bank = moneyType.getSelectedItemPosition() == 1;
@@ -439,6 +486,24 @@ public class MainActivity extends Activity {
             }
         }
 
+        Runnable showInfoTab = () -> {
+            infoTab.setVisibility(View.VISIBLE);
+            goodsTab.setVisibility(View.GONE);
+            infoTabButton.setEnabled(false);
+            goodsTabButton.setEnabled(true);
+        };
+        Runnable showGoodsTab = () -> {
+            infoTab.setVisibility(View.GONE);
+            goodsTab.setVisibility(View.VISIBLE);
+            infoTabButton.setEnabled(true);
+            goodsTabButton.setEnabled(false);
+            refreshLines.run();
+        };
+        infoTabButton.setOnClickListener(v -> showInfoTab.run());
+        goodsTabButton.setOnClickListener(v -> showGoodsTab.run());
+        showInfoTab.run();
+        refreshLines.run();
+
         ScrollView sc = new ScrollView(this);
         sc.addView(form);
 
@@ -452,8 +517,14 @@ public class MainActivity extends Activity {
 
         dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
-                if (lines.length() == 0) throw new Exception("Chưa có hàng hóa.");
-                if (supplierSpinner.getSelectedItemPosition() < 0) throw new Exception("Chưa chọn nhà cung cấp.");
+                if (lines.length() == 0) {
+                    showGoodsTab.run();
+                    throw new Exception("Chưa có hàng hóa.");
+                }
+                if (supplierSpinner.getSelectedItemPosition() < 0) {
+                    showInfoTab.run();
+                    throw new Exception("Chưa chọn nhà cung cấp.");
+                }
 
                 JSONObject payload = finalExisting == null ? new JSONObject() : copyJson(finalExisting);
                 if (!payload.has("client_sync_id")) payload.put("client_sync_id", UUID.randomUUID().toString());
@@ -468,6 +539,7 @@ public class MainActivity extends Activity {
                     @SuppressWarnings("unchecked")
                     List<Integer> fundIds = (List<Integer>) fundSpinner.getTag();
                     if (fundIds == null || fundIds.isEmpty() || fundSpinner.getSelectedItemPosition() < 0) {
+                        showInfoTab.run();
                         throw new Exception("Chưa có quỹ/tài khoản phù hợp.");
                     }
                     payload.put("payment_status", "PAID");
@@ -499,14 +571,50 @@ public class MainActivity extends Activity {
             JSONObject line = lines.optJSONObject(i);
             if (line == null) continue;
             int index = i;
-            LinearLayout c = card();
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(10), dp(8), dp(6), dp(8));
+
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(Color.WHITE);
+            bg.setCornerRadius(dp(10));
+            bg.setStroke(dp(1), Color.rgb(225, 230, 235));
+            row.setBackground(bg);
+
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rowLp.setMargins(0, 0, 0, dp(7));
+            row.setLayoutParams(rowLp);
+
             String itemName = itemName(items, line.optInt("item_id"));
             String unitName = unitName(items, line.optInt("item_id"), line.optInt("unit_id"));
             double qty = line.optDouble("quantity", 0);
             long price = line.optLong("unit_price", 0);
-            c.addView(text(itemName, 14, true));
-            c.addView(text(trimNumber(qty) + " " + unitName + " × " + MONEY.format(price) + " đ", 13, false));
-            Button remove = button("Xóa dòng");
+            long lineTotal = Math.round(qty * price);
+
+            LinearLayout itemInfo = vertical();
+            itemInfo.addView(text(itemName, 14, true));
+            TextView detail = text(trimNumber(qty) + " " + unitName + " × " + MONEY.format(price) + " đ", 12, false);
+            detail.setTextColor(Color.DKGRAY);
+            itemInfo.addView(detail);
+            row.addView(itemInfo, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            TextView amount = text(MONEY.format(lineTotal) + " đ", 14, true);
+            amount.setGravity(Gravity.END);
+            LinearLayout.LayoutParams amountLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            amountLp.setMargins(dp(8), 0, dp(4), 0);
+            row.addView(amount, amountLp);
+
+            Button remove = button("×");
+            remove.setTextSize(22);
+            remove.setMinWidth(dp(42));
+            remove.setMinimumWidth(dp(42));
+            remove.setMinHeight(dp(42));
+            remove.setMinimumHeight(dp(42));
+            remove.setPadding(0, 0, 0, 0);
             remove.setOnClickListener(v -> {
                 JSONArray next = new JSONArray();
                 for (int j = 0; j < lines.length(); j++) if (j != index) next.put(lines.opt(j));
@@ -514,8 +622,9 @@ public class MainActivity extends Activity {
                 for (int j = 0; j < next.length(); j++) lines.put(next.opt(j));
                 renderLines(box, lines, items);
             });
-            c.addView(remove);
-            box.addView(c);
+            row.addView(remove, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+            box.addView(row);
         }
     }
 
