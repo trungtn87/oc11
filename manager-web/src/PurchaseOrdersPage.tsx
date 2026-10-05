@@ -821,7 +821,20 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
                         { value: "CASH", label: "Tiền mặt" },
                         { value: "BANK", label: "Tiền gửi" }
                       ]}
-                      onChange={() => form.setFieldValue("fund_account_id", undefined)}
+                      onChange={(nextType: FundAccountType) => {
+                        const preferred =
+                          accounts.find(
+                            (account) =>
+                              account.is_active &&
+                              account.type === nextType &&
+                              account.is_default
+                          ) ??
+                          accounts.find(
+                            (account) =>
+                              account.is_active && account.type === nextType
+                          );
+                        form.setFieldValue("fund_account_id", preferred?.id);
+                      }}
                     />
                   </Form.Item>
                   <Form.Item
