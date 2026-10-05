@@ -44,7 +44,7 @@ class MenuIngredientInput(BaseModel):
 class MenuItemOptionInput(BaseModel):
     service_option_id: int
     extra_price: int = Field(default=0, ge=0)
-    alert_threshold_percent: float = Field(default=5, gt=0, le=100)
+    alert_threshold_percent: float = Field(default=3, gt=0, le=100)
     display_order: int = Field(default=0, ge=0)
     is_active: bool = True
     components: list[MenuComponentInput] = Field(default_factory=list)
@@ -116,6 +116,9 @@ class MenuItemOutput(BaseModel):
     sale_unit_id: int
     sale_unit_name: str
     base_price: int
+    alert_threshold_percent: float
+    reference_cost: float | None
+    has_open_alert: bool
     display_order: int
     is_active: bool
     note: str | None
@@ -125,11 +128,8 @@ class MenuItemOutput(BaseModel):
 
 class MenuCostAlertOutput(BaseModel):
     id: int
-    menu_item_option_id: int
     menu_item_id: int
     menu_item_name: str
-    service_option_id: int
-    service_option_name: str
     reference_cost: float
     current_cost: float
     change_percent: float
@@ -340,6 +340,8 @@ def select_menu_item(
             mi.sale_unit_id,
             u.name AS sale_unit_name,
             mi.base_price,
+            mi.alert_threshold_percent,
+            mi.reference_cost,
             mi.display_order,
             mi.is_active,
             mi.note
@@ -524,6 +526,22 @@ def calculate_menu_option(
     return outputs, total_cost if complete else None, complete
 
 
+def open_menu_item_alert_exists(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> bool:
+    row = connection.execute(
+        """
+        SELECT id
+        FROM menu_item_cost_alerts
+        WHERE menu_item_id = ? AND status = 'OPEN'
+        LIMIT 1
+        """,
+        (menu_item_id,),
+    ).fetchone()
+    return row is not None
+
+
 def open_menu_alert_exists(
     connection: sqlite3.Connection,
     menu_item_option_id: int,
@@ -582,7 +600,7 @@ def option_to_output(
         change_percent=change_percent,
         cost_percent=cost_percent,
         cost_complete=complete,
-        has_open_alert=open_menu_alert_exists(connection, int(row["id"])),
+        has_open_alert=False,
         components=components,
     )
 
@@ -627,6 +645,16 @@ def menu_item_to_output(
         sale_unit_id=int(row["sale_unit_id"]),
         sale_unit_name=row["sale_unit_name"],
         base_price=int(row["base_price"]),
+        alert_threshold_percent=float(row["alert_threshold_percent"]),
+        reference_cost=(
+            float(row["reference_cost"])
+            if row["reference_cost"] is not None
+            else None
+        ),
+        has_open_alert=open_menu_item_alert_exists(
+            connection,
+            int(row["id"]),
+        ),
         display_order=int(row["display_order"]),
         is_active=bool(row["is_active"]),
         note=row["note"],
@@ -688,6 +716,210 @@ def component_signature_from_payload(
         )
         for component in components
     )
+
+
+def set_menu_item_base_reference_to_current(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> float | None:
+    ingredients, current_cost, complete = calculate_menu_ingredients(
+        connection,
+        menu_item_id,
+    )
+    reference = current_cost if ingredients and complete else None
+    connection.execute(
+        "UPDATE menu_items SET reference_cost = ? WHERE id = ?",
+        (reference, menu_item_id),
+    )
+    connection.execute(
+        """
+        UPDATE menu_item_cost_alerts
+        SET status = 'RESOLVED', resolved_at = CURRENT_TIMESTAMP
+        WHERE menu_item_id = ? AND status = 'OPEN'
+        """,
+        (menu_item_id,),
+    )
+    return reference
+
+
+def set_menu_item_all_references_to_current(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> None:
+    set_menu_item_base_reference_to_current(connection, menu_item_id)
+    for option in select_options(connection, menu_item_id):
+        set_menu_reference_to_current(connection, int(option["id"]))
+
+
+def menu_item_alert_candidate(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> tuple[float, float, float] | None:
+    item = connection.execute(
+        """
+        SELECT id, reference_cost
+        FROM menu_items
+        WHERE id = ?
+        """,
+        (menu_item_id,),
+    ).fetchone()
+    if item is None:
+        return None
+
+    active_options = [
+        option
+        for option in select_options(connection, menu_item_id)
+        if bool(option["is_active"])
+    ]
+    candidates: list[tuple[float, float, float]] = []
+
+    if active_options:
+        for option in active_options:
+            _, current_cost, complete = calculate_menu_option(
+                connection,
+                int(option["id"]),
+            )
+            if not complete or current_cost is None:
+                continue
+            reference = option["reference_cost"]
+            if reference is None or float(reference) <= 0:
+                connection.execute(
+                    "UPDATE menu_item_options SET reference_cost = ? WHERE id = ?",
+                    (current_cost, int(option["id"])),
+                )
+                continue
+            reference_value = float(reference)
+            change_percent = (
+                (current_cost - reference_value) / reference_value * 100
+            )
+            candidates.append(
+                (reference_value, float(current_cost), change_percent)
+            )
+    else:
+        ingredients, current_cost, complete = calculate_menu_ingredients(
+            connection,
+            menu_item_id,
+        )
+        if ingredients and complete:
+            reference = item["reference_cost"]
+            if reference is None or float(reference) <= 0:
+                connection.execute(
+                    "UPDATE menu_items SET reference_cost = ? WHERE id = ?",
+                    (current_cost, menu_item_id),
+                )
+            else:
+                reference_value = float(reference)
+                change_percent = (
+                    (current_cost - reference_value) / reference_value * 100
+                )
+                candidates.append(
+                    (reference_value, float(current_cost), change_percent)
+                )
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda value: value[2])
+
+
+def refresh_menu_item_alert(
+    connection: sqlite3.Connection,
+    menu_item_id: int,
+) -> None:
+    item = connection.execute(
+        """
+        SELECT id, is_active, alert_threshold_percent
+        FROM menu_items
+        WHERE id = ?
+        """,
+        (menu_item_id,),
+    ).fetchone()
+    if item is None:
+        return
+
+    open_alert = connection.execute(
+        """
+        SELECT id
+        FROM menu_item_cost_alerts
+        WHERE menu_item_id = ? AND status = 'OPEN'
+        LIMIT 1
+        """,
+        (menu_item_id,),
+    ).fetchone()
+
+    if not bool(item["is_active"]):
+        if open_alert is not None:
+            connection.execute(
+                """
+                UPDATE menu_item_cost_alerts
+                SET status = 'RESOLVED', resolved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (int(open_alert["id"]),),
+            )
+        return
+
+    candidate = menu_item_alert_candidate(connection, menu_item_id)
+    if candidate is None:
+        if open_alert is not None:
+            connection.execute(
+                """
+                UPDATE menu_item_cost_alerts
+                SET status = 'RESOLVED', resolved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (int(open_alert["id"]),),
+            )
+        return
+
+    reference_cost, current_cost, change_percent = candidate
+    threshold = float(item["alert_threshold_percent"])
+
+    if change_percent >= threshold:
+        if open_alert is None:
+            connection.execute(
+                """
+                INSERT INTO menu_item_cost_alerts (
+                    menu_item_id,
+                    reference_cost,
+                    current_cost,
+                    change_percent,
+                    status,
+                    detected_at
+                )
+                VALUES (?, ?, ?, ?, 'OPEN', CURRENT_TIMESTAMP)
+                """,
+                (
+                    menu_item_id,
+                    reference_cost,
+                    current_cost,
+                    change_percent,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE menu_item_cost_alerts
+                SET reference_cost = ?,
+                    current_cost = ?,
+                    change_percent = ?
+                WHERE id = ?
+                """,
+                (
+                    reference_cost,
+                    current_cost,
+                    change_percent,
+                    int(open_alert["id"]),
+                ),
+            )
+    elif open_alert is not None:
+        connection.execute(
+            """
+            UPDATE menu_item_cost_alerts
+            SET status = 'RESOLVED', resolved_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (int(open_alert["id"]),),
+        )
 
 
 def set_menu_reference_to_current(
@@ -832,10 +1064,12 @@ def refresh_menu_cost_alerts_for_items(
             params = tuple(item_ids) + tuple(item_ids) + tuple(item_ids)
             rows = connection.execute(
                 f"""
-                SELECT DISTINCT mio.id
-                FROM menu_item_options AS mio
+                SELECT DISTINCT mi.id
+                FROM menu_items AS mi
                 LEFT JOIN menu_item_ingredients AS mii
-                  ON mii.menu_item_id = mio.menu_item_id
+                  ON mii.menu_item_id = mi.id
+                LEFT JOIN menu_item_options AS mio
+                  ON mio.menu_item_id = mi.id
                 LEFT JOIN menu_item_components AS mic
                   ON mic.menu_item_option_id = mio.id
                 LEFT JOIN recipe_items AS ri
@@ -858,11 +1092,11 @@ def refresh_menu_cost_alerts_for_items(
             ).fetchall()
         else:
             rows = connection.execute(
-                "SELECT id FROM menu_item_options"
+                "SELECT id FROM menu_items"
             ).fetchall()
 
         for row in rows:
-            refresh_menu_option_alert(connection, int(row["id"]))
+            refresh_menu_item_alert(connection, int(row["id"]))
         connection.commit()
 
 
@@ -873,15 +1107,17 @@ def refresh_menu_cost_alerts_for_recipes(recipe_ids: list[int]) -> None:
         placeholders = ",".join("?" for _ in recipe_ids)
         rows = connection.execute(
             f"""
-            SELECT DISTINCT menu_item_option_id AS id
-            FROM menu_item_components
-            WHERE component_type = 'RECIPE'
-              AND recipe_id IN ({placeholders})
+            SELECT DISTINCT mio.menu_item_id AS id
+            FROM menu_item_options AS mio
+            JOIN menu_item_components AS mic
+              ON mic.menu_item_option_id = mio.id
+            WHERE mic.component_type = 'RECIPE'
+              AND mic.recipe_id IN ({placeholders})
             """,
             tuple(recipe_ids),
         ).fetchall()
         for row in rows:
-            refresh_menu_option_alert(connection, int(row["id"]))
+            refresh_menu_item_alert(connection, int(row["id"]))
         connection.commit()
 
 
@@ -1151,6 +1387,8 @@ def list_menu_items() -> list[MenuItemOutput]:
                 mi.sale_unit_id,
                 u.name AS sale_unit_name,
                 mi.base_price,
+                mi.alert_threshold_percent,
+                mi.reference_cost,
                 mi.display_order,
                 mi.is_active,
                 mi.note
@@ -1229,6 +1467,7 @@ def create_menu_item(payload: MenuItemInput) -> MenuItemOutput:
         menu_item_id = int(cursor.lastrowid)
         replace_menu_item_ingredients(connection, menu_item_id, payload.ingredients)
         replace_menu_item_options(connection, menu_item_id, payload.options)
+        set_menu_item_base_reference_to_current(connection, menu_item_id)
         connection.commit()
 
         row = select_menu_item(connection, menu_item_id)
@@ -1302,8 +1541,10 @@ def update_menu_item(
         replace_menu_item_ingredients(connection, menu_item_id, payload.ingredients)
         replace_menu_item_options(connection, menu_item_id, payload.options)
         if ingredients_changed:
+            set_menu_item_base_reference_to_current(connection, menu_item_id)
             for option in select_options(connection, menu_item_id):
                 set_menu_reference_to_current(connection, int(option["id"]))
+        refresh_menu_item_alert(connection, menu_item_id)
         connection.commit()
 
         row = select_menu_item(connection, menu_item_id)
@@ -1326,24 +1567,17 @@ def list_menu_cost_alerts(
             f"""
             SELECT
                 a.id,
-                a.menu_item_option_id,
                 mi.id AS menu_item_id,
                 mi.name AS menu_item_name,
-                mio.service_option_id,
-                so.name AS service_option_name,
                 a.reference_cost,
                 a.current_cost,
                 a.change_percent,
-                mio.alert_threshold_percent,
+                mi.alert_threshold_percent,
                 a.status,
                 a.detected_at,
                 a.resolved_at
-            FROM menu_cost_alerts AS a
-            JOIN menu_item_options AS mio
-              ON mio.id = a.menu_item_option_id
-            JOIN menu_items AS mi ON mi.id = mio.menu_item_id
-            JOIN service_options AS so
-              ON so.id = mio.service_option_id
+            FROM menu_item_cost_alerts AS a
+            JOIN menu_items AS mi ON mi.id = a.menu_item_id
             {where}
             ORDER BY
                 CASE WHEN a.status = 'OPEN' THEN 0 ELSE 1 END,
@@ -1355,11 +1589,8 @@ def list_menu_cost_alerts(
         return [
             MenuCostAlertOutput(
                 id=int(row["id"]),
-                menu_item_option_id=int(row["menu_item_option_id"]),
                 menu_item_id=int(row["menu_item_id"]),
                 menu_item_name=row["menu_item_name"],
-                service_option_id=int(row["service_option_id"]),
-                service_option_name=row["service_option_name"],
                 reference_cost=float(row["reference_cost"]),
                 current_cost=float(row["current_cost"]),
                 change_percent=float(row["change_percent"]),
@@ -1370,6 +1601,40 @@ def list_menu_cost_alerts(
             )
             for row in rows
         ]
+
+
+@router.post(
+    "/items/{menu_item_id}/accept-current-cost",
+    response_model=MenuItemOutput,
+)
+def accept_menu_item_current_cost(
+    menu_item_id: int,
+) -> MenuItemOutput:
+    with connect() as connection:
+        row = select_menu_item(connection, menu_item_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy món.",
+            )
+
+        set_menu_item_all_references_to_current(connection, menu_item_id)
+        connection.execute(
+            """
+            UPDATE menu_item_cost_alerts
+            SET status = 'RESOLVED', resolved_at = CURRENT_TIMESTAMP
+            WHERE menu_item_id = ? AND status = 'OPEN'
+            """,
+            (menu_item_id,),
+        )
+        connection.commit()
+
+        updated = select_menu_item(connection, menu_item_id)
+        assert updated is not None
+        output = menu_item_to_output(connection, updated)
+
+    backup_database(reason="menu-cost-reference-updated")
+    return output
 
 
 @router.post(
