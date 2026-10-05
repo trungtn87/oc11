@@ -417,8 +417,9 @@ public class MainActivity extends Activity {
         totalRow.addView(totalText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         goodsTab.addView(totalRow);
 
-        Runnable refreshLines = () -> {
-            renderLines(linesBox, lines, items);
+        final Runnable[] refreshLines = new Runnable[1];
+        refreshLines[0] = () -> {
+            renderLines(linesBox, lines, items, refreshLines[0]);
             goodsCount.setText(lines.length() + " mặt hàng");
             long total = parseLong(shipping.getText().toString());
             for (int i = 0; i < lines.length(); i++) {
@@ -429,11 +430,11 @@ public class MainActivity extends Activity {
             }
             totalText.setText(MONEY.format(total) + " đ");
         };
-        addLine.setOnClickListener(v -> showLineDialog(items, lines, refreshLines));
+        addLine.setOnClickListener(v -> showLineDialog(items, lines, refreshLines[0]));
 
         shipping.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { refreshLines.run(); }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { refreshLines[0].run(); }
             @Override public void afterTextChanged(Editable s) {}
         });
 
@@ -497,12 +498,12 @@ public class MainActivity extends Activity {
             goodsTab.setVisibility(View.VISIBLE);
             infoTabButton.setEnabled(true);
             goodsTabButton.setEnabled(false);
-            refreshLines.run();
+            refreshLines[0].run();
         };
         infoTabButton.setOnClickListener(v -> showInfoTab.run());
         goodsTabButton.setOnClickListener(v -> showGoodsTab.run());
         showInfoTab.run();
-        refreshLines.run();
+        refreshLines[0].run();
 
         ScrollView sc = new ScrollView(this);
         sc.addView(form);
@@ -565,7 +566,7 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private void renderLines(LinearLayout box, JSONArray lines, JSONArray items) {
+    private void renderLines(LinearLayout box, JSONArray lines, JSONArray items, Runnable afterChange) {
         box.removeAllViews();
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.optJSONObject(i);
@@ -620,7 +621,7 @@ public class MainActivity extends Activity {
                 for (int j = 0; j < lines.length(); j++) if (j != index) next.put(lines.opt(j));
                 while (lines.length() > 0) lines.remove(lines.length() - 1);
                 for (int j = 0; j < next.length(); j++) lines.put(next.opt(j));
-                renderLines(box, lines, items);
+                afterChange.run();
             });
             row.addView(remove, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
