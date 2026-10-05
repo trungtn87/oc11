@@ -14,6 +14,7 @@ from .fund_transaction_categories import router as fund_transaction_categories_r
 from .fund_transactions import router as fund_transactions_router
 from .item_groups import router as item_groups_router
 from .items import router as items_router
+from .menu import router as menu_router
 from .inventory import router as inventory_router
 from .purchase_receipts import router as purchase_receipts_router
 from .suppliers import router as suppliers_router
@@ -39,6 +40,7 @@ app.include_router(fund_accounts_router)
 app.include_router(fund_transaction_categories_router)
 app.include_router(fund_transactions_router)
 app.include_router(items_router)
+app.include_router(menu_router)
 app.include_router(inventory_router)
 app.include_router(purchase_receipts_router)
 app.include_router(suppliers_router)
