@@ -803,6 +803,17 @@ body {
   padding: 12px 7px;
 }
 
+.brand-home-logo {
+  display: block;
+  width: min(100%, 205px);
+  height: auto;
+  object-fit: contain;
+}
+
+.brand-collapsed .brand-home-logo {
+  width: 54px;
+}
+
 .brand-logo-mark {
   width: 57px;
   height: 49px;
