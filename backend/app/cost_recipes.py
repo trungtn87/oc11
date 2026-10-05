@@ -803,15 +803,32 @@ def update_service_option(
         )
 
         existing_recipe = select_recipe_by_option(connection, option_id)
+        affected_recipe_id: int | None = None
         if payload.recipe is None:
             if existing_recipe is not None:
+                recipe_id = int(existing_recipe["id"])
+                used_by_menu = connection.execute(
+                    """
+                    SELECT 1
+                    FROM menu_item_components
+                    WHERE component_type = 'RECIPE' AND recipe_id = ?
+                    LIMIT 1
+                    """,
+                    (recipe_id,),
+                ).fetchone()
+                if used_by_menu is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Công thức đang được dùng trong định lượng món, không thể xóa.",
+                    )
                 connection.execute(
                     "DELETE FROM recipes WHERE id = ?",
-                    (int(existing_recipe["id"]),),
+                    (recipe_id,),
                 )
         else:
             recipe_id = upsert_recipe(connection, option_id, payload.recipe)
             refresh_recipe_alert(connection, recipe_id)
+            affected_recipe_id = recipe_id
 
         connection.commit()
         row = connection.execute(
@@ -824,6 +841,11 @@ def update_service_option(
         ).fetchone()
         assert row is not None
         output = service_option_to_output(connection, row)
+
+    if affected_recipe_id is not None:
+        from .menu import refresh_menu_cost_alerts_for_recipes
+
+        refresh_menu_cost_alerts_for_recipes([affected_recipe_id])
 
     backup_database(reason="cost-service-option-updated")
     return output
