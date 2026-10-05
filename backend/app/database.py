@@ -280,6 +280,94 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS service_options (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                note TEXT,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1))
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_service_options_name_nocase
+            ON service_options (name COLLATE NOCASE)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service_option_id INTEGER NOT NULL UNIQUE,
+                output_quantity REAL NOT NULL CHECK (output_quantity > 0),
+                output_unit_id INTEGER NOT NULL,
+                waste_percent REAL NOT NULL DEFAULT 5
+                    CHECK (waste_percent >= 0 AND waste_percent <= 100),
+                alert_threshold_percent REAL NOT NULL DEFAULT 5
+                    CHECK (
+                        alert_threshold_percent > 0
+                        AND alert_threshold_percent <= 100
+                    ),
+                reference_unit_cost REAL,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                FOREIGN KEY (service_option_id)
+                    REFERENCES service_options(id) ON DELETE CASCADE,
+                FOREIGN KEY (output_unit_id) REFERENCES units(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recipe_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                unit_id INTEGER NOT NULL,
+                quantity REAL NOT NULL CHECK (quantity > 0),
+                FOREIGN KEY (recipe_id)
+                    REFERENCES recipes(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES items(id),
+                FOREIGN KEY (unit_id) REFERENCES units(id),
+                UNIQUE (recipe_id, item_id, unit_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_recipe_items_item
+            ON recipe_items (item_id, recipe_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cost_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL,
+                reference_unit_cost REAL NOT NULL,
+                current_unit_cost REAL NOT NULL,
+                change_percent REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'OPEN'
+                    CHECK (status IN ('OPEN', 'RESOLVED')),
+                detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                FOREIGN KEY (recipe_id)
+                    REFERENCES recipes(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_cost_alerts_open_recipe
+            ON cost_alerts (recipe_id)
+            WHERE status = 'OPEN'
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS purchase_receipts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 receipt_code TEXT NOT NULL UNIQUE,
