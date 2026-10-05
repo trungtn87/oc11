@@ -1265,8 +1265,6 @@ def replace_menu_item_options(
 
         if option_id not in existing_by_service.values() or definition_changed:
             set_menu_reference_to_current(connection, option_id)
-        else:
-            refresh_menu_option_alert(connection, option_id)
 
 
 @router.get("/groups", response_model=list[MenuGroupOutput])
@@ -1376,6 +1374,7 @@ def update_menu_group(
 
 @router.get("/items", response_model=list[MenuItemOutput])
 def list_menu_items() -> list[MenuItemOutput]:
+    refresh_menu_cost_alerts_for_items()
     with connect() as connection:
         rows = connection.execute(
             """
