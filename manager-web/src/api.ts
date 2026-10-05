@@ -481,11 +481,11 @@ export function getMenuCostAlerts(
   return request<MenuCostAlert[]>(`/api/menu/alerts${query}`);
 }
 
-export function acceptMenuOptionCurrentCost(
-  menuItemOptionId: number
-): Promise<MenuItemOption> {
-  return request<MenuItemOption>(
-    `/api/menu/item-options/${menuItemOptionId}/accept-current-cost`,
+export function acceptMenuItemCurrentCost(
+  menuItemId: number
+): Promise<MenuItem> {
+  return request<MenuItem>(
+    `/api/menu/items/${menuItemId}/accept-current-cost`,
     { method: "POST" }
   );
 }
