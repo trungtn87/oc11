@@ -441,6 +441,12 @@ def init_db() -> None:
                 sale_unit_id INTEGER NOT NULL,
                 base_price INTEGER NOT NULL DEFAULT 0
                     CHECK (base_price >= 0),
+                alert_threshold_percent REAL NOT NULL DEFAULT 3
+                    CHECK (
+                        alert_threshold_percent > 0
+                        AND alert_threshold_percent <= 100
+                    ),
+                reference_cost REAL,
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
@@ -450,6 +456,24 @@ def init_db() -> None:
             )
             """
         )
+        menu_item_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(menu_items)"
+            ).fetchall()
+        }
+        if "alert_threshold_percent" not in menu_item_columns:
+            connection.execute(
+                """
+                ALTER TABLE menu_items
+                ADD COLUMN alert_threshold_percent REAL NOT NULL DEFAULT 3
+            """
+            )
+        if "reference_cost" not in menu_item_columns:
+            connection.execute(
+                "ALTER TABLE menu_items ADD COLUMN reference_cost REAL"
+            )
+
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_items_group_name_nocase
@@ -549,6 +573,31 @@ def init_db() -> None:
             ON menu_item_components (recipe_id, menu_item_option_id)
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS menu_item_cost_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                menu_item_id INTEGER NOT NULL,
+                reference_cost REAL NOT NULL,
+                current_cost REAL NOT NULL,
+                change_percent REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'OPEN'
+                    CHECK (status IN ('OPEN', 'RESOLVED')),
+                detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                FOREIGN KEY (menu_item_id)
+                    REFERENCES menu_items(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_item_cost_alerts_open_item
+            ON menu_item_cost_alerts (menu_item_id)
+            WHERE status = 'OPEN'
+            """
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS menu_cost_alerts (
