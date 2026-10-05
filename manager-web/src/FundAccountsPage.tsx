@@ -38,6 +38,7 @@ type FundForm = {
   account_name?: string;
   note?: string;
   is_active: boolean;
+  is_default: boolean;
 };
 
 function cleanOptional(value?: string | null) {
@@ -89,7 +90,8 @@ export function CashFundsPage() {
     form.setFieldsValue({
       name: account.name,
       note: account.note ?? undefined,
-      is_active: account.is_active
+      is_active: account.is_active,
+      is_default: account.is_default
     });
   };
 
@@ -97,7 +99,7 @@ export function CashFundsPage() {
     setSelected(null);
     setMode("create");
     form.resetFields();
-    form.setFieldsValue({ is_active: true });
+    form.setFieldsValue({ is_active: true, is_default: false });
     setModalOpen(true);
   };
 
@@ -126,7 +128,8 @@ export function CashFundsPage() {
         account_number: null,
         account_name: null,
         note: cleanOptional(values.note),
-        is_active: values.is_active
+        is_active: values.is_active,
+        is_default: values.is_default
       };
 
       const saved =
@@ -180,6 +183,14 @@ export function CashFundsPage() {
       dataIndex: "name",
       key: "name",
       render: (name: string) => <Text strong>{name}</Text>
+    },
+    {
+      title: "Mặc định",
+      dataIndex: "is_default",
+      key: "is_default",
+      width: 120,
+      render: (value: boolean) =>
+        value ? <Tag color="blue">Mặc định</Tag> : <Text type="secondary">—</Text>
     },
     {
       title: "Số dư hiện tại",
@@ -289,7 +300,7 @@ export function CashFundsPage() {
           form={form}
           layout="vertical"
           disabled={mode === "view"}
-          initialValues={{ is_active: true }}
+          initialValues={{ is_active: true, is_default: false }}
           className="supplier-form"
         >
           <Form.Item
@@ -318,6 +329,23 @@ export function CashFundsPage() {
 
           <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
             <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+          </Form.Item>
+
+          <Form.Item
+            label="Quỹ tiền mặt mặc định"
+            name="is_default"
+            valuePropName="checked"
+            extra={
+              selected?.is_default
+                ? "Muốn đổi mặc định, mở một quỹ khác và bật mục này."
+                : "Phiếu thu/chi và nhập hàng sẽ ưu tiên quỹ này."
+            }
+          >
+            <Switch
+              checkedChildren="Mặc định"
+              unCheckedChildren="Không"
+              disabled={Boolean(selected?.is_default)}
+            />
           </Form.Item>
         </Form>
 
@@ -399,7 +427,8 @@ export function BankAccountsPage() {
       account_number: account.account_number ?? undefined,
       account_name: account.account_name ?? undefined,
       note: account.note ?? undefined,
-      is_active: account.is_active
+      is_active: account.is_active,
+      is_default: account.is_default
     });
     setModalOpen(true);
   };
@@ -422,7 +451,8 @@ export function BankAccountsPage() {
         account_number: cleanOptional(values.account_number),
         account_name: cleanOptional(values.account_name),
         note: cleanOptional(values.note),
-        is_active: values.is_active
+        is_active: values.is_active,
+        is_default: values.is_default
       };
 
       if (editing) {
@@ -468,6 +498,14 @@ export function BankAccountsPage() {
       dataIndex: "account_name",
       key: "account_name",
       render: (value: string | null) => value || <Text type="secondary">—</Text>
+    },
+    {
+      title: "Mặc định",
+      dataIndex: "is_default",
+      key: "is_default",
+      width: 120,
+      render: (value: boolean) =>
+        value ? <Tag color="blue">Mặc định</Tag> : <Text type="secondary">—</Text>
     },
     {
       title: "Trạng thái",
@@ -552,7 +590,7 @@ export function BankAccountsPage() {
         <Form<FundForm>
           form={form}
           layout="vertical"
-          initialValues={{ is_active: true }}
+          initialValues={{ is_active: true, is_default: false }}
           className="group-form"
         >
           <Form.Item
@@ -584,6 +622,23 @@ export function BankAccountsPage() {
 
           <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
             <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+          </Form.Item>
+
+          <Form.Item
+            label="Tài khoản ngân hàng mặc định"
+            name="is_default"
+            valuePropName="checked"
+            extra={
+              editing?.is_default
+                ? "Muốn đổi mặc định, mở một tài khoản khác và bật mục này."
+                : "Các phiếu tiền gửi/chuyển khoản sẽ ưu tiên tài khoản này."
+            }
+          >
+            <Switch
+              checkedChildren="Mặc định"
+              unCheckedChildren="Không"
+              disabled={Boolean(editing?.is_default)}
+            />
           </Form.Item>
         </Form>
 
