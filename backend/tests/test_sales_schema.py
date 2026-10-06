@@ -106,6 +106,37 @@ def test_sales_schema_is_created(tmp_path, monkeypatch):
             "amount",
         }.issubset(order_surcharge_columns)
 
+        einvoice_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(electronic_invoices)"
+            ).fetchall()
+        }
+        assert {
+            "sales_order_id",
+            "provider",
+            "status",
+            "invoice_series",
+            "invoice_number",
+            "external_id",
+            "issued_at",
+        }.issubset(einvoice_columns)
+
+        revision_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(sales_order_revisions)"
+            ).fetchall()
+        }
+        assert {
+            "sales_order_id",
+            "action",
+            "previous_total_amount",
+            "new_total_amount",
+            "reason",
+            "snapshot_json",
+        }.issubset(revision_columns)
+
         category = connection.execute(
             """
             SELECT direction
