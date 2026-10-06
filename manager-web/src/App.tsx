@@ -17,6 +17,7 @@ import {
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography
 } from "antd";
@@ -30,7 +31,6 @@ import {
   CalendarOutlined,
   ContainerOutlined,
   DatabaseOutlined,
-  DollarOutlined,
   FileTextOutlined,
   HomeOutlined,
   ImportOutlined,
@@ -38,7 +38,6 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PlusOutlined,
-  ProfileOutlined,
   RollbackOutlined,
   SettingOutlined,
   ShoppingCartOutlined,
@@ -210,10 +209,8 @@ const menuItems: MenuProps["items"] = [
     icon: <WalletOutlined />,
     label: "Thu chi",
     children: [
-      { key: "cash-funds", icon: <WalletOutlined />, label: "Quỹ tiền mặt" },
-      { key: "cash-ledger", icon: <ProfileOutlined />, label: "Sổ tiền mặt" },
-      { key: "bank-accounts", icon: <DollarOutlined />, label: "Tài khoản ngân hàng" },
-      { key: "bank-ledger", icon: <FileTextOutlined />, label: "Sổ tiền gửi" },
+      { key: "fund-accounts", icon: <WalletOutlined />, label: "Quỹ tiền mặt & tài khoản ngân hàng" },
+      { key: "money-ledgers", icon: <FileTextOutlined />, label: "Sổ tiền mặt - Sổ tiền gửi" },
       { key: "cash-categories", icon: <TagsOutlined />, label: "Loại thu/chi" }
     ]
   },
@@ -437,7 +434,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
   const quickActions = [
     { label: "Bán hàng (POS)", target: "sales-pos", disabled: true },
     { label: "Nhập hàng", target: "purchase-orders", disabled: false },
-    { label: "Sổ tiền mặt", target: "cash-ledger", disabled: false },
+    { label: "Sổ tiền", target: "money-ledgers", disabled: false },
     { label: "Thêm hàng hóa", target: "item-list", disabled: false },
     { label: "Tồn kho", target: "stock", disabled: false }
   ];
@@ -677,7 +674,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
               <Button onClick={() => onNavigate("purchase-orders")}>
                 Xem nhập hàng
               </Button>
-              <Button onClick={() => onNavigate("cash-ledger")}>Xem thu chi</Button>
+              <Button onClick={() => onNavigate("money-ledgers")}>Xem thu chi</Button>
             </div>
           </Card>
         </Col>
@@ -2506,10 +2503,8 @@ const pageTitles: Record<string, string> = {
   "suppliers": "Nhà cung cấp",
   stock: "Tồn kho thực tế",
   "stock-sales": "Kho tiêu thụ",
-  "cash-funds": "Quỹ tiền mặt",
-  "cash-ledger": "Sổ tiền mặt",
-  "bank-accounts": "Tài khoản ngân hàng",
-  "bank-ledger": "Sổ tiền gửi",
+  "fund-accounts": "Quỹ tiền mặt & tài khoản ngân hàng",
+  "money-ledgers": "Sổ tiền mặt - Sổ tiền gửi",
   "cash-categories": "Loại thu/chi",
   "report-revenue": "Báo cáo doanh thu",
   "report-stock": "Báo cáo tồn kho",
@@ -2564,7 +2559,7 @@ function App() {
         <PurchaseOrdersPage
           onPayDebt={(prefill) => {
             setVoucherPrefill(prefill);
-            setPage("cash-ledger");
+            setPage("money-ledgers");
           }}
           initialReceiptId={linkedPurchaseReceiptId}
           onInitialReceiptConsumed={() => setLinkedPurchaseReceiptId(null)}
@@ -2580,46 +2575,66 @@ function App() {
       return <ConsumptionPage />;
     }
 
-    if (page === "cash-funds") {
-      return <CashFundsPage />;
-    }
-
-    if (page === "bank-accounts") {
-      return <BankAccountsPage />;
-    }
-
-    if (page === "cash-ledger") {
+    if (page === "fund-accounts") {
       return (
-        <CashLedgerPage
-          initialVoucher={voucherPrefill}
-          onInitialVoucherConsumed={() => setVoucherPrefill(null)}
-          onOpenSourceDocument={(sourceType, sourceId) => {
-            if (sourceType === "PURCHASE_RECEIPT") {
-              const receiptId = Number(sourceId);
-              if (Number.isInteger(receiptId) && receiptId > 0) {
-                setLinkedPurchaseReceiptId(receiptId);
-                setPage("purchase-orders");
-              }
+        <Tabs
+          defaultActiveKey="cash"
+          items={[
+            {
+              key: "cash",
+              label: "Quỹ tiền mặt",
+              children: <CashFundsPage />
+            },
+            {
+              key: "bank",
+              label: "Tài khoản ngân hàng",
+              children: <BankAccountsPage />
             }
-          }}
+          ]}
         />
       );
     }
 
-    if (page === "bank-ledger") {
+    if (page === "money-ledgers") {
+      const openSourceDocument = (sourceType: string, sourceId: string) => {
+        if (sourceType !== "PURCHASE_RECEIPT") {
+          return;
+        }
+
+        const receiptId = Number(sourceId);
+        if (Number.isInteger(receiptId) && receiptId > 0) {
+          setLinkedPurchaseReceiptId(receiptId);
+          setPage("purchase-orders");
+        }
+      };
+
       return (
-        <BankLedgerPage
-          initialVoucher={voucherPrefill}
-          onInitialVoucherConsumed={() => setVoucherPrefill(null)}
-          onOpenSourceDocument={(sourceType, sourceId) => {
-            if (sourceType === "PURCHASE_RECEIPT") {
-              const receiptId = Number(sourceId);
-              if (Number.isInteger(receiptId) && receiptId > 0) {
-                setLinkedPurchaseReceiptId(receiptId);
-                setPage("purchase-orders");
-              }
+        <Tabs
+          defaultActiveKey="cash"
+          items={[
+            {
+              key: "cash",
+              label: "Sổ tiền mặt",
+              children: (
+                <CashLedgerPage
+                  initialVoucher={voucherPrefill}
+                  onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+                  onOpenSourceDocument={openSourceDocument}
+                />
+              )
+            },
+            {
+              key: "bank",
+              label: "Sổ tiền gửi",
+              children: (
+                <BankLedgerPage
+                  initialVoucher={voucherPrefill}
+                  onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+                  onOpenSourceDocument={openSourceDocument}
+                />
+              )
             }
-          }}
+          ]}
         />
       );
     }
