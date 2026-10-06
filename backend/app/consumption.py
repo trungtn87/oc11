@@ -468,7 +468,7 @@ def list_consumption(
                 COALESCE(
                     SUM(
                         CASE
-                            WHEN m.source_type = 'SALE'
+                            WHEN m.source_type IN ('SALE', 'SALE_VOID')
                              AND m.movement_time >= ?
                              AND m.movement_time <= ?
                             THEN -m.quantity_delta
