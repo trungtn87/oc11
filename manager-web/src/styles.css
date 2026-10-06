@@ -1895,6 +1895,46 @@ body {
   gap: 2px;
 }
 
+.sales-line-surcharge-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.sales-surcharge-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px;
+  border: 1px solid #ffe0b2;
+  border-radius: 5px;
+  background: #fff8e8;
+  color: #9a4d00;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.sales-surcharge-chip button {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b42318;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 12px;
+}
+
+.sales-add-surcharge {
+  height: auto !important;
+  padding: 0 2px !important;
+  font-size: 10px !important;
+}
+
 .sales-cart-qty {
   display: flex;
   align-items: center;
@@ -1935,6 +1975,54 @@ body {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid #e9edf3;
+}
+
+.sales-order-surcharge-box {
+  display: grid;
+  gap: 5px;
+  padding: 7px 9px;
+  border: 1px solid #eef0f3;
+  border-radius: 7px;
+  background: #fbfcfd;
+}
+
+.sales-order-surcharge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sales-order-surcharge-head .ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 11px;
+}
+
+.sales-order-surcharge-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 22px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.sales-order-surcharge-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sales-order-surcharge-row > strong {
+  color: #9a4d00;
+  white-space: nowrap;
+}
+
+.sales-order-surcharge-row .ant-btn {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
 }
 
 .sales-total,
@@ -1980,6 +2068,25 @@ body {
   gap: 8px;
 }
 
+.sales-surcharge-form {
+  display: grid;
+  gap: 14px;
+}
+
+.sales-surcharge-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.sales-surcharge-form label > span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.sales-surcharge-form .ant-input-number {
+  width: 100%;
+}
+
 .sales-option-button {
   width: 100%;
   height: auto !important;
@@ -2011,6 +2118,33 @@ body {
   border: 1px solid #edf0f4;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.sales-order-line-surcharge {
+  margin-top: 2px;
+  color: #9a4d00;
+  font-size: 11px;
+}
+
+.sales-order-extra-surcharges {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #ffe0b2;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.sales-order-extra-surcharges > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sales-order-extra-surcharges > div strong {
+  color: #9a4d00;
 }
 
 .sales-void-note {
