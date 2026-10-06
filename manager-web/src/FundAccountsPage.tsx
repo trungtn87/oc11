@@ -500,6 +500,14 @@ export function BankAccountsPage() {
       render: (value: string | null) => value || <Text type="secondary">—</Text>
     },
     {
+      title: "Số dư hiện tại",
+      dataIndex: "current_balance",
+      key: "current_balance",
+      width: 170,
+      align: "right",
+      render: (value: number) => <Text strong>{formatMoney(value)}</Text>
+    },
+    {
       title: "Mặc định",
       dataIndex: "is_default",
       key: "is_default",
