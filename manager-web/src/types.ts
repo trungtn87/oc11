@@ -669,17 +669,6 @@ export type SaleOrderInput = {
     note?: string | null;
     surcharges?: SaleSurchargeInput[];
   }>;
-export type SaleOrderInput = {
-  order_time?: string | null;
-  customer_id?: number | null;
-  note?: string | null;
-  items: Array<{
-    menu_item_id: number;
-    menu_item_option_id?: number | null;
-    quantity: number;
-    note?: string | null;
-    surcharges?: SaleSurchargeInput[];
-  }>;
   surcharges?: SaleSurchargeInput[];
   fund_account_id?: number | null;
   actual_received_amount?: number | null;
