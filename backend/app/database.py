@@ -208,6 +208,14 @@ def init_db() -> None:
             VALUES ('Thanh toán nhà cung cấp', 'OUT', 1, 0)
             """
         )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO fund_transaction_categories (
+                name, direction, is_active, sort_order
+            )
+            VALUES ('Bán hàng', 'IN', 1, 0)
+            """
+        )
 
         connection.execute(
             """
@@ -627,6 +635,96 @@ def init_db() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS ux_menu_cost_alerts_open_option
             ON menu_cost_alerts (menu_item_option_id)
             WHERE status = 'OPEN'
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_code TEXT NOT NULL UNIQUE,
+                order_time TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'OPEN'
+                    CHECK (status IN ('OPEN', 'PAID', 'VOID')),
+                fund_account_id INTEGER,
+                total_amount INTEGER NOT NULL DEFAULT 0
+                    CHECK (total_amount >= 0),
+                actual_received_amount INTEGER
+                    CHECK (
+                        actual_received_amount IS NULL
+                        OR actual_received_amount >= 0
+                    ),
+                payment_reference_code TEXT,
+                paid_at TEXT,
+                note TEXT,
+                void_reason TEXT,
+                voided_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT,
+                FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_orders_time_status
+            ON sales_orders (order_time, status)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_id INTEGER NOT NULL,
+                menu_item_id INTEGER,
+                menu_item_option_id INTEGER,
+                item_name_snapshot TEXT NOT NULL,
+                option_name_snapshot TEXT,
+                unit_name_snapshot TEXT NOT NULL,
+                quantity REAL NOT NULL CHECK (quantity > 0),
+                unit_price INTEGER NOT NULL DEFAULT 0
+                    CHECK (unit_price >= 0),
+                line_total INTEGER NOT NULL DEFAULT 0
+                    CHECK (line_total >= 0),
+                unit_cost_snapshot REAL
+                    CHECK (
+                        unit_cost_snapshot IS NULL
+                        OR unit_cost_snapshot >= 0
+                    ),
+                cost_total_snapshot REAL
+                    CHECK (
+                        cost_total_snapshot IS NULL
+                        OR cost_total_snapshot >= 0
+                    ),
+                note TEXT,
+                FOREIGN KEY (sales_order_id)
+                    REFERENCES sales_orders(id) ON DELETE CASCADE,
+                FOREIGN KEY (menu_item_id)
+                    REFERENCES menu_items(id) ON DELETE SET NULL,
+                FOREIGN KEY (menu_item_option_id)
+                    REFERENCES menu_item_options(id) ON DELETE SET NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_order_items_order
+            ON sales_order_items (sales_order_id, id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_order_items_menu
+            ON sales_order_items (menu_item_id, menu_item_option_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_transactions_sale_active
+            ON fund_transactions (source_type, source_id)
+            WHERE source_type = 'SALE'
+              AND direction = 'IN'
+              AND is_void = 0
             """
         )
 
