@@ -294,3 +294,92 @@ def test_sale_payment_is_rolled_back_when_menu_has_no_stock_recipe(
 
         assert sale_count == 0
         assert payment_count == 0
+
+def test_sale_surcharges_are_added_to_total_without_extra_stock_deduction(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "order_time": "2026-10-06T19:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 2,
+                        "surcharges": [
+                            {
+                                "name": "Thêm sốt đặc biệt",
+                                "amount": 20_000,
+                            }
+                        ],
+                    }
+                ],
+                "surcharges": [
+                    {
+                        "name": "Phụ thu phục vụ",
+                        "amount": 10_000,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+        assert order["total_amount"] == 330_000
+        assert order["surcharge_total"] == 30_000
+        assert order["surcharges"] == [
+            {
+                "id": order["surcharges"][0]["id"],
+                "name": "Phụ thu phục vụ",
+                "amount": 10_000,
+            }
+        ]
+
+        line = order["items"][0]
+        assert line["line_total"] == 300_000
+        assert line["surcharge_total"] == 20_000
+        assert line["total_with_surcharges"] == 320_000
+        assert line["surcharges"][0]["name"] == "Thêm sốt đặc biệt"
+        assert line["surcharges"][0]["amount"] == 20_000
+
+        paid = client.post(
+            f"/api/sales/orders/{order['id']}/pay",
+            json={
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 330_000,
+            },
+        )
+        assert paid.status_code == 200
+
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9
+
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        fund = next(row for row in funds if row["id"] == ids["fund_account_id"])
+        assert fund["current_balance"] == 330_000
+
+    with sqlite3.connect(db_path) as connection:
+        item_surcharges = connection.execute(
+            """
+            SELECT name, amount
+            FROM sales_order_item_surcharges
+            ORDER BY id
+            """
+        ).fetchall()
+        order_surcharges = connection.execute(
+            """
+            SELECT name, amount
+            FROM sales_order_surcharges
+            ORDER BY id
+            """
+        ).fetchall()
+        assert item_surcharges == [("Thêm sốt đặc biệt", 20_000)]
+        assert order_surcharges == [("Phụ thu phục vụ", 10_000)]
+
