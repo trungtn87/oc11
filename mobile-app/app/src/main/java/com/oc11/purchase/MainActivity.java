@@ -41,6 +41,8 @@ public class MainActivity extends Activity {
     private static final String PREFS = "oc11_mobile_prefs";
     private static final String KEY_API_URL = "api_url";
     private static final DecimalFormat MONEY = new DecimalFormat("#,###");
+    private static final int MARKET_BANK_FUND_ID = 1; // BIDV
+    private static final int MARKET_CASH_FUND_ID = 3; // Đi chợ
 
     private LocalStore store;
     private SharedPreferences prefs;
@@ -359,7 +361,7 @@ public class MainActivity extends Activity {
 
         LinearLayout paymentRow = new LinearLayout(this);
         paymentRow.setOrientation(LinearLayout.HORIZONTAL);
-        Button cashButton = button("Tiền mặt\nQuỹ đi chợ");
+        Button cashButton = button("Tiền mặt\nĐi chợ");
         Button bankButton = button("Chuyển khoản\nBIDV");
         cashButton.setTextSize(14);
         bankButton.setTextSize(14);
@@ -376,7 +378,7 @@ public class MainActivity extends Activity {
             boolean cash = "CASH".equals(paymentType[0]);
             cashButton.setEnabled(!cash);
             bankButton.setEnabled(cash);
-            cashButton.setText(cash ? "✓ Tiền mặt\nQuỹ đi chợ" : "Tiền mặt\nQuỹ đi chợ");
+            cashButton.setText(cash ? "✓ Tiền mặt\nĐi chợ" : "Tiền mặt\nĐi chợ");
             bankButton.setText(!cash ? "✓ Chuyển khoản\nBIDV" : "Chuyển khoản\nBIDV");
         };
         cashButton.setOnClickListener(v -> {
@@ -479,12 +481,12 @@ public class MainActivity extends Activity {
                     throw new Exception("Chưa chọn nhà cung cấp.");
                 }
 
-                JSONObject fund = findMarketFund(funds, paymentType[0]);
+                JSONObject fund = findFixedMarketFund(funds, paymentType[0]);
                 if (fund == null) {
                     if ("CASH".equals(paymentType[0])) {
-                        throw new Exception("Không tìm thấy Quỹ đi chợ. Hãy tạo quỹ này trên Ốc 11 rồi bấm Đồng bộ.");
+                        throw new Exception("Không tìm thấy quỹ Đi chợ (ID 3). Hãy bấm Đồng bộ lại dữ liệu.");
                     }
-                    throw new Exception("Không tìm thấy tài khoản BIDV. Hãy tạo tài khoản BIDV trên Ốc 11 rồi bấm Đồng bộ.");
+                    throw new Exception("Không tìm thấy tài khoản BIDV (ID 1). Hãy bấm Đồng bộ lại dữ liệu.");
                 }
 
                 JSONObject payload = finalExisting == null
@@ -738,29 +740,20 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
-    private JSONObject findMarketFund(JSONArray funds, String type) {
-        JSONObject fallback = null;
+    private JSONObject findFixedMarketFund(JSONArray funds, String type) {
+        int targetId = "CASH".equals(type)
+                ? MARKET_CASH_FUND_ID
+                : MARKET_BANK_FUND_ID;
+
         for (int i = 0; i < funds.length(); i++) {
             JSONObject fund = funds.optJSONObject(i);
-            if (fund == null || !fund.optBoolean("is_active", true)) continue;
-            if (!type.equals(fund.optString("type"))) continue;
-
-            String name = fund.optString("name", "").trim().toLowerCase(viLocale());
-            String bankName = fund.optString("bank_name", "").trim().toLowerCase(viLocale());
-
-            if ("CASH".equals(type)) {
-                if (name.equals("quỹ đi chợ") || name.contains("đi chợ")) return fund;
-            } else {
-                if (name.contains("bidv") || bankName.contains("bidv")) return fund;
-            }
-
-            if (fallback == null) fallback = fund;
+            if (fund == null) continue;
+            if (fund.optInt("id") != targetId) continue;
+            if (!type.equals(fund.optString("type"))) return null;
+            if (!fund.optBoolean("is_active", true)) return null;
+            return fund;
         }
         return null;
-    }
-
-    private Locale viLocale() {
-        return new Locale("vi", "VN");
     }
 
     private JSONObject findItemByName(List<JSONObject> items, String name) {
