@@ -789,6 +789,47 @@ def init_db() -> None:
             ON sales_order_items (menu_item_id, menu_item_option_id)
             """
         )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales_order_item_surcharges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_item_id INTEGER NOT NULL,
+                name TEXT NOT NULL CHECK (TRIM(name) <> ''),
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sales_order_item_id)
+                    REFERENCES sales_order_items(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_order_item_surcharges_line
+            ON sales_order_item_surcharges (sales_order_item_id, id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales_order_surcharges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_id INTEGER NOT NULL,
+                name TEXT NOT NULL CHECK (TRIM(name) <> ''),
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sales_order_id)
+                    REFERENCES sales_orders(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_order_surcharges_order
+            ON sales_order_surcharges (sales_order_id, id)
+            """
+        )
+
         connection.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_transactions_sale_active
