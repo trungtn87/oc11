@@ -303,6 +303,10 @@ body {
   font-size: 13px;
 }
 
+.dashboard-quick-card {
+  margin-bottom: 14px;
+}
+
 .metrics-row {
   margin-bottom: 14px;
 }
@@ -1188,6 +1192,19 @@ body {
   border-top: 1px solid #efd1a3;
   color: #ba4f00;
   font-size: 14px;
+}
+
+.purchase-actual-paid {
+  padding-top: 10px;
+  border-top: 1px dashed #efd1a3;
+}
+
+.purchase-actual-paid .ant-input-number {
+  width: 150px;
+}
+
+.purchase-rounding-difference strong {
+  color: #6b7280;
 }
 
 .purchase-view-meta {

@@ -642,6 +642,9 @@ def init_db() -> None:
                 goods_total INTEGER NOT NULL DEFAULT 0 CHECK (goods_total >= 0),
                 shipping_fee INTEGER NOT NULL DEFAULT 0 CHECK (shipping_fee >= 0),
                 total_amount INTEGER NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
+                actual_paid_amount INTEGER CHECK (
+                    actual_paid_amount IS NULL OR actual_paid_amount >= 0
+                ),
                 payment_status TEXT NOT NULL
                     CHECK (payment_status IN ('PAID', 'DEBT')),
                 payment_reference_code TEXT,
@@ -666,6 +669,22 @@ def init_db() -> None:
         if "client_sync_id" not in purchase_receipt_columns:
             connection.execute(
                 "ALTER TABLE purchase_receipts ADD COLUMN client_sync_id TEXT"
+            )
+        if "actual_paid_amount" not in purchase_receipt_columns:
+            connection.execute(
+                """
+                ALTER TABLE purchase_receipts
+                ADD COLUMN actual_paid_amount INTEGER
+                    CHECK (actual_paid_amount IS NULL OR actual_paid_amount >= 0)
+                """
+            )
+            connection.execute(
+                """
+                UPDATE purchase_receipts
+                SET actual_paid_amount = total_amount
+                WHERE payment_status = 'PAID'
+                  AND actual_paid_amount IS NULL
+                """
             )
         if "replaces_receipt_id" not in purchase_receipt_columns:
             connection.execute(

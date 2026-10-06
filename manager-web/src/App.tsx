@@ -455,6 +455,22 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         </div>
       </div>
 
+      <Card className="dashboard-card dashboard-quick-card" title="Thao tác nhanh">
+        <div className="quick-actions">
+          {quickActions.map((action) => (
+            <Button
+              key={action.label}
+              type={action.disabled ? "default" : "primary"}
+              disabled={action.disabled}
+              onClick={() => onNavigate(action.target)}
+              className="quick-action-btn"
+            >
+              {action.label}
+            </Button>
+          ))}
+        </div>
+      </Card>
+
       <Row gutter={[14, 14]} className="metrics-row">
         {metricCards.map((metric) => (
           <Col xs={24} sm={12} xl={6} key={metric.label}>
@@ -648,25 +664,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       </Row>
 
       <Row gutter={[14, 14]} className="dashboard-bottom">
-        <Col xs={24} xl={15}>
-          <Card className="dashboard-card" title="Thao tác nhanh">
-            <div className="quick-actions">
-              {quickActions.map((action) => (
-                <Button
-                  key={action.label}
-                  type={action.disabled ? "default" : "primary"}
-                  disabled={action.disabled}
-                  onClick={() => onNavigate(action.target)}
-                  className="quick-action-btn"
-                >
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          </Card>
-        </Col>
-
-        <Col xs={24} xl={9}>
+        <Col xs={24}>
           <Card className="dashboard-card" title="Báo cáo nhanh">
             <div className="report-links">
               <Button disabled>Xem doanh thu</Button>

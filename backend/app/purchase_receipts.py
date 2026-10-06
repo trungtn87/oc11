@@ -31,6 +31,7 @@ class PurchaseReceiptInput(BaseModel):
     receipt_time: str
     description: str | None = Field(default=None, max_length=500)
     shipping_fee: int = Field(default=0, ge=0)
+    actual_paid_amount: int | None = Field(default=None, ge=0)
     payment_status: str
     payment: PurchasePaymentInput | None = None
     shipping_payment: PurchasePaymentInput | None = None
@@ -63,6 +64,7 @@ class PurchaseReceiptOutput(BaseModel):
     goods_total: int
     shipping_fee: int
     total_amount: int
+    actual_paid_amount: int | None
     payment_status: str
     payment_reference_code: str | None
     payment_fund_account_id: int | None
@@ -106,6 +108,52 @@ def parse_datetime(value: str) -> datetime:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Ngày nhập không hợp lệ.",
         )
+
+
+def resolve_actual_paid_amount(
+    payment_status: str,
+    total_amount: int,
+    requested_amount: int | None,
+) -> int | None:
+    if payment_status != "PAID":
+        if requested_amount is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Phiếu trả nợ chưa có tiền thực trả.",
+            )
+        return None
+
+    actual_paid = total_amount if requested_amount is None else int(requested_amount)
+    if total_amount > 0 and actual_paid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả phải lớn hơn 0 với phiếu đã thanh toán.",
+        )
+    return actual_paid
+
+
+def split_actual_payment_amounts(
+    *,
+    goods_total: int,
+    shipping_fee: int,
+    actual_paid_amount: int,
+    has_separate_shipping_payment: bool,
+) -> tuple[int, int]:
+    if not has_separate_shipping_payment:
+        return actual_paid_amount, 0
+
+    goods_paid = actual_paid_amount - shipping_fee
+    if goods_paid < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả không thể nhỏ hơn phí vận chuyển đã trả riêng.",
+        )
+    if goods_total > 0 and goods_paid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả cho phần tiền hàng phải lớn hơn 0.",
+        )
+    return goods_paid, shipping_fee
 
 
 def next_receipt_code(connection: sqlite3.Connection) -> str:
@@ -423,6 +471,7 @@ def select_receipt(
             r.goods_total,
             r.shipping_fee,
             r.total_amount,
+            r.actual_paid_amount,
             r.payment_status,
             r.payment_reference_code,
             r.replaces_receipt_id,
@@ -645,6 +694,15 @@ def row_to_output(
         goods_total=row["goods_total"],
         shipping_fee=row["shipping_fee"],
         total_amount=row["total_amount"],
+        actual_paid_amount=(
+            row["actual_paid_amount"]
+            if row["actual_paid_amount"] is not None
+            else (
+                row["total_amount"]
+                if row["payment_status"] == "PAID"
+                else None
+            )
+        ),
         payment_status=row["payment_status"],
         payment_reference_code=row["payment_reference_code"],
         payment_fund_account_id=payment["fund_account_id"] if payment else None,
@@ -736,6 +794,7 @@ def list_purchase_receipts(
                 r.goods_total,
                 r.shipping_fee,
                 r.total_amount,
+                r.actual_paid_amount,
                 r.payment_status,
                 r.payment_reference_code,
                 r.replaces_receipt_id,
@@ -802,6 +861,11 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         supplier = ensure_supplier(connection, payload.supplier_id)
         prepared_items, goods_total = prepare_items(connection, payload.items)
         total_amount = goods_total + payload.shipping_fee
+        actual_paid_amount = resolve_actual_paid_amount(
+            payment_status,
+            total_amount,
+            payload.actual_paid_amount,
+        )
         receipt_code = next_receipt_code(connection)
 
         if payment_status == "PAID" and total_amount > 0 and payload.payment is None:
@@ -821,12 +885,13 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 goods_total,
                 shipping_fee,
                 total_amount,
+                actual_paid_amount,
                 payment_status,
                 replaces_receipt_id,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 receipt_code,
@@ -837,6 +902,7 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 goods_total,
                 payload.shipping_fee,
                 total_amount,
+                actual_paid_amount,
                 payment_status,
                 payload.replaces_receipt_id,
             ),
@@ -852,41 +918,49 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         )
 
         payment_reference: str | None = None
-        if payment_status == "PAID" and total_amount > 0:
+        if payment_status == "PAID" and actual_paid_amount is not None and actual_paid_amount > 0:
             assert payload.payment is not None
+            goods_paid_amount, shipping_paid_amount = split_actual_payment_amounts(
+                goods_total=goods_total,
+                shipping_fee=payload.shipping_fee,
+                actual_paid_amount=actual_paid_amount,
+                has_separate_shipping_payment=(
+                    payload.shipping_fee > 0 and payload.shipping_payment is not None
+                ),
+            )
             if payload.shipping_fee > 0 and payload.shipping_payment is None:
                 payment_reference = create_payment_transaction(
                     connection,
                     receipt_id=receipt_id,
                     receipt_code=receipt_code,
                     supplier_name=supplier["name"],
-                    amount=total_amount,
+                    amount=goods_paid_amount,
                     transaction_time=payload.receipt_time,
                     account_type=payload.payment.account_type,
                     fund_account_id=payload.payment.fund_account_id,
                     component=None,
                 )
             else:
-                if goods_total > 0:
+                if goods_paid_amount > 0:
                     payment_reference = create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=receipt_code,
                         supplier_name=supplier["name"],
-                        amount=goods_total,
+                        amount=goods_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.payment.account_type,
                         fund_account_id=payload.payment.fund_account_id,
                         component="GOODS",
                     )
-                if payload.shipping_fee > 0:
+                if shipping_paid_amount > 0:
                     assert payload.shipping_payment is not None
                     create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=receipt_code,
                         supplier_name=supplier["name"],
-                        amount=payload.shipping_fee,
+                        amount=shipping_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.shipping_payment.account_type,
                         fund_account_id=payload.shipping_payment.fund_account_id,
@@ -969,6 +1043,11 @@ def update_purchase_receipt(
 
             goods_total = int(existing["goods_total"])
             new_total_amount = goods_total + payload.shipping_fee
+            new_actual_paid_amount = resolve_actual_paid_amount(
+                existing_status,
+                new_total_amount,
+                payload.actual_paid_amount,
+            )
             existing_shipping_payment = select_payment_info(
                 connection,
                 receipt_id,
@@ -1019,7 +1098,12 @@ def update_purchase_receipt(
                     payments = [legacy]
 
             old_paid_total = sum(int(payment["amount"]) for payment in payments)
-            if old_paid_total != int(existing["total_amount"]):
+            old_expected_paid = (
+                int(existing["actual_paid_amount"])
+                if existing["actual_paid_amount"] is not None
+                else int(existing["total_amount"])
+            )
+            if old_paid_total != old_expected_paid:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi sửa.",
@@ -1040,15 +1124,23 @@ def update_purchase_receipt(
                 )
 
             payment_reference: str | None = None
-            if new_total_amount > 0:
+            if new_actual_paid_amount is not None and new_actual_paid_amount > 0:
                 assert payload.payment is not None
+                goods_paid_amount, shipping_paid_amount = split_actual_payment_amounts(
+                    goods_total=goods_total,
+                    shipping_fee=payload.shipping_fee,
+                    actual_paid_amount=new_actual_paid_amount,
+                    has_separate_shipping_payment=(
+                        payload.shipping_fee > 0 and payload.shipping_payment is not None
+                    ),
+                )
                 if payload.shipping_fee > 0 and payload.shipping_payment is None:
                     payment_reference = create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=existing["receipt_code"],
                         supplier_name=supplier["name"],
-                        amount=new_total_amount,
+                        amount=goods_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.payment.account_type,
                         fund_account_id=payload.payment.fund_account_id,
@@ -1056,27 +1148,27 @@ def update_purchase_receipt(
                         reference_code_override=goods_reference_code,
                     )
                 else:
-                    if goods_total > 0:
+                    if goods_paid_amount > 0:
                         payment_reference = create_payment_transaction(
                             connection,
                             receipt_id=receipt_id,
                             receipt_code=existing["receipt_code"],
                             supplier_name=supplier["name"],
-                            amount=goods_total,
+                            amount=goods_paid_amount,
                             transaction_time=payload.receipt_time,
                             account_type=payload.payment.account_type,
                             fund_account_id=payload.payment.fund_account_id,
                             component="GOODS",
                             reference_code_override=goods_reference_code,
                         )
-                    if payload.shipping_fee > 0:
+                    if shipping_paid_amount > 0:
                         assert payload.shipping_payment is not None
                         create_payment_transaction(
                             connection,
                             receipt_id=receipt_id,
                             receipt_code=existing["receipt_code"],
                             supplier_name=supplier["name"],
-                            amount=payload.shipping_fee,
+                            amount=shipping_paid_amount,
                             transaction_time=payload.receipt_time,
                             account_type=payload.shipping_payment.account_type,
                             fund_account_id=payload.shipping_payment.fund_account_id,
@@ -1092,6 +1184,7 @@ def update_purchase_receipt(
                     description = ?,
                     shipping_fee = ?,
                     total_amount = ?,
+                    actual_paid_amount = ?,
                     payment_reference_code = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -1102,6 +1195,7 @@ def update_purchase_receipt(
                     clean_text(payload.description),
                     payload.shipping_fee,
                     new_total_amount,
+                    new_actual_paid_amount,
                     payment_reference,
                     receipt_id,
                 ),
@@ -1131,6 +1225,11 @@ def update_purchase_receipt(
 
             prepared_items, goods_total = prepare_items(connection, payload.items)
             total_amount = goods_total + payload.shipping_fee
+            actual_paid_amount = resolve_actual_paid_amount(
+                existing_status,
+                total_amount,
+                payload.actual_paid_amount,
+            )
 
             old_item_ids = [
                 int(item["item_id"])
@@ -1158,6 +1257,7 @@ def update_purchase_receipt(
                     goods_total = ?,
                     shipping_fee = ?,
                     total_amount = ?,
+                    actual_paid_amount = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -1168,6 +1268,7 @@ def update_purchase_receipt(
                     goods_total,
                     payload.shipping_fee,
                     total_amount,
+                    actual_paid_amount,
                     receipt_id,
                 ),
             )
@@ -1248,7 +1349,12 @@ def void_purchase_receipt_for_reentry(
                 payments = [legacy]
 
         paid_total = sum(int(payment["amount"]) for payment in payments)
-        if paid_total != int(receipt["total_amount"]):
+        expected_paid_total = (
+            int(receipt["actual_paid_amount"])
+            if receipt["actual_paid_amount"] is not None
+            else int(receipt["total_amount"])
+        )
+        if paid_total != expected_paid_total:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi hủy.",
