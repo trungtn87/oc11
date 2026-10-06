@@ -15,7 +15,7 @@ if not exist "manager-web\node_modules" (
 )
 
 echo Dang khoi dong OC11 Backend...
-start "OC11 Backend" cmd /k "cd /d %~dp0 && .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
+start "OC11 Backend" cmd /k "cd /d %~dp0 && .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
 
 echo Dang khoi dong OC11 Manager Web...
 start "OC11 Manager Web" cmd /k "cd /d %~dp0manager-web && npm run dev -- --host 127.0.0.1"
