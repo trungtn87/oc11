@@ -431,7 +431,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
   ];
 
   const quickActions = [
-    { label: "Bán hàng (POS)", target: "sales-pos", disabled: true },
+    { label: "Bán hàng (POS)", target: "sales-pos", disabled: false },
     { label: "Nhập hàng", target: "purchase-orders", disabled: false },
     { label: "Sổ tiền", target: "money-ledgers", disabled: false },
     { label: "Thêm hàng hóa", target: "item-list", disabled: false },
