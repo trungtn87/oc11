@@ -149,6 +149,7 @@ export default function PurchaseOrdersPage({
   const [quickConversionForm] = Form.useForm<QuickConversionForm>();
   const paymentStatus = Form.useWatch("payment_status", form);
   const accountType = Form.useWatch("account_type", form);
+  const paidEdit = editingReceipt?.payment_status === "PAID";
   const [messageApi, messageContext] = message.useMessage();
 
   const activeSuppliers = suppliers;
@@ -317,13 +318,13 @@ export default function PurchaseOrdersPage({
       receipt_time: receipt.receipt_time.slice(0, 16),
       description: receipt.description ?? undefined,
       shipping_fee: receipt.shipping_fee,
-      payment_status: mode === "edit" ? "DEBT" : receipt.payment_status,
+      payment_status: receipt.payment_status,
       account_type:
-        mode === "replace"
+        receipt.payment_status === "PAID"
           ? (receipt.payment_account_type ?? undefined)
           : undefined,
       fund_account_id:
-        mode === "replace"
+        receipt.payment_status === "PAID"
           ? (receipt.payment_fund_account_id ?? undefined)
           : undefined
     });
@@ -336,10 +337,6 @@ export default function PurchaseOrdersPage({
       const detail = await getPurchaseReceipt(receipt.id);
       if (detail.is_void) {
         messageApi.warning("Phiếu đã hủy không thể sửa.");
-        return;
-      }
-      if (detail.payment_status !== "DEBT") {
-        messageApi.warning("Phiếu đã thanh toán không được sửa. Hãy dùng Hủy để nhập lại.");
         return;
       }
       fillReceiptForm(detail, "edit");
@@ -436,11 +433,18 @@ export default function PurchaseOrdersPage({
       if (editingReceipt) {
         await updatePurchaseReceipt(editingReceipt.id, {
           ...payload,
-          payment_status: "DEBT",
-          payment: null,
+          payment_status: editingReceipt.payment_status,
+          payment:
+            editingReceipt.payment_status === "PAID"
+              ? payload.payment
+              : null,
           replaces_receipt_id: editingReceipt.replaces_receipt_id
         });
-        messageApi.success("Đã cập nhật phiếu trả nợ và đồng bộ lại tồn kho.");
+        messageApi.success(
+          editingReceipt.payment_status === "PAID"
+            ? "Đã cập nhật thông tin phiếu và quỹ/tài khoản thanh toán. Hàng hóa giữ nguyên."
+            : "Đã cập nhật phiếu trả nợ và đồng bộ lại tồn kho."
+        );
       } else {
         const created = await createPurchaseReceipt(payload);
         messageApi.success(
@@ -701,9 +705,14 @@ export default function PurchaseOrdersPage({
         }
 
         return (
-          <Button danger type="link" onClick={() => voidAndReenter(row)}>
-            Hủy để nhập lại
-          </Button>
+          <Space size={2}>
+            <Button type="link" onClick={() => void openEditReceipt(row)}>
+              Sửa
+            </Button>
+            <Button danger type="link" onClick={() => voidAndReenter(row)}>
+              Hủy
+            </Button>
+          </Space>
         );
       }
     }
@@ -848,7 +857,7 @@ export default function PurchaseOrdersPage({
                 </Radio.Group>
               </Form.Item>
 
-              {paymentStatus === "PAID" && editingReceipt === null && (
+              {paymentStatus === "PAID" && (
                 <div className="purchase-payment-grid">
                   <Form.Item
                     label="Loại tiền"
@@ -917,6 +926,7 @@ export default function PurchaseOrdersPage({
                         optionFilterProp="label"
                         placeholder="Chọn hàng hóa"
                         value={line.item_id}
+                        disabled={paidEdit}
                         onChange={(value) => chooseItem(line.key, value)}
                         options={activeItems.map((candidate) => ({
                           value: candidate.id,
@@ -926,6 +936,7 @@ export default function PurchaseOrdersPage({
                       <Button
                         className="quick-add-button"
                         title="Thêm nhanh hàng hóa"
+                        disabled={paidEdit}
                         onClick={() => openQuickItem(line.key)}
                       >
                         +
@@ -936,7 +947,7 @@ export default function PurchaseOrdersPage({
                       <Select
                         value={line.unit_id}
                         placeholder="ĐVT"
-                        disabled={!line.item_id}
+                        disabled={paidEdit || !line.item_id}
                         onChange={(value) => updateLine(line.key, { unit_id: value })}
                         options={conversions.map((conversion) => ({
                           value: conversion.unit_id,
@@ -945,7 +956,7 @@ export default function PurchaseOrdersPage({
                       />
                       <Button
                         className="quick-add-button"
-                        disabled={!line.item_id}
+                        disabled={paidEdit || !line.item_id}
                         title="Thêm nhanh quy đổi"
                         onClick={() => openQuickConversion(line)}
                       >
@@ -956,6 +967,7 @@ export default function PurchaseOrdersPage({
                     <InputNumber<number>
                       min={0.001}
                       value={line.quantity}
+                      disabled={paidEdit}
                       onChange={(value) => updateLine(line.key, { quantity: value ?? undefined })}
                       style={{ width: "100%" }}
                     />
@@ -963,6 +975,7 @@ export default function PurchaseOrdersPage({
                       min={0}
                       precision={0}
                       value={line.unit_price}
+                      disabled={paidEdit}
                       onChange={(value) => updateLine(line.key, { unit_price: value ?? undefined })}
                       style={{ width: "100%" }}
                       formatter={(value) =>
@@ -975,13 +988,14 @@ export default function PurchaseOrdersPage({
                     </div>
                     <Input
                       value={line.note}
+                      disabled={paidEdit}
                       onChange={(event) => updateLine(line.key, { note: event.target.value })}
                       placeholder="Ghi chú"
                     />
                     <Button
                       danger
                       type="text"
-                      disabled={lines.length === 1}
+                      disabled={paidEdit || lines.length === 1}
                       onClick={() =>
                         setLines((current) => current.filter((row) => row.key !== line.key))
                       }
@@ -993,9 +1007,17 @@ export default function PurchaseOrdersPage({
               })}
             </div>
 
-            <Button onClick={() => setLines((current) => [...current, newLine()])}>
+            <Button
+              disabled={paidEdit}
+              onClick={() => setLines((current) => [...current, newLine()])}
+            >
               + Thêm dòng
             </Button>
+            {paidEdit && (
+              <Text type="secondary">
+                Phiếu đã thanh toán: chỉ sửa thông tin chung, phí vận chuyển và quỹ/tài khoản thanh toán. Muốn đổi hàng hóa, số lượng hoặc đơn giá hãy dùng Hủy.
+              </Text>
+            )}
 
             <div className="purchase-summary">
               <div className="purchase-shipping">
@@ -1199,8 +1221,15 @@ export default function PurchaseOrdersPage({
                   ]
                 : [
                     <Button key="close" onClick={() => setViewReceipt(null)}>Đóng</Button>,
+                    <Button key="edit" onClick={() => {
+                      const receipt = viewReceipt;
+                      setViewReceipt(null);
+                      void openEditReceipt(receipt);
+                    }}>
+                      Sửa
+                    </Button>,
                     <Button key="void" danger type="primary" onClick={() => voidAndReenter(viewReceipt)}>
-                      Hủy để nhập lại
+                      Hủy
                     </Button>
                   ]
         }
