@@ -640,12 +640,51 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_code TEXT NOT NULL UNIQUE,
+                customer_type TEXT NOT NULL DEFAULT 'PERSON'
+                    CHECK (customer_type IN ('PERSON', 'ORGANIZATION')),
+                name TEXT NOT NULL,
+                tax_code TEXT,
+                address TEXT,
+                phone TEXT,
+                email TEXT,
+                contact_name TEXT,
+                bank_account TEXT,
+                bank_name TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_customers_tax_code
+            ON customers (tax_code)
+            WHERE tax_code IS NOT NULL
+              AND TRIM(tax_code) <> ''
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_customers_name_phone
+            ON customers (name, phone)
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS sales_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_code TEXT NOT NULL UNIQUE,
                 order_time TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'PAID', 'VOID')),
+                customer_id INTEGER,
                 fund_account_id INTEGER,
                 total_amount INTEGER NOT NULL DEFAULT 0
                     CHECK (total_amount >= 0),
@@ -661,14 +700,38 @@ def init_db() -> None:
                 voided_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT,
+                FOREIGN KEY (customer_id) REFERENCES customers(id),
                 FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id)
             )
             """
         )
+
+        sales_order_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(sales_orders)"
+            ).fetchall()
+        }
+        if "customer_id" not in sales_order_columns:
+            connection.execute(
+                """
+                ALTER TABLE sales_orders
+                ADD COLUMN customer_id INTEGER
+                    REFERENCES customers(id)
+                """
+            )
+
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_sales_orders_time_status
             ON sales_orders (order_time, status)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_orders_customer
+            ON sales_orders (customer_id, order_time)
+            WHERE customer_id IS NOT NULL
             """
         )
         connection.execute(
