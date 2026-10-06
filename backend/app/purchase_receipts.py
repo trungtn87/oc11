@@ -474,32 +474,33 @@ def select_payment_info(
     component: str,
     payment_reference_code: str | None = None,
 ) -> sqlite3.Row | None:
-    row = connection.execute(
-        """
-        SELECT
-            ft.reference_code,
-            ft.fund_account_id,
-            fa.type AS account_type
-        FROM fund_transactions AS ft
-        JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
-        WHERE ft.source_type = 'PURCHASE_RECEIPT'
-          AND ft.source_id = ?
-          AND ft.direction = 'OUT'
-          AND ft.source_component = ?
-        ORDER BY ft.id DESC
-        LIMIT 1
-        """,
-        (str(receipt_id), component),
-    ).fetchone()
-    if row is not None:
-        return row
+    def by_component(*, active_only: bool) -> sqlite3.Row | None:
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
+            SELECT
+                ft.reference_code,
+                ft.fund_account_id,
+                fa.type AS account_type
+            FROM fund_transactions AS ft
+            JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+            WHERE ft.source_type = 'PURCHASE_RECEIPT'
+              AND ft.source_id = ?
+              AND ft.direction = 'OUT'
+              AND ft.source_component = ?
+              {active_clause}
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (str(receipt_id), component),
+        ).fetchone()
 
-    if component != "GOODS":
-        return None
-
-    if payment_reference_code:
-        row = connection.execute(
-            """
+    def by_reference(*, active_only: bool) -> sqlite3.Row | None:
+        if not payment_reference_code:
+            return None
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
             SELECT
                 ft.reference_code,
                 ft.fund_account_id,
@@ -508,31 +509,61 @@ def select_payment_info(
             JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
             WHERE ft.reference_code = ?
               AND ft.direction = 'OUT'
+              {active_clause}
             ORDER BY ft.id DESC
             LIMIT 1
             """,
             (payment_reference_code,),
         ).fetchone()
-        if row is not None:
-            return row
 
-    return connection.execute(
-        """
-        SELECT
-            ft.reference_code,
-            ft.fund_account_id,
-            fa.type AS account_type
-        FROM fund_transactions AS ft
-        JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
-        WHERE ft.source_type = 'PURCHASE_RECEIPT'
-          AND ft.source_id = ?
-          AND ft.direction = 'OUT'
-          AND ft.source_component IS NULL
-        ORDER BY ft.id DESC
-        LIMIT 1
-        """,
-        (str(receipt_id),),
-    ).fetchone()
+    def legacy_combined(*, active_only: bool) -> sqlite3.Row | None:
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
+            SELECT
+                ft.reference_code,
+                ft.fund_account_id,
+                fa.type AS account_type
+            FROM fund_transactions AS ft
+            JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+            WHERE ft.source_type = 'PURCHASE_RECEIPT'
+              AND ft.source_id = ?
+              AND ft.direction = 'OUT'
+              AND ft.source_component IS NULL
+              {active_clause}
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (str(receipt_id),),
+        ).fetchone()
+
+    active_component = by_component(active_only=True)
+    if active_component is not None:
+        return active_component
+
+    if component == "GOODS":
+        active_reference = by_reference(active_only=True)
+        if active_reference is not None:
+            return active_reference
+
+        active_legacy = legacy_combined(active_only=True)
+        if active_legacy is not None:
+            return active_legacy
+
+    # When viewing an already voided receipt there is no active money row.
+    # Fall back to the latest historical row so the original payment account
+    # remains visible for audit/re-entry, while active rows always win above.
+    historical_component = by_component(active_only=False)
+    if historical_component is not None:
+        return historical_component
+
+    if component == "GOODS":
+        historical_reference = by_reference(active_only=False)
+        if historical_reference is not None:
+            return historical_reference
+        return legacy_combined(active_only=False)
+
+    return None
 
 
 def select_receipt_link(
