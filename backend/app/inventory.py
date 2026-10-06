@@ -10,7 +10,7 @@ from .database import connect
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
 PURCHASE_SOURCE_TYPES = {"PURCHASE_RECEIPT", "PURCHASE_RECEIPT_VOID"}
-SALE_SOURCE_TYPES = {"SALE"}
+SALE_SOURCE_TYPES = {"SALE", "SALE_VOID"}
 ADJUSTMENT_SOURCE_TYPES = {"STOCK_ADJUSTMENT"}
 
 MOVEMENT_FILTERS = {"ALL", "PURCHASE", "SALE", "ADJUSTMENT", "OTHER"}
@@ -139,6 +139,7 @@ def movement_label(source_type: str) -> str:
         "PURCHASE_RECEIPT": "Nhập hàng",
         "PURCHASE_RECEIPT_VOID": "Hủy phiếu nhập",
         "SALE": "Bán hàng",
+        "SALE_VOID": "Hủy bán hàng",
         "STOCK_ADJUSTMENT": "Đối chiếu tồn",
     }
     return labels.get(source_type, "Biến động khác")
@@ -244,8 +245,12 @@ def resolve_reference_code(
         ).fetchone()
         return row["adjustment_code"] if row else source_id
 
-    if source_type == "SALE":
-        return source_id
+    if source_type in SALE_SOURCE_TYPES:
+        row = connection.execute(
+            "SELECT order_code FROM sales_orders WHERE CAST(id AS TEXT) = ?",
+            (source_id,),
+        ).fetchone()
+        return row["order_code"] if row else source_id
 
     return source_id
 
