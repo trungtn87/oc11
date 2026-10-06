@@ -656,6 +656,8 @@ def init_db() -> None:
                 is_active INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
                 note TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT,
                 CHECK (
                     tax_code IS NULL
                     OR TRIM(tax_code) = ''
@@ -663,9 +665,7 @@ def init_db() -> None:
                         address IS NOT NULL
                         AND TRIM(address) <> ''
                     )
-                ),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT
+                )
             )
             """
         )
