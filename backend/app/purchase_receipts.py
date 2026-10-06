@@ -31,6 +31,7 @@ class PurchaseReceiptInput(BaseModel):
     receipt_time: str
     description: str | None = Field(default=None, max_length=500)
     shipping_fee: int = Field(default=0, ge=0)
+    actual_paid_amount: int | None = Field(default=None, ge=0)
     payment_status: str
     payment: PurchasePaymentInput | None = None
     shipping_payment: PurchasePaymentInput | None = None
@@ -63,6 +64,7 @@ class PurchaseReceiptOutput(BaseModel):
     goods_total: int
     shipping_fee: int
     total_amount: int
+    actual_paid_amount: int | None
     payment_status: str
     payment_reference_code: str | None
     payment_fund_account_id: int | None
@@ -106,6 +108,52 @@ def parse_datetime(value: str) -> datetime:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Ngày nhập không hợp lệ.",
         )
+
+
+def resolve_actual_paid_amount(
+    payment_status: str,
+    total_amount: int,
+    requested_amount: int | None,
+) -> int | None:
+    if payment_status != "PAID":
+        if requested_amount is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Phiếu trả nợ chưa có tiền thực trả.",
+            )
+        return None
+
+    actual_paid = total_amount if requested_amount is None else int(requested_amount)
+    if total_amount > 0 and actual_paid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả phải lớn hơn 0 với phiếu đã thanh toán.",
+        )
+    return actual_paid
+
+
+def split_actual_payment_amounts(
+    *,
+    goods_total: int,
+    shipping_fee: int,
+    actual_paid_amount: int,
+    has_separate_shipping_payment: bool,
+) -> tuple[int, int]:
+    if not has_separate_shipping_payment:
+        return actual_paid_amount, 0
+
+    goods_paid = actual_paid_amount - shipping_fee
+    if goods_paid < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả không thể nhỏ hơn phí vận chuyển đã trả riêng.",
+        )
+    if goods_total > 0 and goods_paid <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực trả cho phần tiền hàng phải lớn hơn 0.",
+        )
+    return goods_paid, shipping_fee
 
 
 def next_receipt_code(connection: sqlite3.Connection) -> str:
@@ -423,6 +471,7 @@ def select_receipt(
             r.goods_total,
             r.shipping_fee,
             r.total_amount,
+            r.actual_paid_amount,
             r.payment_status,
             r.payment_reference_code,
             r.replaces_receipt_id,
@@ -645,6 +694,15 @@ def row_to_output(
         goods_total=row["goods_total"],
         shipping_fee=row["shipping_fee"],
         total_amount=row["total_amount"],
+        actual_paid_amount=(
+            row["actual_paid_amount"]
+            if row["actual_paid_amount"] is not None
+            else (
+                row["total_amount"]
+                if row["payment_status"] == "PAID"
+                else None
+            )
+        ),
         payment_status=row["payment_status"],
         payment_reference_code=row["payment_reference_code"],
         payment_fund_account_id=payment["fund_account_id"] if payment else None,
@@ -736,6 +794,7 @@ def list_purchase_receipts(
                 r.goods_total,
                 r.shipping_fee,
                 r.total_amount,
+                r.actual_paid_amount,
                 r.payment_status,
                 r.payment_reference_code,
                 r.replaces_receipt_id,
