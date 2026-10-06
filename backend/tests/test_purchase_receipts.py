@@ -105,6 +105,7 @@ def receipt_payload(
     quantity: float,
     unit_price: int,
     shipping_fee: int = 0,
+    actual_paid_amount=None,
     payment_status: str = "DEBT",
     payment=None,
     replaces_receipt_id=None,
@@ -114,6 +115,7 @@ def receipt_payload(
         "receipt_time": "2026-10-05T08:00",
         "description": "Nhập hàng test",
         "shipping_fee": shipping_fee,
+        "actual_paid_amount": actual_paid_amount,
         "payment_status": payment_status,
         "payment": payment,
         "replaces_receipt_id": replaces_receipt_id,
@@ -603,4 +605,117 @@ def test_paid_receipt_splits_goods_and_shipping_across_different_accounts(
     assert payments == [
         ("GOODS", bank_account["id"], 200_000),
         ("SHIPPING", cash_account["id"], 20_000),
+    ]
+
+
+def test_paid_receipt_uses_actual_paid_amount_for_rounded_payment(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        supplier = create_supplier(client)
+        item, unit = create_item(client)
+        cash_account = create_cash_account(client)
+
+        bank_response = client.post(
+            "/api/fund-accounts",
+            json={
+                "name": "BIDV làm tròn",
+                "type": "BANK",
+                "bank_name": "BIDV",
+                "account_number": "999888777",
+                "account_name": "OC11",
+                "is_active": True,
+            },
+        )
+        assert bank_response.status_code == 201
+        bank_account = bank_response.json()
+
+        bank_opening = client.post(
+            "/api/fund-transactions",
+            json={
+                "account_type": "BANK",
+                "fund_account_id": bank_account["id"],
+                "direction": "IN",
+                "transaction_type": "OPENING_BALANCE",
+                "transaction_time": "2026-10-05T07:10",
+                "amount": 1_000_000,
+                "description": "Số dư đầu kỳ BIDV",
+            },
+        )
+        assert bank_opening.status_code == 201
+
+        payload = receipt_payload(
+            supplier["id"],
+            item["id"],
+            unit["id"],
+            quantity=2,
+            unit_price=100_000,
+            shipping_fee=20_000,
+            actual_paid_amount=219_000,
+            payment_status="PAID",
+            payment={
+                "account_type": "BANK",
+                "fund_account_id": bank_account["id"],
+            },
+        )
+        payload["shipping_payment"] = {
+            "account_type": "CASH",
+            "fund_account_id": cash_account["id"],
+        }
+
+        created = client.post("/api/purchase-receipts", json=payload)
+        assert created.status_code == 201
+        receipt = created.json()
+
+        assert receipt["goods_total"] == 200_000
+        assert receipt["shipping_fee"] == 20_000
+        assert receipt["total_amount"] == 220_000
+        assert receipt["actual_paid_amount"] == 219_000
+
+        bank_accounts = {
+            row["id"]: row
+            for row in client.get("/api/fund-accounts?type=BANK").json()
+        }
+        cash_accounts = {
+            row["id"]: row
+            for row in client.get("/api/fund-accounts?type=CASH").json()
+        }
+        assert bank_accounts[bank_account["id"]]["current_balance"] == 801_000
+        assert cash_accounts[cash_account["id"]]["current_balance"] == 980_000
+
+        voided = client.post(
+            f"/api/purchase-receipts/{receipt['id']}/void-for-reentry"
+        )
+        assert voided.status_code == 200
+
+        bank_after_void = {
+            row["id"]: row
+            for row in client.get("/api/fund-accounts?type=BANK").json()
+        }
+        cash_after_void = {
+            row["id"]: row
+            for row in client.get("/api/fund-accounts?type=CASH").json()
+        }
+        assert bank_after_void[bank_account["id"]]["current_balance"] == 1_000_000
+        assert cash_after_void[cash_account["id"]]["current_balance"] == 1_000_000
+
+    with sqlite3.connect(db_path) as connection:
+        payments = connection.execute(
+            """
+            SELECT source_component, amount, is_void
+            FROM fund_transactions
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+            ORDER BY id
+            """,
+            (str(receipt["id"]),),
+        ).fetchall()
+
+    assert payments == [
+        ("GOODS", 199_000, 1),
+        ("SHIPPING", 20_000, 1),
     ]
