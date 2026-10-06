@@ -1349,7 +1349,12 @@ def void_purchase_receipt_for_reentry(
                 payments = [legacy]
 
         paid_total = sum(int(payment["amount"]) for payment in payments)
-        if paid_total != int(receipt["total_amount"]):
+        expected_paid_total = (
+            int(receipt["actual_paid_amount"])
+            if receipt["actual_paid_amount"] is not None
+            else int(receipt["total_amount"])
+        )
+        if paid_total != expected_paid_total:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi hủy.",
