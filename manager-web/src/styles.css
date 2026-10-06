@@ -166,6 +166,11 @@ body {
   line-height: 36px;
 }
 
+/* Menu con: giảm độ thụt để icon/chữ nằm sát lề trái hơn. */
+.main-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
+  padding-inline-start: 26px !important;
+}
+
 .main-menu .ant-menu-item-selected {
   background: linear-gradient(90deg, #3d8bfd 0%, #2874eb 100%) !important;
   box-shadow: 0 8px 18px rgba(34, 112, 232, 0.27);
