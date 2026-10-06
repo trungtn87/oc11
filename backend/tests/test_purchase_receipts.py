@@ -64,6 +64,39 @@ def create_cash_account(client: TestClient):
     return account
 
 
+def create_funded_cash_account(
+    client: TestClient,
+    *,
+    name: str,
+    amount: int = 1_000_000,
+):
+    response = client.post(
+        "/api/fund-accounts",
+        json={
+            "name": name,
+            "type": "CASH",
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201
+    account = response.json()
+
+    opening = client.post(
+        "/api/fund-transactions",
+        json={
+            "account_type": "CASH",
+            "fund_account_id": account["id"],
+            "direction": "IN",
+            "transaction_type": "OPENING_BALANCE",
+            "transaction_time": "2026-10-05T07:05",
+            "amount": amount,
+            "description": "Số dư đầu kỳ",
+        },
+    )
+    assert opening.status_code == 201
+    return account
+
+
 def receipt_payload(
     supplier_id: int,
     item_id: int,
@@ -154,8 +187,123 @@ def test_debt_receipt_can_be_edited_and_stock_is_replaced(tmp_path, monkeypatch)
     assert line_count == 1
 
 
-def test_paid_receipt_cannot_be_edited(tmp_path, monkeypatch):
-    monkeypatch.setenv("OC11_DB_PATH", str(tmp_path / "oc11.db"))
+def test_paid_receipt_can_edit_metadata_payment_account_and_shipping_without_changing_stock(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        supplier = create_supplier(client)
+        item, unit = create_item(client)
+        old_account = create_cash_account(client)
+        new_account = create_funded_cash_account(
+            client,
+            name="Quỹ phụ",
+            amount=1_000_000,
+        )
+
+        payload = receipt_payload(
+            supplier["id"],
+            item["id"],
+            unit["id"],
+            quantity=2,
+            unit_price=100_000,
+            payment_status="PAID",
+            payment={
+                "account_type": "CASH",
+                "fund_account_id": old_account["id"],
+            },
+        )
+        created = client.post("/api/purchase-receipts", json=payload)
+        assert created.status_code == 201
+        receipt = created.json()
+        original_reference = receipt["payment_reference_code"]
+
+        update_payload = {
+            **payload,
+            "receipt_time": "2026-10-05T09:30",
+            "description": "Sửa thông tin, đổi quỹ thanh toán",
+            "shipping_fee": 20_000,
+            "payment": {
+                "account_type": "CASH",
+                "fund_account_id": new_account["id"],
+            },
+        }
+        updated = client.put(
+            f"/api/purchase-receipts/{receipt['id']}",
+            json=update_payload,
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["receipt_code"] == receipt["receipt_code"]
+        assert body["goods_total"] == 200_000
+        assert body["shipping_fee"] == 20_000
+        assert body["total_amount"] == 220_000
+        assert body["payment_reference_code"] == original_reference
+        assert body["payment_fund_account_id"] == new_account["id"]
+        assert body["payment_account_type"] == "CASH"
+        assert body["items"][0]["quantity"] == 2
+
+        accounts = {
+            row["id"]: row
+            for row in client.get("/api/fund-accounts?type=CASH").json()
+        }
+        assert accounts[old_account["id"]]["current_balance"] == 1_000_000
+        assert accounts[new_account["id"]]["current_balance"] == 780_000
+
+    with sqlite3.connect(db_path) as connection:
+        stock = connection.execute(
+            """
+            SELECT COALESCE(SUM(quantity_delta), 0)
+            FROM inventory_movements
+            WHERE item_id = ?
+            """,
+            (item["id"],),
+        ).fetchone()[0]
+        movement_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM inventory_movements
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+            """,
+            (str(receipt["id"]),),
+        ).fetchone()[0]
+        movement_time = connection.execute(
+            """
+            SELECT movement_time
+            FROM inventory_movements
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+            LIMIT 1
+            """,
+            (str(receipt["id"]),),
+        ).fetchone()[0]
+        payment = connection.execute(
+            """
+            SELECT fund_account_id, amount, reference_code, transaction_time
+            FROM fund_transactions
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+              AND is_void = 0
+            """,
+            (str(receipt["id"]),),
+        ).fetchone()
+
+    assert stock == 2
+    assert movement_count == 1
+    assert movement_time == "2026-10-05T09:30"
+    assert payment[0] == new_account["id"]
+    assert payment[1] == 220_000
+    assert payment[2] == original_reference
+    assert payment[3] == "2026-10-05T09:30"
+
+
+def test_paid_receipt_rejects_item_quantity_or_price_changes(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
 
     with TestClient(app) as client:
         supplier = create_supplier(client)
@@ -176,17 +324,38 @@ def test_paid_receipt_cannot_be_edited(tmp_path, monkeypatch):
         )
         created = client.post("/api/purchase-receipts", json=payload)
         assert created.status_code == 201
+        receipt = created.json()
 
+        changed_items = {
+            **payload,
+            "items": [
+                {
+                    **payload["items"][0],
+                    "quantity": 3,
+                }
+            ],
+        }
         update = client.put(
-            f"/api/purchase-receipts/{created.json()['id']}",
-            json={
-                **payload,
-                "payment_status": "DEBT",
-                "payment": None,
-            },
+            f"/api/purchase-receipts/{receipt['id']}",
+            json=changed_items,
         )
         assert update.status_code == 409
         assert "Hủy để nhập lại" in update.json()["detail"]
+
+        accounts = client.get("/api/fund-accounts?type=CASH").json()
+        assert accounts[0]["current_balance"] == 800_000
+
+    with sqlite3.connect(db_path) as connection:
+        stock = connection.execute(
+            """
+            SELECT COALESCE(SUM(quantity_delta), 0)
+            FROM inventory_movements
+            WHERE item_id = ?
+            """,
+            (item["id"],),
+        ).fetchone()[0]
+
+    assert stock == 2
 
 
 def test_void_paid_receipt_reverses_money_and_stock_then_allows_reentry(

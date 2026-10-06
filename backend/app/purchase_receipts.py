@@ -787,17 +787,6 @@ def update_purchase_receipt(
     payment_status = normalize_payment_status(payload.payment_status)
     parse_datetime(payload.receipt_time)
 
-    if payment_status != "DEBT":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Phiếu trả nợ chỉ được sửa khi vẫn ở trạng thái Trả nợ. Dùng chức năng Trả nợ để thanh toán.",
-        )
-    if payload.payment is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
-        )
-
     with connect() as connection:
         existing = select_receipt(connection, receipt_id)
         if existing is None:
@@ -810,67 +799,258 @@ def update_purchase_receipt(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Phiếu đã hủy không thể sửa.",
             )
-        if existing["payment_status"] != "DEBT":
+
+        existing_status = str(existing["payment_status"])
+
+        if payment_status != existing_status:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Phiếu đã thanh toán không được sửa. Hãy dùng Hủy để nhập lại.",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Không được đổi trạng thái thanh toán khi sửa phiếu. Dùng chức năng Trả nợ hoặc Hủy khi cần.",
             )
 
-        ensure_supplier(connection, payload.supplier_id)
-        prepared_items, goods_total = prepare_items(connection, payload.items)
-        total_amount = goods_total + payload.shipping_fee
+        supplier = ensure_supplier(connection, payload.supplier_id)
 
-        connection.execute(
-            """
-            DELETE FROM inventory_movements
-            WHERE source_type = 'PURCHASE_RECEIPT'
-              AND source_id = ?
-            """,
-            (str(receipt_id),),
-        )
-        connection.execute(
-            "DELETE FROM purchase_receipt_items WHERE purchase_receipt_id = ?",
-            (receipt_id,),
-        )
-        connection.execute(
-            """
-            UPDATE purchase_receipts
-            SET supplier_id = ?,
-                receipt_time = ?,
-                description = ?,
-                goods_total = ?,
-                shipping_fee = ?,
-                total_amount = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (
-                payload.supplier_id,
-                payload.receipt_time,
-                clean_text(payload.description),
-                goods_total,
-                payload.shipping_fee,
-                total_amount,
-                receipt_id,
-            ),
-        )
-        insert_receipt_lines(
-            connection,
-            receipt_id=receipt_id,
-            receipt_code=existing["receipt_code"],
-            receipt_time=payload.receipt_time,
-            prepared_items=prepared_items,
-        )
-        connection.commit()
+        if existing_status == "PAID":
+            if payload.payment is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Phiếu đã thanh toán cần chọn loại tiền và quỹ/tài khoản.",
+                )
 
-        row = select_receipt(connection, receipt_id)
-        assert row is not None
-        output = row_to_output(connection, row)
+            existing_items = select_receipt_items(connection, receipt_id)
+            if len(existing_items) != len(payload.items):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không thể sửa hàng hóa trên phiếu đã thanh toán. Hãy dùng Hủy để nhập lại.",
+                )
 
-    affected_item_ids = [line.item_id for line in payload.items]
-    refresh_cost_alerts_for_items(affected_item_ids)
-    refresh_menu_cost_alerts_for_items(affected_item_ids)
-    backup_database(reason="purchase-receipt-updated")
+            for old_item, new_item in zip(existing_items, payload.items):
+                same_line = (
+                    int(old_item["item_id"]) == new_item.item_id
+                    and int(old_item["unit_id"]) == new_item.unit_id
+                    and abs(float(old_item["quantity"]) - new_item.quantity) < 1e-9
+                    and int(old_item["unit_price"]) == new_item.unit_price
+                    and clean_text(old_item["note"]) == clean_text(new_item.note)
+                )
+                if not same_line:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Không thể sửa hàng hóa, số lượng hoặc đơn giá trên phiếu đã thanh toán. Hãy dùng Hủy để nhập lại.",
+                    )
+
+            normalized_account_type = payload.payment.account_type.strip().upper()
+            if normalized_account_type not in {"CASH", "BANK"}:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Loại tiền không hợp lệ.",
+                )
+
+            new_account = connection.execute(
+                """
+                SELECT id, type, current_balance, is_active
+                FROM fund_accounts
+                WHERE id = ?
+                """,
+                (payload.payment.fund_account_id,),
+            ).fetchone()
+            if new_account is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Không tìm thấy quỹ/tài khoản.",
+                )
+            if new_account["type"] != normalized_account_type:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Quỹ/tài khoản không đúng loại tiền.",
+                )
+            if not bool(new_account["is_active"]):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Quỹ/tài khoản đang ngừng sử dụng.",
+                )
+
+            payment = connection.execute(
+                """
+                SELECT id, fund_account_id, amount, reference_code
+                FROM fund_transactions
+                WHERE direction = 'OUT'
+                  AND is_void = 0
+                  AND (
+                        (source_type = 'PURCHASE_RECEIPT' AND source_id = ?)
+                        OR (? IS NOT NULL AND reference_code = ?)
+                      )
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (
+                    str(receipt_id),
+                    existing["payment_reference_code"],
+                    existing["payment_reference_code"],
+                ),
+            ).fetchone()
+            if payment is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Không tìm thấy phiếu chi liên quan nên chưa thể sửa phiếu nhập an toàn.",
+                )
+
+            old_account_id = int(payment["fund_account_id"])
+            old_amount = int(payment["amount"])
+            new_total_amount = int(existing["goods_total"]) + payload.shipping_fee
+            available_balance = int(new_account["current_balance"])
+            if int(new_account["id"]) == old_account_id:
+                available_balance += old_amount
+
+            if available_balance < new_total_amount:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Số dư quỹ/tài khoản mới không đủ để cập nhật thanh toán.",
+                )
+
+            connection.execute(
+                """
+                UPDATE fund_accounts
+                SET current_balance = current_balance + ?
+                WHERE id = ?
+                """,
+                (old_amount, old_account_id),
+            )
+            connection.execute(
+                """
+                UPDATE fund_accounts
+                SET current_balance = current_balance - ?
+                WHERE id = ?
+                """,
+                (new_total_amount, payload.payment.fund_account_id),
+            )
+
+            payment_description = (
+                f"Thanh toán phiếu nhập {existing['receipt_code']} - {supplier['name']}"
+            )
+            connection.execute(
+                """
+                UPDATE fund_transactions
+                SET fund_account_id = ?,
+                    transaction_time = ?,
+                    amount = ?,
+                    description = ?
+                WHERE id = ?
+                """,
+                (
+                    payload.payment.fund_account_id,
+                    payload.receipt_time,
+                    new_total_amount,
+                    payment_description,
+                    payment["id"],
+                ),
+            )
+
+            connection.execute(
+                """
+                UPDATE purchase_receipts
+                SET supplier_id = ?,
+                    receipt_time = ?,
+                    description = ?,
+                    shipping_fee = ?,
+                    total_amount = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    payload.supplier_id,
+                    payload.receipt_time,
+                    clean_text(payload.description),
+                    payload.shipping_fee,
+                    new_total_amount,
+                    receipt_id,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE inventory_movements
+                SET movement_time = ?
+                WHERE source_type = 'PURCHASE_RECEIPT'
+                  AND source_id = ?
+                """,
+                (payload.receipt_time, str(receipt_id)),
+            )
+            connection.commit()
+
+            row = select_receipt(connection, receipt_id)
+            assert row is not None
+            output = row_to_output(connection, row)
+            backup_reason = "purchase-receipt-paid-metadata-updated"
+            affected_item_ids: list[int] = []
+        else:
+            if payload.payment is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
+                )
+
+            prepared_items, goods_total = prepare_items(connection, payload.items)
+            total_amount = goods_total + payload.shipping_fee
+
+            old_item_ids = [
+                int(item["item_id"])
+                for item in select_receipt_items(connection, receipt_id)
+            ]
+
+            connection.execute(
+                """
+                DELETE FROM inventory_movements
+                WHERE source_type = 'PURCHASE_RECEIPT'
+                  AND source_id = ?
+                """,
+                (str(receipt_id),),
+            )
+            connection.execute(
+                "DELETE FROM purchase_receipt_items WHERE purchase_receipt_id = ?",
+                (receipt_id,),
+            )
+            connection.execute(
+                """
+                UPDATE purchase_receipts
+                SET supplier_id = ?,
+                    receipt_time = ?,
+                    description = ?,
+                    goods_total = ?,
+                    shipping_fee = ?,
+                    total_amount = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    payload.supplier_id,
+                    payload.receipt_time,
+                    clean_text(payload.description),
+                    goods_total,
+                    payload.shipping_fee,
+                    total_amount,
+                    receipt_id,
+                ),
+            )
+            insert_receipt_lines(
+                connection,
+                receipt_id=receipt_id,
+                receipt_code=existing["receipt_code"],
+                receipt_time=payload.receipt_time,
+                prepared_items=prepared_items,
+            )
+            connection.commit()
+
+            row = select_receipt(connection, receipt_id)
+            assert row is not None
+            output = row_to_output(connection, row)
+            backup_reason = "purchase-receipt-updated"
+            affected_item_ids = list(
+                set(old_item_ids + [line.item_id for line in payload.items])
+            )
+
+    if affected_item_ids:
+        refresh_cost_alerts_for_items(affected_item_ids)
+        refresh_menu_cost_alerts_for_items(affected_item_ids)
+    backup_database(reason=backup_reason)
     return output
 
 
