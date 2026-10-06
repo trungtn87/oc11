@@ -383,3 +383,197 @@ def test_sale_surcharges_are_added_to_total_without_extra_stock_deduction(
         assert item_surcharges == [("Thêm sốt đặc biệt", 20_000)]
         assert order_surcharges == [("Phụ thu phục vụ", 10_000)]
 
+def test_paid_sale_can_be_edited_and_deleted_before_einvoice(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "order_time": "2026-10-06T18:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 2,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+
+        paid = client.post(
+            f"/api/sales/orders/{order['id']}/pay",
+            json={
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 300_000,
+            },
+        )
+        assert paid.status_code == 200
+
+        edited = client.put(
+            f"/api/sales/orders/{order['id']}",
+            json={
+                "order_time": "2026-10-06T18:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                        "surcharges": [
+                            {
+                                "name": "Phụ thu món",
+                                "amount": 20_000,
+                            }
+                        ],
+                    }
+                ],
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 170_000,
+            },
+        )
+        assert edited.status_code == 200
+        edited_order = edited.json()
+        assert edited_order["status"] == "PAID"
+        assert edited_order["total_amount"] == 170_000
+        assert edited_order["actual_received_amount"] == 170_000
+        assert edited_order["has_einvoice"] is False
+        assert edited_order["can_edit"] is True
+        assert edited_order["can_delete"] is True
+
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9.5
+
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        fund = next(row for row in funds if row["id"] == ids["fund_account_id"])
+        assert fund["current_balance"] == 170_000
+
+        deleted = client.delete(
+            f"/api/sales/orders/{order['id']}?reason=Khách hủy"
+        )
+        assert deleted.status_code == 200
+        deleted_order = deleted.json()
+        assert deleted_order["status"] == "VOID"
+        assert deleted_order["can_edit"] is False
+        assert deleted_order["can_delete"] is False
+
+        stock_after_delete = client.get("/api/inventory/stock").json()
+        mực_after_delete = next(
+            row for row in stock_after_delete if row["item_id"] == ids["item_id"]
+        )
+        assert mực_after_delete["stock_quantity"] == 10
+
+        funds_after_delete = client.get("/api/fund-accounts?type=CASH").json()
+        fund_after_delete = next(
+            row for row in funds_after_delete
+            if row["id"] == ids["fund_account_id"]
+        )
+        assert fund_after_delete["current_balance"] == 0
+
+    with sqlite3.connect(db_path) as connection:
+        payments = connection.execute(
+            """
+            SELECT amount, is_void
+            FROM fund_transactions
+            WHERE source_type = 'SALE'
+              AND source_id = ?
+            ORDER BY id
+            """,
+            (str(order["id"]),),
+        ).fetchall()
+        assert payments == [
+            (300_000, 1),
+            (170_000, 1),
+        ]
+
+        revisions = connection.execute(
+            """
+            SELECT action, previous_total_amount, new_total_amount
+            FROM sales_order_revisions
+            WHERE sales_order_id = ?
+            ORDER BY id
+            """,
+            (order["id"],),
+        ).fetchall()
+        assert revisions == [
+            ("UPDATE", 300_000, 170_000),
+            ("DELETE", 170_000, None),
+        ]
+
+
+def test_issued_einvoice_locks_sale_edit_and_delete(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ]
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO electronic_invoices (
+                    sales_order_id,
+                    provider,
+                    status,
+                    invoice_series,
+                    invoice_number,
+                    issued_at
+                )
+                VALUES (?, 'MISA_MEINVOICE', 'ISSUED', '1C26TAA', '00000001', ?)
+                """,
+                (order["id"], "2026-10-06T20:00:00"),
+            )
+            connection.commit()
+
+        fresh = client.get(f"/api/sales/orders/{order['id']}")
+        assert fresh.status_code == 200
+        locked = fresh.json()
+        assert locked["has_einvoice"] is True
+        assert locked["can_edit"] is False
+        assert locked["can_delete"] is False
+
+        edited = client.put(
+            f"/api/sales/orders/{order['id']}",
+            json={
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 2,
+                    }
+                ]
+            },
+        )
+        assert edited.status_code == 409
+        assert "hóa đơn điện tử" in edited.json()["detail"].lower()
+
+        deleted = client.delete(f"/api/sales/orders/{order['id']}")
+        assert deleted.status_code == 409
+        assert "hóa đơn điện tử" in deleted.json()["detail"].lower()
+
+        unchanged = client.get(f"/api/sales/orders/{order['id']}").json()
+        assert unchanged["status"] == "OPEN"
+        assert unchanged["total_amount"] == 150_000
+
