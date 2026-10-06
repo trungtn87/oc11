@@ -203,6 +203,7 @@ export type PurchaseReceipt = {
   goods_total: number;
   shipping_fee: number;
   total_amount: number;
+  actual_paid_amount: number | null;
   payment_status: PurchasePaymentStatus;
   payment_reference_code: string | null;
   payment_fund_account_id: number | null;
@@ -226,6 +227,7 @@ export type PurchaseReceiptInput = {
   receipt_time: string;
   description?: string | null;
   shipping_fee: number;
+  actual_paid_amount?: number | null;
   payment_status: PurchasePaymentStatus;
   payment?: {
     account_type: FundAccountType;
