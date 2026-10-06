@@ -15,11 +15,17 @@ from .menu import (
 router = APIRouter(prefix="/api/sales", tags=["sales"])
 
 
+class SaleSurchargeInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    amount: int = Field(gt=0)
+
+
 class SaleOrderItemInput(BaseModel):
     menu_item_id: int
     menu_item_option_id: int | None = None
     quantity: float = Field(gt=0)
     note: str | None = Field(default=None, max_length=300)
+    surcharges: list[SaleSurchargeInput] = Field(default_factory=list)
 
 
 class SaleOrderInput(BaseModel):
@@ -27,11 +33,18 @@ class SaleOrderInput(BaseModel):
     customer_id: int | None = None
     note: str | None = Field(default=None, max_length=500)
     items: list[SaleOrderItemInput] = Field(min_length=1)
+    surcharges: list[SaleSurchargeInput] = Field(default_factory=list)
 
 
 class SalePaymentInput(BaseModel):
     fund_account_id: int
     actual_received_amount: int | None = Field(default=None, ge=0)
+
+
+class SaleSurchargeOutput(BaseModel):
+    id: int
+    name: str
+    amount: int
 
 
 class SaleOrderItemOutput(BaseModel):
@@ -44,9 +57,12 @@ class SaleOrderItemOutput(BaseModel):
     quantity: float
     unit_price: int
     line_total: int
+    surcharge_total: int
+    total_with_surcharges: int
     unit_cost_snapshot: float | None
     cost_total_snapshot: float | None
     note: str | None
+    surcharges: list[SaleSurchargeOutput] = Field(default_factory=list)
 
 
 class SaleOrderOutput(BaseModel):
@@ -59,6 +75,7 @@ class SaleOrderOutput(BaseModel):
     fund_account_id: int | None
     fund_account_name: str | None
     total_amount: int
+    surcharge_total: int
     actual_received_amount: int | None
     payment_reference_code: str | None
     paid_at: str | None
@@ -68,7 +85,8 @@ class SaleOrderOutput(BaseModel):
     created_at: str
     updated_at: str | None
     stock_deducted: bool
-    items: list[SaleOrderItemOutput] = []
+    items: list[SaleOrderItemOutput] = Field(default_factory=list)
+    surcharges: list[SaleSurchargeOutput] = Field(default_factory=list)
 
 
 def clean_text(value: str | None) -> str | None:
@@ -241,6 +259,62 @@ def build_line_snapshot(
     }
 
 
+def normalize_surcharge(surcharge: SaleSurchargeInput) -> tuple[str, int]:
+    name = clean_text(surcharge.name)
+    if name is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tên phụ thu không được để trống.",
+        )
+    return name, int(surcharge.amount)
+
+
+def insert_item_surcharges(
+    connection: sqlite3.Connection,
+    sales_order_item_id: int,
+    surcharges: list[SaleSurchargeInput],
+) -> int:
+    total = 0
+    for surcharge in surcharges:
+        name, amount = normalize_surcharge(surcharge)
+        connection.execute(
+            """
+            INSERT INTO sales_order_item_surcharges (
+                sales_order_item_id,
+                name,
+                amount
+            )
+            VALUES (?, ?, ?)
+            """,
+            (sales_order_item_id, name, amount),
+        )
+        total += amount
+    return total
+
+
+def insert_order_surcharges(
+    connection: sqlite3.Connection,
+    order_id: int,
+    surcharges: list[SaleSurchargeInput],
+) -> int:
+    total = 0
+    for surcharge in surcharges:
+        name, amount = normalize_surcharge(surcharge)
+        connection.execute(
+            """
+            INSERT INTO sales_order_surcharges (
+                sales_order_id,
+                name,
+                amount
+            )
+            VALUES (?, ?, ?)
+            """,
+            (order_id, name, amount),
+        )
+        total += amount
+    return total
+
+
 def insert_order_items(
     connection: sqlite3.Connection,
     order_id: int,
@@ -249,7 +323,7 @@ def insert_order_items(
     total = 0
     for line in items:
         snapshot = build_line_snapshot(connection, line)
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO sales_order_items (
                 sales_order_id,
@@ -282,10 +356,14 @@ def insert_order_items(
                 snapshot["note"],
             ),
         )
-        total += int(snapshot["line_total"])
+        line_id = int(cursor.lastrowid)
+        surcharge_total = insert_item_surcharges(
+            connection,
+            line_id,
+            line.surcharges,
+        )
+        total += int(snapshot["line_total"]) + surcharge_total
     return total
-
-
 def select_order(
     connection: sqlite3.Connection,
     order_id: int,
@@ -352,43 +430,105 @@ def select_order_items(
     ).fetchall()
 
 
+def select_item_surcharges(
+    connection: sqlite3.Connection,
+    sales_order_item_id: int,
+) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT id, name, amount
+        FROM sales_order_item_surcharges
+        WHERE sales_order_item_id = ?
+        ORDER BY id ASC
+        """,
+        (sales_order_item_id,),
+    ).fetchall()
+
+
+def select_order_surcharges(
+    connection: sqlite3.Connection,
+    order_id: int,
+) -> list[sqlite3.Row]:
+    return connection.execute(
+        """
+        SELECT id, name, amount
+        FROM sales_order_surcharges
+        WHERE sales_order_id = ?
+        ORDER BY id ASC
+        """,
+        (order_id,),
+    ).fetchall()
+
+
+def surcharge_rows_to_output(
+    rows: list[sqlite3.Row],
+) -> list[SaleSurchargeOutput]:
+    return [
+        SaleSurchargeOutput(
+            id=int(row["id"]),
+            name=row["name"],
+            amount=int(row["amount"]),
+        )
+        for row in rows
+    ]
+
+
 def order_to_output(
     connection: sqlite3.Connection,
     row: sqlite3.Row,
 ) -> SaleOrderOutput:
-    items = [
-        SaleOrderItemOutput(
-            id=int(item["id"]),
-            menu_item_id=(
-                int(item["menu_item_id"])
-                if item["menu_item_id"] is not None
-                else None
-            ),
-            menu_item_option_id=(
-                int(item["menu_item_option_id"])
-                if item["menu_item_option_id"] is not None
-                else None
-            ),
-            item_name_snapshot=item["item_name_snapshot"],
-            option_name_snapshot=item["option_name_snapshot"],
-            unit_name_snapshot=item["unit_name_snapshot"],
-            quantity=float(item["quantity"]),
-            unit_price=int(item["unit_price"]),
-            line_total=int(item["line_total"]),
-            unit_cost_snapshot=(
-                float(item["unit_cost_snapshot"])
-                if item["unit_cost_snapshot"] is not None
-                else None
-            ),
-            cost_total_snapshot=(
-                float(item["cost_total_snapshot"])
-                if item["cost_total_snapshot"] is not None
-                else None
-            ),
-            note=item["note"],
+    items: list[SaleOrderItemOutput] = []
+    item_surcharge_total = 0
+
+    for item in select_order_items(connection, int(row["id"])):
+        surcharges = surcharge_rows_to_output(
+            select_item_surcharges(connection, int(item["id"]))
         )
-        for item in select_order_items(connection, int(row["id"]))
-    ]
+        surcharge_total = sum(surcharge.amount for surcharge in surcharges)
+        item_surcharge_total += surcharge_total
+        items.append(
+            SaleOrderItemOutput(
+                id=int(item["id"]),
+                menu_item_id=(
+                    int(item["menu_item_id"])
+                    if item["menu_item_id"] is not None
+                    else None
+                ),
+                menu_item_option_id=(
+                    int(item["menu_item_option_id"])
+                    if item["menu_item_option_id"] is not None
+                    else None
+                ),
+                item_name_snapshot=item["item_name_snapshot"],
+                option_name_snapshot=item["option_name_snapshot"],
+                unit_name_snapshot=item["unit_name_snapshot"],
+                quantity=float(item["quantity"]),
+                unit_price=int(item["unit_price"]),
+                line_total=int(item["line_total"]),
+                surcharge_total=surcharge_total,
+                total_with_surcharges=int(item["line_total"]) + surcharge_total,
+                unit_cost_snapshot=(
+                    float(item["unit_cost_snapshot"])
+                    if item["unit_cost_snapshot"] is not None
+                    else None
+                ),
+                cost_total_snapshot=(
+                    float(item["cost_total_snapshot"])
+                    if item["cost_total_snapshot"] is not None
+                    else None
+                ),
+                note=item["note"],
+                surcharges=surcharges,
+            )
+        )
+
+    order_surcharges = surcharge_rows_to_output(
+        select_order_surcharges(connection, int(row["id"]))
+    )
+    order_surcharge_total = sum(
+        surcharge.amount for surcharge in order_surcharges
+    )
+
     return SaleOrderOutput(
         id=int(row["id"]),
         order_code=row["order_code"],
@@ -405,6 +545,7 @@ def order_to_output(
         ),
         fund_account_name=row["fund_account_name"],
         total_amount=int(row["total_amount"]),
+        surcharge_total=item_surcharge_total + order_surcharge_total,
         actual_received_amount=(
             int(row["actual_received_amount"])
             if row["actual_received_amount"] is not None
@@ -419,9 +560,8 @@ def order_to_output(
         updated_at=row["updated_at"],
         stock_deducted=bool(row["stock_deducted"]),
         items=items,
+        surcharges=order_surcharges,
     )
-
-
 def get_sale_category_id(connection: sqlite3.Connection) -> int:
     row = connection.execute(
         """
@@ -546,6 +686,11 @@ def create_order(payload: SaleOrderInput) -> SaleOrderOutput:
         )
         order_id = int(cursor.lastrowid)
         total = insert_order_items(connection, order_id, payload.items)
+        total += insert_order_surcharges(
+            connection,
+            order_id,
+            payload.surcharges,
+        )
         connection.execute(
             "UPDATE sales_orders SET total_amount = ? WHERE id = ?",
             (total, order_id),
@@ -581,7 +726,16 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             "DELETE FROM sales_order_items WHERE sales_order_id = ?",
             (order_id,),
         )
+        connection.execute(
+            "DELETE FROM sales_order_surcharges WHERE sales_order_id = ?",
+            (order_id,),
+        )
         total = insert_order_items(connection, order_id, payload.items)
+        total += insert_order_surcharges(
+            connection,
+            order_id,
+            payload.surcharges,
+        )
         connection.execute(
             """
             UPDATE sales_orders
