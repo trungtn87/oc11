@@ -20,6 +20,7 @@ import {
   getMenuItems,
   getSaleOrders,
   paySaleOrder,
+  updateSaleOrder,
   voidSaleOrder
 } from "./api";
 import type {
@@ -81,9 +82,13 @@ function cartKey(menuItemId: number, optionId: number | null) {
 }
 
 export function SalesPosPage({
-  onOpenOrders
+  onOpenOrders,
+  editingOrder,
+  onEditDone
 }: {
   onOpenOrders?: () => void;
+  editingOrder?: SaleOrder | null;
+  onEditDone?: () => void;
 }) {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
@@ -103,6 +108,7 @@ export function SalesPosPage({
   const [surchargeAmount, setSurchargeAmount] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadedEditOrderId, setLoadedEditOrderId] = useState<number | null>(null);
   const [messageApi, messageContext] = message.useMessage();
 
   useEffect(() => {
@@ -145,6 +151,78 @@ export function SalesPosPage({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      !editingOrder ||
+      accounts.length === 0 ||
+      loadedEditOrderId === editingOrder.id
+    ) {
+      return;
+    }
+
+    if (!editingOrder.can_edit) {
+      messageApi.error("Đơn đã phát hành hóa đơn điện tử hoặc đã xóa.");
+      onEditDone?.();
+      return;
+    }
+
+    const missingMenuItem = editingOrder.items.find(
+      (item) => item.menu_item_id === null
+    );
+    if (missingMenuItem) {
+      messageApi.error(
+        "Đơn có món đã bị xóa khỏi thực đơn nên không thể sửa trực tiếp."
+      );
+      onEditDone?.();
+      return;
+    }
+
+    setCart(
+      editingOrder.items.map((item) => ({
+        key: cartKey(item.menu_item_id as number, item.menu_item_option_id),
+        menu_item_id: item.menu_item_id as number,
+        menu_item_option_id: item.menu_item_option_id,
+        item_name: item.item_name_snapshot,
+        option_name: item.option_name_snapshot,
+        unit_name: item.unit_name_snapshot,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        surcharges: item.surcharges.map((surcharge) => ({
+          key: `saved-item-surcharge-${surcharge.id}`,
+          name: surcharge.name,
+          amount: surcharge.amount
+        }))
+      }))
+    );
+    setOrderSurcharges(
+      editingOrder.surcharges.map((surcharge) => ({
+        key: `saved-order-surcharge-${surcharge.id}`,
+        name: surcharge.name,
+        amount: surcharge.amount
+      }))
+    );
+
+    const paidAccount = accounts.find(
+      (account) => account.id === editingOrder.fund_account_id
+    );
+    if (paidAccount) {
+      setAccountType(paidAccount.type);
+      setFundAccountId(paidAccount.id);
+    }
+
+    setActualReceived(
+      editingOrder.actual_received_amount ?? editingOrder.total_amount
+    );
+    setActualTouched(editingOrder.status === "PAID");
+    setLoadedEditOrderId(editingOrder.id);
+  }, [
+    accounts,
+    editingOrder,
+    loadedEditOrderId,
+    messageApi,
+    onEditDone
+  ]);
 
   const groups = useMemo(
     () =>
@@ -328,33 +406,55 @@ export function SalesPosPage({
       messageApi.warning("Chưa có món trong đơn.");
       return;
     }
-    if (!fundAccountId) {
+    if (
+      (!editingOrder || editingOrder.status === "PAID") &&
+      !fundAccountId
+    ) {
       messageApi.warning("Chọn quỹ/tài khoản nhận tiền.");
       return;
     }
 
-    setSaving(true);
-    let created: SaleOrder | null = null;
-    try {
-      created = await createSaleOrder({
-        order_time: new Date().toISOString(),
-        items: cart.map((line) => ({
-          menu_item_id: line.menu_item_id,
-          menu_item_option_id: line.menu_item_option_id,
-          quantity: line.quantity,
-          surcharges: line.surcharges.map((surcharge) => ({
-            name: surcharge.name,
-            amount: surcharge.amount
-          }))
-        })),
-        surcharges: orderSurcharges.map((surcharge) => ({
+    const orderPayload = {
+      order_time: editingOrder?.order_time ?? new Date().toISOString(),
+      customer_id: editingOrder?.customer_id ?? null,
+      note: editingOrder?.note ?? null,
+      items: cart.map((line) => ({
+        menu_item_id: line.menu_item_id,
+        menu_item_option_id: line.menu_item_option_id,
+        quantity: line.quantity,
+        surcharges: line.surcharges.map((surcharge) => ({
           name: surcharge.name,
           amount: surcharge.amount
         }))
-      });
+      })),
+      surcharges: orderSurcharges.map((surcharge) => ({
+        name: surcharge.name,
+        amount: surcharge.amount
+      })),
+      fund_account_id:
+        editingOrder?.status === "PAID" ? fundAccountId ?? null : null,
+      actual_received_amount:
+        editingOrder?.status === "PAID"
+          ? Math.round(actualReceived)
+          : null
+    };
+
+    setSaving(true);
+    let created: SaleOrder | null = null;
+    try {
+      if (editingOrder) {
+        const updated = await updateSaleOrder(editingOrder.id, orderPayload);
+        messageApi.success(
+          `Đã cập nhật ${updated.order_code}. Tiền và kho đã được cân lại tự động.`
+        );
+        onEditDone?.();
+        return;
+      }
+
+      created = await createSaleOrder(orderPayload);
 
       const paid = await paySaleOrder(created.id, {
-        fund_account_id: fundAccountId,
+        fund_account_id: fundAccountId as number,
         actual_received_amount: Math.round(actualReceived)
       });
 
@@ -379,7 +479,9 @@ export function SalesPosPage({
       messageApi.error(
         error instanceof Error
           ? error.message
-          : "Không hoàn tất được đơn bán."
+          : editingOrder
+            ? "Không sửa được đơn bán."
+            : "Không hoàn tất được đơn bán."
       );
     } finally {
       setSaving(false);
@@ -391,9 +493,13 @@ export function SalesPosPage({
       {messageContext}
       <div className="page-heading sales-heading">
         <div>
-          <Title level={2}>Bán hàng</Title>
+          <Title level={2}>
+            {editingOrder ? `Sửa đơn ${editingOrder.order_code}` : "Bán hàng"}
+          </Title>
           <Text type="secondary">
-            Thanh toán xong hệ thống tự ghi thu và trừ nguyên liệu trong kho.
+            {editingOrder
+              ? "Đơn chưa xuất hóa đơn điện tử: có thể sửa món, số lượng, phụ thu và tiền thực thu."
+              : "Thanh toán xong hệ thống tự ghi thu và trừ nguyên liệu trong kho."}
           </Text>
         </div>
         {onOpenOrders && (
@@ -450,7 +556,10 @@ export function SalesPosPage({
           </div>
         </Card>
 
-        <Card className="sales-cart-panel" title="Đơn hiện tại">
+        <Card
+          className="sales-cart-panel"
+          title={editingOrder ? `Đang sửa ${editingOrder.order_code}` : "Đơn hiện tại"}
+        >
           <div className="sales-cart-lines">
             {cart.map((line) => (
               <div className="sales-cart-line" key={line.key}>
@@ -642,7 +751,7 @@ export function SalesPosPage({
               disabled={!cart.length}
               onClick={() => void checkout()}
             >
-              THANH TOÁN
+              {editingOrder ? "LƯU THAY ĐỔI" : "THANH TOÁN"}
             </Button>
           </div>
         </Card>
@@ -723,7 +832,11 @@ export function SalesPosPage({
   );
 }
 
-export function SalesOrdersPage() {
+export function SalesOrdersPage({
+  onEditOrder
+}: {
+  onEditOrder?: (order: SaleOrder) => void;
+}) {
   const [orders, setOrders] = useState<SaleOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -763,14 +876,14 @@ export function SalesOrdersPage() {
     return <Tag color="warning">Chưa thanh toán</Tag>;
   };
 
-  const confirmVoid = (order: SaleOrder) => {
+  const confirmDelete = (order: SaleOrder) => {
     Modal.confirm({
-      title: `Hủy ${order.order_code}?`,
+      title: `Xóa ${order.order_code}?`,
       content:
         order.status === "PAID"
-          ? "Tiền thu sẽ được đảo lại và toàn bộ nguyên liệu đã trừ sẽ được hoàn về kho."
-          : "Đơn chưa thanh toán sẽ được chuyển sang trạng thái đã hủy.",
-      okText: "Hủy đơn",
+          ? "Đơn sẽ được xóa mềm; tiền thu được đảo lại và nguyên liệu được hoàn kho."
+          : "Đơn chưa thanh toán sẽ được chuyển sang trạng thái đã xóa.",
+      okText: "Xóa đơn",
       cancelText: "Không",
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -781,12 +894,12 @@ export function SalesOrdersPage() {
           await load();
           messageApi.success(
             order.status === "PAID"
-              ? "Đã hủy đơn, hoàn tiền và hoàn kho."
-              : "Đã hủy đơn."
+              ? "Đã xóa đơn, hoàn tiền và hoàn kho."
+              : "Đã xóa đơn."
           );
         } catch (error) {
           messageApi.error(
-            error instanceof Error ? error.message : "Không hủy được đơn."
+            error instanceof Error ? error.message : "Không xóa được đơn."
           );
         } finally {
           setVoiding(false);
@@ -850,6 +963,42 @@ export function SalesOrdersPage() {
         ) : (
           <Tag>Chưa trừ</Tag>
         )
+    },
+    {
+      title: "HĐĐT",
+      dataIndex: "has_einvoice",
+      width: 110,
+      render: (value: boolean) =>
+        value ? (
+          <Tag color="blue">Đã xuất</Tag>
+        ) : (
+          <Tag>Chưa xuất</Tag>
+        )
+    },
+    {
+      title: "Thao tác",
+      width: 125,
+      render: (_, row) => (
+        <Space size={2}>
+          <Button
+            type="link"
+            size="small"
+            disabled={!row.can_edit}
+            onClick={() => onEditOrder?.(row)}
+          >
+            Sửa
+          </Button>
+          <Button
+            type="link"
+            danger
+            size="small"
+            disabled={!row.can_delete}
+            onClick={() => confirmDelete(row)}
+          >
+            Xóa
+          </Button>
+        </Space>
+      )
     },
     {
       title: "Trạng thái",
@@ -916,13 +1065,22 @@ export function SalesOrdersPage() {
             <Space>
               <Button onClick={() => setSelected(null)}>Đóng</Button>
               {selected.status !== "VOID" && (
-                <Button
-                  danger
-                  loading={voiding}
-                  onClick={() => confirmVoid(selected)}
-                >
-                  Hủy đơn
-                </Button>
+                <>
+                  <Button
+                    disabled={!selected.can_edit}
+                    onClick={() => onEditOrder?.(selected)}
+                  >
+                    Sửa
+                  </Button>
+                  <Button
+                    danger
+                    disabled={!selected.can_delete}
+                    loading={voiding}
+                    onClick={() => confirmDelete(selected)}
+                  >
+                    Xóa đơn
+                  </Button>
+                </>
               )}
             </Space>
           ) : null
@@ -946,6 +1104,12 @@ export function SalesOrdersPage() {
               <div>
                 <Text type="secondary">Tổng phụ thu</Text>
                 <strong>{money(selected.surcharge_total)} đ</strong>
+              </div>
+              <div>
+                <Text type="secondary">Hóa đơn điện tử</Text>
+                <strong>
+                  {selected.has_einvoice ? "Đã phát hành" : "Chưa phát hành"}
+                </strong>
               </div>
               <div>
                 <Text type="secondary">Tiền thực thu</Text>
