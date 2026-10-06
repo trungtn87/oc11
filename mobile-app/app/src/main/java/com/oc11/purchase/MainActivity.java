@@ -308,10 +308,10 @@ public class MainActivity extends Activity {
         JSONArray items = LocalStore.asArray(store.getCache("items"));
         JSONArray funds = LocalStore.asArray(store.getCache("fund_accounts"));
 
-        if (suppliers.length() == 0 || items.length() == 0) {
+        if (suppliers.length() == 0 || items.length() == 0 || funds.length() == 0) {
             new AlertDialog.Builder(this)
                     .setTitle("Chưa có dữ liệu nền")
-                    .setMessage("Lần đầu dùng app cần bấm Đồng bộ một lần để tải danh sách hàng hóa, nhà cung cấp, đơn vị và quỹ. Sau đó có thể nhập hàng hoàn toàn offline.")
+                    .setMessage("Lần đầu dùng app cần bấm Đồng bộ một lần để tải nhà cung cấp, hàng hóa và quỹ/tài khoản. Sau đó có thể nhập hàng hoàn toàn offline.")
                     .setPositiveButton("Đã hiểu", null)
                     .show();
             return;
@@ -323,26 +323,9 @@ public class MainActivity extends Activity {
         }
 
         LinearLayout form = vertical();
-        form.setPadding(dp(12), dp(4), dp(12), dp(10));
+        form.setPadding(dp(14), dp(4), dp(14), dp(10));
 
-        LinearLayout tabBar = new LinearLayout(this);
-        tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        Button infoTabButton = button("1. Thông tin");
-        Button goodsTabButton = button("2. Hàng hóa");
-        LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        infoTabButton.setLayoutParams(tabLp);
-        goodsTabButton.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        tabBar.addView(infoTabButton);
-        tabBar.addView(goodsTabButton);
-        form.addView(tabBar);
-        form.addView(spacer(6));
-
-        LinearLayout infoTab = vertical();
-        LinearLayout goodsTab = vertical();
-        form.addView(infoTab);
-        form.addView(goodsTab);
-
-        TextView supplierLabel = text("Nhà cung cấp", 13, true);
+        form.addView(text("Nhà cung cấp", 13, true));
         Spinner supplierSpinner = new Spinner(this);
         List<String> supplierNames = new ArrayList<>();
         List<Integer> supplierIds = new ArrayList<>();
@@ -352,36 +335,47 @@ public class MainActivity extends Activity {
             supplierNames.add(s.optString("name"));
             supplierIds.add(s.optInt("id"));
         }
-        supplierSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, supplierNames));
-        infoTab.addView(supplierLabel);
-        infoTab.addView(supplierSpinner);
+        supplierSpinner.setAdapter(new ArrayAdapter<>(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                supplierNames));
+        form.addView(supplierSpinner);
 
-        infoTab.addView(spacer(8));
-        infoTab.addView(text("Thanh toán", 13, true));
-        Spinner paymentSpinner = new Spinner(this);
-        paymentSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"Đã thanh toán", "Trả nợ"}));
-        infoTab.addView(paymentSpinner);
+        form.addView(spacer(8));
+        form.addView(text("Trả tiền", 13, true));
 
-        infoTab.addView(text("Loại tiền", 13, true));
-        Spinner moneyType = new Spinner(this);
-        moneyType.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"Tiền mặt", "Ngân hàng"}));
-        infoTab.addView(moneyType);
+        LinearLayout paymentRow = new LinearLayout(this);
+        paymentRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button cashButton = button("Tiền mặt\nQuỹ đi chợ");
+        Button bankButton = button("Chuyển khoản\nBIDV");
+        cashButton.setTextSize(14);
+        bankButton.setTextSize(14);
+        paymentRow.addView(cashButton, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams bankLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        bankLp.setMargins(dp(6), 0, 0, 0);
+        paymentRow.addView(bankButton, bankLp);
+        form.addView(paymentRow);
 
-        infoTab.addView(text("Quỹ / tài khoản", 13, true));
-        Spinner fundSpinner = new Spinner(this);
-        infoTab.addView(fundSpinner);
+        final String[] paymentType = new String[]{"CASH"};
+        Runnable refreshPaymentButtons = () -> {
+            boolean cash = "CASH".equals(paymentType[0]);
+            cashButton.setEnabled(!cash);
+            bankButton.setEnabled(cash);
+            cashButton.setText(cash ? "✓ Tiền mặt\nQuỹ đi chợ" : "Tiền mặt\nQuỹ đi chợ");
+            bankButton.setText(!cash ? "✓ Chuyển khoản\nBIDV" : "Chuyển khoản\nBIDV");
+        };
+        cashButton.setOnClickListener(v -> {
+            paymentType[0] = "CASH";
+            refreshPaymentButtons.run();
+        });
+        bankButton.setOnClickListener(v -> {
+            paymentType[0] = "BANK";
+            refreshPaymentButtons.run();
+        });
 
-        EditText shipping = new EditText(this);
-        shipping.setHint("Phí vận chuyển");
-        shipping.setInputType(InputType.TYPE_CLASS_NUMBER);
-        infoTab.addView(shipping);
-
-        EditText note = new EditText(this);
-        note.setHint("Ghi chú");
-        note.setSingleLine(false);
-        infoTab.addView(note);
+        form.addView(spacer(12));
 
         final JSONArray lines = new JSONArray();
         if (existing != null) {
@@ -392,117 +386,66 @@ public class MainActivity extends Activity {
                     if (line != null) lines.put(copyJson(line));
                 }
             }
+            JSONObject oldPayment = existing.optJSONObject("payment");
+            if (oldPayment != null && "BANK".equals(oldPayment.optString("account_type"))) {
+                paymentType[0] = "BANK";
+            }
         }
+        refreshPaymentButtons.run();
 
-        TextView goodsCount = text("", 13, false);
+        LinearLayout goodsHeader = new LinearLayout(this);
+        goodsHeader.setOrientation(LinearLayout.HORIZONTAL);
+        goodsHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView goodsTitle = text("Hàng hóa", 15, true);
+        TextView goodsCount = text("", 12, false);
+        goodsCount.setGravity(Gravity.END);
         goodsCount.setTextColor(Color.DKGRAY);
-        goodsTab.addView(goodsCount);
-        goodsTab.addView(spacer(4));
+        goodsHeader.addView(goodsTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        goodsHeader.addView(goodsCount);
+        form.addView(goodsHeader);
+        form.addView(spacer(6));
 
         LinearLayout linesBox = vertical();
-        goodsTab.addView(linesBox);
+        form.addView(linesBox);
 
         Button addLine = button("+ Thêm hàng hóa");
-        goodsTab.addView(addLine);
-        goodsTab.addView(spacer(10));
+        form.addView(addLine);
+        form.addView(spacer(10));
 
         LinearLayout totalRow = new LinearLayout(this);
         totalRow.setOrientation(LinearLayout.HORIZONTAL);
         totalRow.setGravity(Gravity.CENTER_VERTICAL);
-        totalRow.setPadding(dp(4), dp(8), dp(4), dp(8));
+        totalRow.setPadding(dp(4), dp(10), dp(4), dp(10));
         TextView totalLabel = text("TỔNG TIỀN", 15, true);
-        TextView totalText = text("0 đ", 20, true);
+        TextView totalText = text("0 đ", 21, true);
         totalText.setGravity(Gravity.END);
-        totalRow.addView(totalLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        totalRow.addView(totalText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        goodsTab.addView(totalRow);
+        totalRow.addView(totalLabel, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        totalRow.addView(totalText);
+        form.addView(totalRow);
 
         final Runnable[] refreshLines = new Runnable[1];
         refreshLines[0] = () -> {
             renderLines(linesBox, lines, items, refreshLines[0]);
             goodsCount.setText(lines.length() + " mặt hàng");
-            long total = parseLong(shipping.getText().toString());
+            long total = 0;
             for (int i = 0; i < lines.length(); i++) {
                 JSONObject line = lines.optJSONObject(i);
                 if (line != null) {
-                    total += Math.round(line.optDouble("quantity", 0) * line.optLong("unit_price", 0));
+                    total += Math.round(
+                            line.optDouble("quantity", 0) *
+                            line.optLong("unit_price", 0)
+                    );
                 }
             }
             totalText.setText(MONEY.format(total) + " đ");
         };
         addLine.setOnClickListener(v -> showLineDialog(items, lines, refreshLines[0]));
 
-        shipping.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { refreshLines[0].run(); }
-            @Override public void afterTextChanged(Editable s) {}
-        });
-
-        final Runnable refreshFunds = () -> {
-            boolean bank = moneyType.getSelectedItemPosition() == 1;
-            String desired = bank ? "BANK" : "CASH";
-            List<String> names = new ArrayList<>();
-            List<Integer> ids = new ArrayList<>();
-            for (int i = 0; i < funds.length(); i++) {
-                JSONObject f = funds.optJSONObject(i);
-                if (f == null || !f.optBoolean("is_active", true)) continue;
-                if (!desired.equals(f.optString("type"))) continue;
-                names.add(f.optString("name") + " • " + MONEY.format(f.optLong("current_balance")) + " đ");
-                ids.add(f.optInt("id"));
-            }
-            fundSpinner.setTag(ids);
-            fundSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names));
-        };
-        moneyType.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { refreshFunds.run(); }
-            @Override public void onNothingSelected(AdapterView<?> parent) {}
-        });
-        paymentSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> p, View v, int pos, long id) {
-                boolean paid = pos == 0;
-                moneyType.setEnabled(paid);
-                fundSpinner.setEnabled(paid);
-            }
-            @Override public void onNothingSelected(AdapterView<?> p) {}
-        });
-        refreshFunds.run();
-
         if (existing != null) {
             selectId(supplierSpinner, supplierIds, existing.optInt("supplier_id"));
-            shipping.setText(String.valueOf(existing.optLong("shipping_fee", 0)));
-            note.setText(existing.optString("description", ""));
-            boolean debt = "DEBT".equals(existing.optString("payment_status"));
-            paymentSpinner.setSelection(debt ? 1 : 0);
-            JSONObject pay = existing.optJSONObject("payment");
-            if (pay != null) {
-                boolean bank = "BANK".equals(pay.optString("account_type"));
-                moneyType.setSelection(bank ? 1 : 0);
-                refreshFunds.run();
-                Object tag = fundSpinner.getTag();
-                if (tag instanceof List) {
-                    @SuppressWarnings("unchecked")
-                    List<Integer> ids = (List<Integer>) tag;
-                    selectId(fundSpinner, ids, pay.optInt("fund_account_id"));
-                }
-            }
         }
-
-        Runnable showInfoTab = () -> {
-            infoTab.setVisibility(View.VISIBLE);
-            goodsTab.setVisibility(View.GONE);
-            infoTabButton.setEnabled(false);
-            goodsTabButton.setEnabled(true);
-        };
-        Runnable showGoodsTab = () -> {
-            infoTab.setVisibility(View.GONE);
-            goodsTab.setVisibility(View.VISIBLE);
-            infoTabButton.setEnabled(true);
-            goodsTabButton.setEnabled(false);
-            refreshLines[0].run();
-        };
-        infoTabButton.setOnClickListener(v -> showInfoTab.run());
-        goodsTabButton.setOnClickListener(v -> showGoodsTab.run());
-        showInfoTab.run();
         refreshLines[0].run();
 
         ScrollView sc = new ScrollView(this);
@@ -510,7 +453,7 @@ public class MainActivity extends Activity {
 
         JSONObject finalExisting = existing;
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(editing == null ? "Tạo phiếu nhập" : "Sửa phiếu chưa đồng bộ")
+                .setTitle(editing == null ? "Nhập hàng đi chợ" : "Sửa phiếu chưa đồng bộ")
                 .setView(sc)
                 .setNegativeButton("Hủy", null)
                 .setPositiveButton("Lưu offline", null)
@@ -518,47 +461,53 @@ public class MainActivity extends Activity {
 
         dialog.setOnShowListener(x -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
-                if (lines.length() == 0) {
-                    showGoodsTab.run();
-                    throw new Exception("Chưa có hàng hóa.");
-                }
+                if (lines.length() == 0) throw new Exception("Chưa có hàng hóa.");
                 if (supplierSpinner.getSelectedItemPosition() < 0) {
-                    showInfoTab.run();
                     throw new Exception("Chưa chọn nhà cung cấp.");
                 }
 
-                JSONObject payload = finalExisting == null ? new JSONObject() : copyJson(finalExisting);
-                if (!payload.has("client_sync_id")) payload.put("client_sync_id", UUID.randomUUID().toString());
-                payload.put("supplier_id", supplierIds.get(supplierSpinner.getSelectedItemPosition()));
-                if (!payload.has("receipt_time") || editing == null) payload.put("receipt_time", nowIso());
-                payload.put("description", note.getText().toString().trim());
-                payload.put("shipping_fee", parseLong(shipping.getText().toString()));
+                JSONObject fund = findMarketFund(funds, paymentType[0]);
+                if (fund == null) {
+                    if ("CASH".equals(paymentType[0])) {
+                        throw new Exception("Không tìm thấy Quỹ đi chợ. Hãy tạo quỹ này trên Ốc 11 rồi bấm Đồng bộ.");
+                    }
+                    throw new Exception("Không tìm thấy tài khoản BIDV. Hãy tạo tài khoản BIDV trên Ốc 11 rồi bấm Đồng bộ.");
+                }
+
+                JSONObject payload = finalExisting == null
+                        ? new JSONObject()
+                        : copyJson(finalExisting);
+                if (!payload.has("client_sync_id")) {
+                    payload.put("client_sync_id", UUID.randomUUID().toString());
+                }
+                payload.put(
+                        "supplier_id",
+                        supplierIds.get(supplierSpinner.getSelectedItemPosition())
+                );
+                if (!payload.has("receipt_time") || editing == null) {
+                    payload.put("receipt_time", nowIso());
+                }
+                payload.put("description", JSONObject.NULL);
+                payload.put("shipping_fee", 0);
                 payload.put("replaces_receipt_id", JSONObject.NULL);
                 payload.put("items", lines);
+                payload.put("payment_status", "PAID");
 
-                if (paymentSpinner.getSelectedItemPosition() == 0) {
-                    @SuppressWarnings("unchecked")
-                    List<Integer> fundIds = (List<Integer>) fundSpinner.getTag();
-                    if (fundIds == null || fundIds.isEmpty() || fundSpinner.getSelectedItemPosition() < 0) {
-                        showInfoTab.run();
-                        throw new Exception("Chưa có quỹ/tài khoản phù hợp.");
-                    }
-                    payload.put("payment_status", "PAID");
-                    JSONObject pay = new JSONObject();
-                    pay.put("account_type", moneyType.getSelectedItemPosition() == 1 ? "BANK" : "CASH");
-                    pay.put("fund_account_id", fundIds.get(fundSpinner.getSelectedItemPosition()));
-                    payload.put("payment", pay);
-                } else {
-                    payload.put("payment_status", "DEBT");
-                    payload.put("payment", JSONObject.NULL);
-                }
+                JSONObject pay = new JSONObject();
+                pay.put("account_type", paymentType[0]);
+                pay.put("fund_account_id", fund.optInt("id"));
+                payload.put("payment", pay);
 
                 if (editing == null) store.saveReceipt(payload, nowIso());
                 else store.updateReceipt(editing.id, payload);
 
                 dialog.dismiss();
                 refreshHome();
-                Toast.makeText(this, "Đã lưu trên điện thoại. Chưa gửi lên máy tính.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(
+                        this,
+                        "Đã lưu trên điện thoại. Chưa gửi lên máy tính.",
+                        Toast.LENGTH_SHORT
+                ).show();
             } catch (Exception ex) {
                 Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
             }
@@ -776,6 +725,31 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
+    private JSONObject findMarketFund(JSONArray funds, String type) {
+        JSONObject fallback = null;
+        for (int i = 0; i < funds.length(); i++) {
+            JSONObject fund = funds.optJSONObject(i);
+            if (fund == null || !fund.optBoolean("is_active", true)) continue;
+            if (!type.equals(fund.optString("type"))) continue;
+
+            String name = fund.optString("name", "").trim().toLowerCase(viLocale());
+            String bankName = fund.optString("bank_name", "").trim().toLowerCase(viLocale());
+
+            if ("CASH".equals(type)) {
+                if (name.equals("quỹ đi chợ") || name.contains("đi chợ")) return fund;
+            } else {
+                if (name.contains("bidv") || bankName.contains("bidv")) return fund;
+            }
+
+            if (fallback == null) fallback = fund;
+        }
+        return null;
+    }
+
+    private Locale viLocale() {
+        return new Locale("vi", "VN");
+    }
+
     private JSONObject findItemByName(List<JSONObject> items, String name) {
         String wanted = name == null ? "" : name.trim();
         for (JSONObject item : items) {
@@ -793,7 +767,7 @@ public class MainActivity extends Activity {
     }
 
     private long totalOf(JSONObject p) {
-        long total = p.optLong("shipping_fee", 0);
+        long total = 0;
         JSONArray lines = p.optJSONArray("items");
         if (lines != null) {
             for (int i = 0; i < lines.length(); i++) {
