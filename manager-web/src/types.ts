@@ -114,6 +114,9 @@ export type FundTransaction = {
   direction: "IN" | "OUT";
   amount: number;
   reference_code: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  source_reference_code: string | null;
   description: string | null;
   note: string | null;
   running_balance: number;

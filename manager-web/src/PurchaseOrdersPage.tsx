@@ -48,6 +48,8 @@ const { Title, Text } = Typography;
 
 type PurchaseOrdersPageProps = {
   onPayDebt: (prefill: VoucherPrefill) => void;
+  initialReceiptId?: number | null;
+  onInitialReceiptConsumed?: () => void;
 };
 
 type ReceiptLineDraft = {
@@ -112,7 +114,11 @@ function newLine(): ReceiptLineDraft {
   };
 }
 
-export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProps) {
+export default function PurchaseOrdersPage({
+  onPayDebt,
+  initialReceiptId,
+  onInitialReceiptConsumed
+}: PurchaseOrdersPageProps) {
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -194,6 +200,39 @@ export default function PurchaseOrdersPage({ onPayDebt }: PurchaseOrdersPageProp
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!initialReceiptId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setViewLoading(true);
+        const detail = await getPurchaseReceipt(initialReceiptId);
+        if (!cancelled) {
+          setViewReceipt(detail);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          messageApi.error(
+            error instanceof Error ? error.message : "Không mở được chứng từ liên quan."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setViewLoading(false);
+          onInitialReceiptConsumed?.();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialReceiptId]);
 
   const goodsTotal = useMemo(
     () =>

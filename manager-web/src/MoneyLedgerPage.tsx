@@ -40,6 +40,9 @@ type LedgerRow = {
   payment_code: string | null;
   category_name: string | null;
   description: string;
+  source_type: string | null;
+  source_id: string | null;
+  source_reference_code: string | null;
   amount_in: number;
   amount_out: number;
   running_balance: number;
@@ -125,6 +128,9 @@ function transactionToRow(item: FundTransaction): LedgerRow {
     payment_code: item.direction === "OUT" ? item.reference_code : null,
     category_name: item.category_name,
     description: item.description || item.note || item.transaction_type,
+    source_type: item.source_type,
+    source_id: item.source_id,
+    source_reference_code: item.source_reference_code,
     amount_in: item.direction === "IN" ? item.amount : 0,
     amount_out: item.direction === "OUT" ? item.amount : 0,
     running_balance: item.running_balance,
@@ -137,13 +143,15 @@ function MoneyLedgerPage({
   title,
   accountLabel,
   initialVoucher,
-  onInitialVoucherConsumed
+  onInitialVoucherConsumed,
+  onOpenSourceDocument
 }: {
   accountType: FundAccountType;
   title: string;
   accountLabel: string;
   initialVoucher?: VoucherPrefill | null;
   onInitialVoucherConsumed?: () => void;
+  onOpenSourceDocument?: (sourceType: string, sourceId: string) => void;
 }) {
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
@@ -218,6 +226,9 @@ function MoneyLedgerPage({
           payment_code: null,
           category_name: null,
           description: "Số tồn đầu kỳ",
+          source_type: null,
+          source_id: null,
+          source_reference_code: null,
           amount_in: 0,
           amount_out: 0,
           running_balance: result.opening_balance,
@@ -458,6 +469,33 @@ function MoneyLedgerPage({
         row.is_opening ? <Text strong>{value}</Text> : value
     },
     {
+      title: "Chứng từ liên quan",
+      key: "source_reference",
+      width: 155,
+      render: (_, row) => {
+        if (row.is_opening || !row.source_type || !row.source_id) {
+          return "";
+        }
+
+        if (row.source_type === "PURCHASE_RECEIPT") {
+          return (
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() =>
+                onOpenSourceDocument?.(row.source_type as string, row.source_id as string)
+              }
+            >
+              {row.source_reference_code || `Phiếu nhập #${row.source_id}`}
+            </Button>
+          );
+        }
+
+        return row.source_reference_code || "";
+      }
+    },
+    {
       title: "Số tiền thu",
       dataIndex: "amount_in",
       key: "amount_in",
@@ -562,23 +600,23 @@ function MoneyLedgerPage({
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 1350 }}
+          scroll={{ x: 1505 }}
           locale={{ emptyText: "Chưa có phát sinh." }}
           summary={() => (
             <Table.Summary.Row>
-              <Table.Summary.Cell index={0} colSpan={5}>
+              <Table.Summary.Cell index={0} colSpan={6}>
                 <Text strong>Tổng phát sinh trong kỳ</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={5} align="right">
+              <Table.Summary.Cell index={6} align="right">
                 <Text strong>{formatMoney(totalIn)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={6} align="right">
+              <Table.Summary.Cell index={7} align="right">
                 <Text strong>{formatMoney(totalOut)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={7} align="right">
+              <Table.Summary.Cell index={8} align="right">
                 <Text strong>{formatMoney(closingBalance)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={8} />
+              <Table.Summary.Cell index={9} />
             </Table.Summary.Row>
           )}
         />
@@ -841,10 +879,12 @@ function MoneyLedgerPage({
 
 export function CashLedgerPage({
   initialVoucher,
-  onInitialVoucherConsumed
+  onInitialVoucherConsumed,
+  onOpenSourceDocument
 }: {
   initialVoucher?: VoucherPrefill | null;
   onInitialVoucherConsumed?: () => void;
+  onOpenSourceDocument?: (sourceType: string, sourceId: string) => void;
 }) {
   return (
     <MoneyLedgerPage
@@ -853,16 +893,19 @@ export function CashLedgerPage({
       accountLabel="Quỹ tiền mặt"
       initialVoucher={initialVoucher}
       onInitialVoucherConsumed={onInitialVoucherConsumed}
+      onOpenSourceDocument={onOpenSourceDocument}
     />
   );
 }
 
 export function BankLedgerPage({
   initialVoucher,
-  onInitialVoucherConsumed
+  onInitialVoucherConsumed,
+  onOpenSourceDocument
 }: {
   initialVoucher?: VoucherPrefill | null;
   onInitialVoucherConsumed?: () => void;
+  onOpenSourceDocument?: (sourceType: string, sourceId: string) => void;
 }) {
   return (
     <MoneyLedgerPage
@@ -871,6 +914,7 @@ export function BankLedgerPage({
       accountLabel="Tài khoản ngân hàng"
       initialVoucher={initialVoucher}
       onInitialVoucherConsumed={onInitialVoucherConsumed}
+      onOpenSourceDocument={onOpenSourceDocument}
     />
   );
 }

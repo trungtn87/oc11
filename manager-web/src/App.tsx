@@ -2523,6 +2523,7 @@ function App() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(true);
   const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
+  const [linkedPurchaseReceiptId, setLinkedPurchaseReceiptId] = useState<number | null>(null);
   const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
   const renderPage = () => {
@@ -2565,6 +2566,8 @@ function App() {
             setVoucherPrefill(prefill);
             setPage("cash-ledger");
           }}
+          initialReceiptId={linkedPurchaseReceiptId}
+          onInitialReceiptConsumed={() => setLinkedPurchaseReceiptId(null)}
         />
       );
     }
@@ -2590,6 +2593,15 @@ function App() {
         <CashLedgerPage
           initialVoucher={voucherPrefill}
           onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+          onOpenSourceDocument={(sourceType, sourceId) => {
+            if (sourceType === "PURCHASE_RECEIPT") {
+              const receiptId = Number(sourceId);
+              if (Number.isInteger(receiptId) && receiptId > 0) {
+                setLinkedPurchaseReceiptId(receiptId);
+                setPage("purchase-orders");
+              }
+            }
+          }}
         />
       );
     }
@@ -2599,6 +2611,15 @@ function App() {
         <BankLedgerPage
           initialVoucher={voucherPrefill}
           onInitialVoucherConsumed={() => setVoucherPrefill(null)}
+          onOpenSourceDocument={(sourceType, sourceId) => {
+            if (sourceType === "PURCHASE_RECEIPT") {
+              const receiptId = Number(sourceId);
+              if (Number.isInteger(receiptId) && receiptId > 0) {
+                setLinkedPurchaseReceiptId(receiptId);
+                setPage("purchase-orders");
+              }
+            }
+          }}
         />
       );
     }
