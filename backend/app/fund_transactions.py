@@ -658,6 +658,7 @@ def list_fund_transactions(
                 t.source_id,
                 CASE
                     WHEN t.source_type = 'PURCHASE_RECEIPT' THEN pr.receipt_code
+                    WHEN t.source_type = 'SALE' THEN so.order_code
                     ELSE NULL
                 END AS source_reference_code,
                 t.description,
@@ -668,6 +669,9 @@ def list_fund_transactions(
             LEFT JOIN purchase_receipts AS pr
               ON t.source_type = 'PURCHASE_RECEIPT'
              AND CAST(pr.id AS TEXT) = t.source_id
+            LEFT JOIN sales_orders AS so
+              ON t.source_type = 'SALE'
+             AND CAST(so.id AS TEXT) = t.source_id
             WHERE {" AND ".join(range_where)}
             ORDER BY t.transaction_time ASC, t.id ASC
             """,
