@@ -33,6 +33,7 @@ class PurchaseReceiptInput(BaseModel):
     shipping_fee: int = Field(default=0, ge=0)
     payment_status: str
     payment: PurchasePaymentInput | None = None
+    shipping_payment: PurchasePaymentInput | None = None
     replaces_receipt_id: int | None = None
     items: list[PurchaseReceiptItemInput] = Field(min_length=1)
 
@@ -66,6 +67,9 @@ class PurchaseReceiptOutput(BaseModel):
     payment_reference_code: str | None
     payment_fund_account_id: int | None
     payment_account_type: str | None
+    shipping_payment_reference_code: str | None
+    shipping_payment_fund_account_id: int | None
+    shipping_payment_account_type: str | None
     replaces_receipt_id: int | None
     replaces_receipt_code: str | None
     replacement_receipt_id: int | None
@@ -231,16 +235,31 @@ def create_payment_transaction(
     receipt_id: int,
     receipt_code: str,
     supplier_name: str,
-    total_amount: int,
+    amount: int,
     transaction_time: str,
     account_type: str,
     fund_account_id: int,
+    component: str | None,
+    reference_code_override: str | None = None,
 ) -> str:
+    if amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Số tiền thanh toán phải lớn hơn 0.",
+        )
+
     normalized_type = account_type.strip().upper()
     if normalized_type not in {"CASH", "BANK"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Loại tiền không hợp lệ.",
+        )
+
+    normalized_component = component.strip().upper() if component else None
+    if normalized_component not in {None, "GOODS", "SHIPPING"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phần thanh toán không hợp lệ.",
         )
 
     account = connection.execute(
@@ -266,15 +285,23 @@ def create_payment_transaction(
             status_code=status.HTTP_409_CONFLICT,
             detail="Quỹ/tài khoản đang ngừng sử dụng.",
         )
-    if int(account["current_balance"]) < total_amount:
+    if int(account["current_balance"]) < amount:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Số dư quỹ/tài khoản không đủ.",
         )
 
     category_id = get_or_create_supplier_payment_category(connection)
-    reference_code = next_payment_reference(connection, transaction_time)
-    description = f"Thanh toán phiếu nhập {receipt_code} - {supplier_name}"
+    reference_code = (
+        reference_code_override
+        or next_payment_reference(connection, transaction_time)
+    )
+    if normalized_component == "GOODS":
+        description = f"Tiền hàng phiếu nhập {receipt_code} - {supplier_name}"
+    elif normalized_component == "SHIPPING":
+        description = f"Phí vận chuyển phiếu nhập {receipt_code} - {supplier_name}"
+    else:
+        description = f"Thanh toán phiếu nhập {receipt_code} - {supplier_name}"
 
     connection.execute(
         """
@@ -287,19 +314,21 @@ def create_payment_transaction(
             amount,
             source_type,
             source_id,
+            source_component,
             reference_code,
             description,
             created_at,
             is_void
         )
-        VALUES (?, ?, 'NORMAL', ?, 'OUT', ?, 'PURCHASE_RECEIPT', ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        VALUES (?, ?, 'NORMAL', ?, 'OUT', ?, 'PURCHASE_RECEIPT', ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
         """,
         (
             fund_account_id,
             transaction_time,
             category_id,
-            total_amount,
+            amount,
             str(receipt_id),
+            normalized_component,
             reference_code,
             description,
         ),
@@ -310,7 +339,7 @@ def create_payment_transaction(
         SET current_balance = current_balance - ?
         WHERE id = ?
         """,
-        (total_amount, fund_account_id),
+        (amount, fund_account_id),
     )
     return reference_code
 
@@ -442,41 +471,99 @@ def select_receipt_items(
 def select_payment_info(
     connection: sqlite3.Connection,
     receipt_id: int,
-    payment_reference_code: str | None,
+    component: str,
+    payment_reference_code: str | None = None,
 ) -> sqlite3.Row | None:
-    if payment_reference_code:
-        row = connection.execute(
-            """
+    def by_component(*, active_only: bool) -> sqlite3.Row | None:
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
             SELECT
+                ft.reference_code,
+                ft.fund_account_id,
+                fa.type AS account_type
+            FROM fund_transactions AS ft
+            JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+            WHERE ft.source_type = 'PURCHASE_RECEIPT'
+              AND ft.source_id = ?
+              AND ft.direction = 'OUT'
+              AND ft.source_component = ?
+              {active_clause}
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (str(receipt_id), component),
+        ).fetchone()
+
+    def by_reference(*, active_only: bool) -> sqlite3.Row | None:
+        if not payment_reference_code:
+            return None
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
+            SELECT
+                ft.reference_code,
                 ft.fund_account_id,
                 fa.type AS account_type
             FROM fund_transactions AS ft
             JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
             WHERE ft.reference_code = ?
               AND ft.direction = 'OUT'
+              {active_clause}
             ORDER BY ft.id DESC
             LIMIT 1
             """,
             (payment_reference_code,),
         ).fetchone()
-        if row is not None:
-            return row
 
-    return connection.execute(
-        """
-        SELECT
-            ft.fund_account_id,
-            fa.type AS account_type
-        FROM fund_transactions AS ft
-        JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
-        WHERE ft.source_type = 'PURCHASE_RECEIPT'
-          AND ft.source_id = ?
-          AND ft.direction = 'OUT'
-        ORDER BY ft.id DESC
-        LIMIT 1
-        """,
-        (str(receipt_id),),
-    ).fetchone()
+    def legacy_combined(*, active_only: bool) -> sqlite3.Row | None:
+        active_clause = "AND ft.is_void = 0" if active_only else ""
+        return connection.execute(
+            f"""
+            SELECT
+                ft.reference_code,
+                ft.fund_account_id,
+                fa.type AS account_type
+            FROM fund_transactions AS ft
+            JOIN fund_accounts AS fa ON fa.id = ft.fund_account_id
+            WHERE ft.source_type = 'PURCHASE_RECEIPT'
+              AND ft.source_id = ?
+              AND ft.direction = 'OUT'
+              AND ft.source_component IS NULL
+              {active_clause}
+            ORDER BY ft.id DESC
+            LIMIT 1
+            """,
+            (str(receipt_id),),
+        ).fetchone()
+
+    active_component = by_component(active_only=True)
+    if active_component is not None:
+        return active_component
+
+    if component == "GOODS":
+        active_reference = by_reference(active_only=True)
+        if active_reference is not None:
+            return active_reference
+
+        active_legacy = legacy_combined(active_only=True)
+        if active_legacy is not None:
+            return active_legacy
+
+    # When viewing an already voided receipt there is no active money row.
+    # Fall back to the latest historical row so the original payment account
+    # remains visible for audit/re-entry, while active rows always win above.
+    historical_component = by_component(active_only=False)
+    if historical_component is not None:
+        return historical_component
+
+    if component == "GOODS":
+        historical_reference = by_reference(active_only=False)
+        if historical_reference is not None:
+            return historical_reference
+        return legacy_combined(active_only=False)
+
+    return None
 
 
 def select_receipt_link(
@@ -537,7 +624,13 @@ def row_to_output(
     payment = select_payment_info(
         connection,
         row["id"],
+        "GOODS",
         row["payment_reference_code"],
+    )
+    shipping_payment = select_payment_info(
+        connection,
+        row["id"],
+        "SHIPPING",
     )
     replaces = select_receipt_link(connection, row["replaces_receipt_id"])
     replacement = select_active_replacement(connection, row["id"])
@@ -556,6 +649,15 @@ def row_to_output(
         payment_reference_code=row["payment_reference_code"],
         payment_fund_account_id=payment["fund_account_id"] if payment else None,
         payment_account_type=payment["account_type"] if payment else None,
+        shipping_payment_reference_code=(
+            shipping_payment["reference_code"] if shipping_payment else None
+        ),
+        shipping_payment_fund_account_id=(
+            shipping_payment["fund_account_id"] if shipping_payment else None
+        ),
+        shipping_payment_account_type=(
+            shipping_payment["account_type"] if shipping_payment else None
+        ),
         replaces_receipt_id=row["replaces_receipt_id"],
         replaces_receipt_code=replaces["receipt_code"] if replaces else None,
         replacement_receipt_id=replacement["id"] if replacement else None,
@@ -672,12 +774,9 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
     payment_status = normalize_payment_status(payload.payment_status)
     parse_datetime(payload.receipt_time)
 
-    if payment_status == "PAID" and payload.payment is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Phiếu đã thanh toán cần chọn loại tiền và quỹ/tài khoản.",
-        )
-    if payment_status == "DEBT" and payload.payment is not None:
+    if payment_status == "DEBT" and (
+        payload.payment is not None or payload.shipping_payment is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
@@ -704,6 +803,12 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         prepared_items, goods_total = prepare_items(connection, payload.items)
         total_amount = goods_total + payload.shipping_fee
         receipt_code = next_receipt_code(connection)
+
+        if payment_status == "PAID" and total_amount > 0 and payload.payment is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Phiếu đã thanh toán cần chọn quỹ/tài khoản tiền hàng.",
+            )
 
         cursor = connection.execute(
             """
@@ -746,17 +851,48 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
             prepared_items=prepared_items,
         )
 
-        if payment_status == "PAID" and payload.payment is not None:
-            payment_reference = create_payment_transaction(
-                connection,
-                receipt_id=receipt_id,
-                receipt_code=receipt_code,
-                supplier_name=supplier["name"],
-                total_amount=total_amount,
-                transaction_time=payload.receipt_time,
-                account_type=payload.payment.account_type,
-                fund_account_id=payload.payment.fund_account_id,
-            )
+        payment_reference: str | None = None
+        if payment_status == "PAID" and total_amount > 0:
+            assert payload.payment is not None
+            if payload.shipping_fee > 0 and payload.shipping_payment is None:
+                payment_reference = create_payment_transaction(
+                    connection,
+                    receipt_id=receipt_id,
+                    receipt_code=receipt_code,
+                    supplier_name=supplier["name"],
+                    amount=total_amount,
+                    transaction_time=payload.receipt_time,
+                    account_type=payload.payment.account_type,
+                    fund_account_id=payload.payment.fund_account_id,
+                    component=None,
+                )
+            else:
+                if goods_total > 0:
+                    payment_reference = create_payment_transaction(
+                        connection,
+                        receipt_id=receipt_id,
+                        receipt_code=receipt_code,
+                        supplier_name=supplier["name"],
+                        amount=goods_total,
+                        transaction_time=payload.receipt_time,
+                        account_type=payload.payment.account_type,
+                        fund_account_id=payload.payment.fund_account_id,
+                        component="GOODS",
+                    )
+                if payload.shipping_fee > 0:
+                    assert payload.shipping_payment is not None
+                    create_payment_transaction(
+                        connection,
+                        receipt_id=receipt_id,
+                        receipt_code=receipt_code,
+                        supplier_name=supplier["name"],
+                        amount=payload.shipping_fee,
+                        transaction_time=payload.receipt_time,
+                        account_type=payload.shipping_payment.account_type,
+                        fund_account_id=payload.shipping_payment.fund_account_id,
+                        component="SHIPPING",
+                    )
+
             connection.execute(
                 """
                 UPDATE purchase_receipts
@@ -801,7 +937,6 @@ def update_purchase_receipt(
             )
 
         existing_status = str(existing["payment_status"])
-
         if payment_status != existing_status:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -811,12 +946,6 @@ def update_purchase_receipt(
         supplier = ensure_supplier(connection, payload.supplier_id)
 
         if existing_status == "PAID":
-            if payload.payment is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Phiếu đã thanh toán cần chọn loại tiền và quỹ/tài khoản.",
-                )
-
             existing_items = select_receipt_items(connection, receipt_id)
             if len(existing_items) != len(payload.items):
                 raise HTTPException(
@@ -838,112 +967,122 @@ def update_purchase_receipt(
                         detail="Không thể sửa hàng hóa, số lượng hoặc đơn giá trên phiếu đã thanh toán. Hãy dùng Hủy để nhập lại.",
                     )
 
-            normalized_account_type = payload.payment.account_type.strip().upper()
-            if normalized_account_type not in {"CASH", "BANK"}:
+            goods_total = int(existing["goods_total"])
+            new_total_amount = goods_total + payload.shipping_fee
+            existing_shipping_payment = select_payment_info(
+                connection,
+                receipt_id,
+                "SHIPPING",
+            )
+            goods_reference_code = (
+                str(existing["payment_reference_code"])
+                if existing["payment_reference_code"]
+                else None
+            )
+            shipping_reference_code = (
+                str(existing_shipping_payment["reference_code"])
+                if existing_shipping_payment
+                and existing_shipping_payment["reference_code"]
+                else None
+            )
+            if new_total_amount > 0 and payload.payment is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Loại tiền không hợp lệ.",
+                    detail="Phiếu đã thanh toán cần chọn quỹ/tài khoản tiền hàng.",
                 )
 
-            new_account = connection.execute(
+            payments = connection.execute(
                 """
-                SELECT id, type, current_balance, is_active
-                FROM fund_accounts
-                WHERE id = ?
-                """,
-                (payload.payment.fund_account_id,),
-            ).fetchone()
-            if new_account is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Không tìm thấy quỹ/tài khoản.",
-                )
-            if new_account["type"] != normalized_account_type:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Quỹ/tài khoản không đúng loại tiền.",
-                )
-            if not bool(new_account["is_active"]):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Quỹ/tài khoản đang ngừng sử dụng.",
-                )
-
-            payment = connection.execute(
-                """
-                SELECT id, fund_account_id, amount, reference_code
+                SELECT id, fund_account_id, amount
                 FROM fund_transactions
-                WHERE direction = 'OUT'
+                WHERE source_type = 'PURCHASE_RECEIPT'
+                  AND source_id = ?
+                  AND direction = 'OUT'
                   AND is_void = 0
-                  AND (
-                        (source_type = 'PURCHASE_RECEIPT' AND source_id = ?)
-                        OR (? IS NOT NULL AND reference_code = ?)
-                      )
-                ORDER BY id DESC
-                LIMIT 1
+                ORDER BY id
                 """,
-                (
-                    str(receipt_id),
-                    existing["payment_reference_code"],
-                    existing["payment_reference_code"],
-                ),
-            ).fetchone()
-            if payment is None:
+                (str(receipt_id),),
+            ).fetchall()
+            if not payments and existing["payment_reference_code"]:
+                legacy = connection.execute(
+                    """
+                    SELECT id, fund_account_id, amount
+                    FROM fund_transactions
+                    WHERE reference_code = ?
+                      AND direction = 'OUT'
+                      AND is_void = 0
+                    LIMIT 1
+                    """,
+                    (existing["payment_reference_code"],),
+                ).fetchone()
+                if legacy is not None:
+                    payments = [legacy]
+
+            old_paid_total = sum(int(payment["amount"]) for payment in payments)
+            if old_paid_total != int(existing["total_amount"]):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Không tìm thấy phiếu chi liên quan nên chưa thể sửa phiếu nhập an toàn.",
+                    detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi sửa.",
                 )
 
-            old_account_id = int(payment["fund_account_id"])
-            old_amount = int(payment["amount"])
-            new_total_amount = int(existing["goods_total"]) + payload.shipping_fee
-            available_balance = int(new_account["current_balance"])
-            if int(new_account["id"]) == old_account_id:
-                available_balance += old_amount
-
-            if available_balance < new_total_amount:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Số dư quỹ/tài khoản mới không đủ để cập nhật thanh toán.",
+            for payment in payments:
+                connection.execute(
+                    """
+                    UPDATE fund_accounts
+                    SET current_balance = current_balance + ?
+                    WHERE id = ?
+                    """,
+                    (payment["amount"], payment["fund_account_id"]),
+                )
+                connection.execute(
+                    "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+                    (payment["id"],),
                 )
 
-            connection.execute(
-                """
-                UPDATE fund_accounts
-                SET current_balance = current_balance + ?
-                WHERE id = ?
-                """,
-                (old_amount, old_account_id),
-            )
-            connection.execute(
-                """
-                UPDATE fund_accounts
-                SET current_balance = current_balance - ?
-                WHERE id = ?
-                """,
-                (new_total_amount, payload.payment.fund_account_id),
-            )
-
-            payment_description = (
-                f"Thanh toán phiếu nhập {existing['receipt_code']} - {supplier['name']}"
-            )
-            connection.execute(
-                """
-                UPDATE fund_transactions
-                SET fund_account_id = ?,
-                    transaction_time = ?,
-                    amount = ?,
-                    description = ?
-                WHERE id = ?
-                """,
-                (
-                    payload.payment.fund_account_id,
-                    payload.receipt_time,
-                    new_total_amount,
-                    payment_description,
-                    payment["id"],
-                ),
-            )
+            payment_reference: str | None = None
+            if new_total_amount > 0:
+                assert payload.payment is not None
+                if payload.shipping_fee > 0 and payload.shipping_payment is None:
+                    payment_reference = create_payment_transaction(
+                        connection,
+                        receipt_id=receipt_id,
+                        receipt_code=existing["receipt_code"],
+                        supplier_name=supplier["name"],
+                        amount=new_total_amount,
+                        transaction_time=payload.receipt_time,
+                        account_type=payload.payment.account_type,
+                        fund_account_id=payload.payment.fund_account_id,
+                        component=None,
+                        reference_code_override=goods_reference_code,
+                    )
+                else:
+                    if goods_total > 0:
+                        payment_reference = create_payment_transaction(
+                            connection,
+                            receipt_id=receipt_id,
+                            receipt_code=existing["receipt_code"],
+                            supplier_name=supplier["name"],
+                            amount=goods_total,
+                            transaction_time=payload.receipt_time,
+                            account_type=payload.payment.account_type,
+                            fund_account_id=payload.payment.fund_account_id,
+                            component="GOODS",
+                            reference_code_override=goods_reference_code,
+                        )
+                    if payload.shipping_fee > 0:
+                        assert payload.shipping_payment is not None
+                        create_payment_transaction(
+                            connection,
+                            receipt_id=receipt_id,
+                            receipt_code=existing["receipt_code"],
+                            supplier_name=supplier["name"],
+                            amount=payload.shipping_fee,
+                            transaction_time=payload.receipt_time,
+                            account_type=payload.shipping_payment.account_type,
+                            fund_account_id=payload.shipping_payment.fund_account_id,
+                            component="SHIPPING",
+                            reference_code_override=shipping_reference_code,
+                        )
 
             connection.execute(
                 """
@@ -953,6 +1092,7 @@ def update_purchase_receipt(
                     description = ?,
                     shipping_fee = ?,
                     total_amount = ?,
+                    payment_reference_code = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -962,6 +1102,7 @@ def update_purchase_receipt(
                     clean_text(payload.description),
                     payload.shipping_fee,
                     new_total_amount,
+                    payment_reference,
                     receipt_id,
                 ),
             )
@@ -982,7 +1123,7 @@ def update_purchase_receipt(
             backup_reason = "purchase-receipt-paid-metadata-updated"
             affected_item_ids: list[int] = []
         else:
-            if payload.payment is not None:
+            if payload.payment is not None or payload.shipping_payment is not None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Phiếu trả nợ chưa được chọn quỹ/tài khoản thanh toán.",
@@ -1079,53 +1220,53 @@ def void_purchase_receipt_for_reentry(
                 detail="Chỉ phiếu đã thanh toán mới dùng Hủy để nhập lại.",
             )
 
-        payment = connection.execute(
+        payments = connection.execute(
             """
-            SELECT
-                ft.id,
-                ft.fund_account_id,
-                ft.amount,
-                ft.reference_code
-            FROM fund_transactions AS ft
-            WHERE ft.direction = 'OUT'
-              AND ft.is_void = 0
-              AND (
-                    (ft.source_type = 'PURCHASE_RECEIPT' AND ft.source_id = ?)
-                    OR (? IS NOT NULL AND ft.reference_code = ?)
-                  )
-            ORDER BY ft.id DESC
-            LIMIT 1
+            SELECT id, fund_account_id, amount
+            FROM fund_transactions
+            WHERE source_type = 'PURCHASE_RECEIPT'
+              AND source_id = ?
+              AND direction = 'OUT'
+              AND is_void = 0
+            ORDER BY id
             """,
-            (
-                str(receipt_id),
-                receipt["payment_reference_code"],
-                receipt["payment_reference_code"],
-            ),
-        ).fetchone()
+            (str(receipt_id),),
+        ).fetchall()
+        if not payments and receipt["payment_reference_code"]:
+            legacy = connection.execute(
+                """
+                SELECT id, fund_account_id, amount
+                FROM fund_transactions
+                WHERE reference_code = ?
+                  AND direction = 'OUT'
+                  AND is_void = 0
+                LIMIT 1
+                """,
+                (receipt["payment_reference_code"],),
+            ).fetchone()
+            if legacy is not None:
+                payments = [legacy]
 
-        if payment is None:
+        paid_total = sum(int(payment["amount"]) for payment in payments)
+        if paid_total != int(receipt["total_amount"]):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Không tìm thấy phiếu chi liên quan nên chưa thể hủy phiếu nhập an toàn.",
-            )
-        if int(payment["amount"]) != int(receipt["total_amount"]):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Số tiền phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi hủy.",
+                detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi hủy.",
             )
 
-        connection.execute(
-            """
-            UPDATE fund_accounts
-            SET current_balance = current_balance + ?
-            WHERE id = ?
-            """,
-            (payment["amount"], payment["fund_account_id"]),
-        )
-        connection.execute(
-            "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
-            (payment["id"],),
-        )
+        for payment in payments:
+            connection.execute(
+                """
+                UPDATE fund_accounts
+                SET current_balance = current_balance + ?
+                WHERE id = ?
+                """,
+                (payment["amount"], payment["fund_account_id"]),
+            )
+            connection.execute(
+                "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+                (payment["id"],),
+            )
 
         void_time = datetime.now().isoformat(timespec="microseconds")
         receipt_items = select_receipt_items(connection, receipt_id)

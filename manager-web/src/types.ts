@@ -207,6 +207,9 @@ export type PurchaseReceipt = {
   payment_reference_code: string | null;
   payment_fund_account_id: number | null;
   payment_account_type: FundAccountType | null;
+  shipping_payment_reference_code: string | null;
+  shipping_payment_fund_account_id: number | null;
+  shipping_payment_account_type: FundAccountType | null;
   replaces_receipt_id: number | null;
   replaces_receipt_code: string | null;
   replacement_receipt_id: number | null;
@@ -225,6 +228,10 @@ export type PurchaseReceiptInput = {
   shipping_fee: number;
   payment_status: PurchasePaymentStatus;
   payment?: {
+    account_type: FundAccountType;
+    fund_account_id: number;
+  } | null;
+  shipping_payment?: {
     account_type: FundAccountType;
     fund_account_id: number;
   } | null;
