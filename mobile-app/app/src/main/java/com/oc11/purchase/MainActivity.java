@@ -194,15 +194,28 @@ public class MainActivity extends Activity {
                     c.addView(err);
                 }
                 if (row.synced == 0) {
-                    TextView hint = text("Chạm để sửa • Giữ để xóa", 11, false);
-                    hint.setTextColor(Color.GRAY);
-                    hint.setPadding(0, dp(7), 0, 0);
-                    c.addView(hint);
-                    c.setOnClickListener(v -> showReceiptForm(row));
-                    c.setOnLongClickListener(v -> {
-                        confirmDelete(row.id);
-                        return true;
-                    });
+                    LinearLayout actions = new LinearLayout(this);
+                    actions.setOrientation(LinearLayout.HORIZONTAL);
+                    actions.setGravity(Gravity.END);
+                    actions.setPadding(0, dp(8), 0, 0);
+
+                    Button edit = button("Sửa");
+                    edit.setMinHeight(dp(40));
+                    edit.setTextSize(14);
+                    edit.setOnClickListener(v -> showReceiptForm(row));
+
+                    Button delete = button("Xóa");
+                    delete.setMinHeight(dp(40));
+                    delete.setTextSize(14);
+                    delete.setOnClickListener(v -> confirmDelete(row.id));
+
+                    actions.addView(edit, new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    deleteLp.setMargins(dp(6), 0, 0, 0);
+                    actions.addView(delete, deleteLp);
+                    c.addView(actions);
                 }
                 receiptList.addView(c);
             } catch (Exception ignored) {}
