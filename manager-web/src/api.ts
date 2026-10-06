@@ -33,7 +33,10 @@ import type {
   Supplier,
   SupplierInput,
   Unit,
-  UnitInput
+  UnitInput,
+  SaleOrder,
+  SaleOrderInput,
+  SalePaymentInput
 } from "./types";
 
 type ApiErrorPayload = {
@@ -519,4 +522,63 @@ export function getConsumptionSummary(params: {
   return request<ConsumptionSummary>(
     `/api/inventory/consumption?${query.toString()}`
   );
+}
+
+
+export function getSaleOrders(params?: {
+  status?: "OPEN" | "PAID" | "VOID";
+  search?: string;
+  from_date?: string;
+  to_date?: string;
+}): Promise<SaleOrder[]> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.search?.trim()) query.set("search", params.search.trim());
+  if (params?.from_date) query.set("from_date", params.from_date);
+  if (params?.to_date) query.set("to_date", params.to_date);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<SaleOrder[]>(`/api/sales/orders${suffix}`);
+}
+
+export function getSaleOrder(id: number): Promise<SaleOrder> {
+  return request<SaleOrder>(`/api/sales/orders/${id}`);
+}
+
+export function createSaleOrder(payload: SaleOrderInput): Promise<SaleOrder> {
+  return request<SaleOrder>("/api/sales/orders", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSaleOrder(
+  id: number,
+  payload: SaleOrderInput
+): Promise<SaleOrder> {
+  return request<SaleOrder>(`/api/sales/orders/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function paySaleOrder(
+  id: number,
+  payload: SalePaymentInput
+): Promise<SaleOrder> {
+  return request<SaleOrder>(`/api/sales/orders/${id}/pay`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function voidSaleOrder(
+  id: number,
+  reason?: string
+): Promise<SaleOrder> {
+  const query = reason?.trim()
+    ? `?reason=${encodeURIComponent(reason.trim())}`
+    : "";
+  return request<SaleOrder>(`/api/sales/orders/${id}/void${query}`, {
+    method: "POST"
+  });
 }
