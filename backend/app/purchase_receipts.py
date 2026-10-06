@@ -1044,7 +1044,7 @@ def update_purchase_receipt(
             output = row_to_output(connection, row)
             backup_reason = "purchase-receipt-updated"
             affected_item_ids = list(
-                {*(old_item_ids), *(line.item_id for line in payload.items)}
+                set(old_item_ids + [line.item_id for line in payload.items])
             )
 
     if affected_item_ids:
