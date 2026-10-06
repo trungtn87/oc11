@@ -1007,7 +1007,8 @@ def create_order(payload: SaleOrderInput) -> SaleOrderOutput:
 
 @router.put("/orders/{order_id}", response_model=SaleOrderOutput)
 def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
-    order_time = normalize_datetime(payload.order_time)
+    changed_at = datetime.now().isoformat(timespec="microseconds")
+
     with connect() as connection:
         existing = select_order(connection, order_id)
         if existing is None:
@@ -1015,13 +1016,35 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Không tìm thấy đơn bán.",
             )
-        if existing["status"] != "OPEN":
+        if existing["status"] == "VOID":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Chỉ đơn chưa thanh toán mới được sửa.",
+                detail="Đơn đã xóa nên không thể sửa.",
             )
 
+        ensure_not_invoiced(existing)
         ensure_customer(connection, payload.customer_id)
+
+        was_paid = existing["status"] == "PAID"
+        old_fund_account_id = (
+            int(existing["fund_account_id"])
+            if existing["fund_account_id"] is not None
+            else None
+        )
+        old_actual_received = (
+            int(existing["actual_received_amount"])
+            if existing["actual_received_amount"] is not None
+            else None
+        )
+
+        if was_paid:
+            reverse_paid_effects(
+                connection,
+                existing,
+                changed_at,
+                note_prefix="Sửa bán hàng",
+            )
+
         connection.execute(
             "DELETE FROM sales_order_items WHERE sales_order_id = ?",
             (order_id,),
@@ -1030,19 +1053,41 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             "DELETE FROM sales_order_surcharges WHERE sales_order_id = ?",
             (order_id,),
         )
+
         total = insert_order_items(connection, order_id, payload.items)
         total += insert_order_surcharges(
             connection,
             order_id,
             payload.surcharges,
         )
+
+        record_order_revision(
+            connection,
+            existing,
+            action="UPDATE",
+            new_total_amount=total,
+        )
+
+        order_time = (
+            normalize_datetime(payload.order_time)
+            if payload.order_time is not None
+            else existing["order_time"]
+        )
+
         connection.execute(
             """
             UPDATE sales_orders
             SET order_time = ?,
+                status = 'OPEN',
                 customer_id = ?,
+                fund_account_id = NULL,
                 total_amount = ?,
+                actual_received_amount = NULL,
+                payment_reference_code = NULL,
+                paid_at = NULL,
                 note = ?,
+                void_reason = NULL,
+                voided_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -1054,6 +1099,31 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
                 order_id,
             ),
         )
+
+        if was_paid:
+            fund_account_id = (
+                payload.fund_account_id
+                if payload.fund_account_id is not None
+                else old_fund_account_id
+            )
+            if fund_account_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Đơn đã thanh toán cần quỹ/tài khoản nhận tiền.",
+                )
+            actual_received = (
+                payload.actual_received_amount
+                if payload.actual_received_amount is not None
+                else old_actual_received
+            )
+            apply_payment(
+                connection,
+                order_id,
+                fund_account_id=fund_account_id,
+                actual_received_amount=actual_received,
+                paid_at=changed_at,
+            )
+
         connection.commit()
 
         row = select_order(connection, order_id)
@@ -1081,124 +1151,12 @@ def pay_order(order_id: int, payload: SalePaymentInput) -> SaleOrderOutput:
                 detail="Đơn bán không còn ở trạng thái chờ thanh toán.",
             )
 
-        account = connection.execute(
-            """
-            SELECT id, name, type, is_active
-            FROM fund_accounts
-            WHERE id = ?
-            """,
-            (payload.fund_account_id,),
-        ).fetchone()
-        if account is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Không tìm thấy quỹ/tài khoản nhận tiền.",
-            )
-        if not bool(account["is_active"]):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Quỹ/tài khoản nhận tiền đang ngừng sử dụng.",
-            )
-
-        total_amount = int(order["total_amount"])
-        actual_received = (
-            total_amount
-            if payload.actual_received_amount is None
-            else int(payload.actual_received_amount)
-        )
-        if total_amount > 0 and actual_received <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Tiền thực thu phải lớn hơn 0.",
-            )
-
-        lines = select_order_items(connection, order_id)
-        if not lines:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Đơn bán chưa có món.",
-            )
-
-        # Record stock before money. Any error in recipe/stock mapping aborts
-        # the whole transaction, so paid sales can never exist without stock movements.
-        for line in lines:
-            record_sale_consumption(
-                connection,
-                source_id=str(order_id),
-                source_line_id=str(int(line["id"])),
-                movement_time=paid_at,
-                sold_quantity=float(line["quantity"]),
-                menu_item_option_id=(
-                    int(line["menu_item_option_id"])
-                    if line["menu_item_option_id"] is not None
-                    else None
-                ),
-                menu_item_id=(
-                    int(line["menu_item_id"])
-                    if line["menu_item_id"] is not None
-                    else None
-                ),
-            )
-
-        payment_reference: str | None = None
-        if actual_received > 0:
-            category_id = get_sale_category_id(connection)
-            payment_reference = next_receipt_reference(connection, paid_at)
-            connection.execute(
-                """
-                INSERT INTO fund_transactions (
-                    fund_account_id,
-                    transaction_time,
-                    transaction_type,
-                    category_id,
-                    direction,
-                    amount,
-                    source_type,
-                    source_id,
-                    reference_code,
-                    description,
-                    created_at,
-                    is_void
-                )
-                VALUES (?, ?, 'NORMAL', ?, 'IN', ?, 'SALE', ?, ?, ?, CURRENT_TIMESTAMP, 0)
-                """,
-                (
-                    payload.fund_account_id,
-                    paid_at,
-                    category_id,
-                    actual_received,
-                    str(order_id),
-                    payment_reference,
-                    f"Bán hàng {order['order_code']}",
-                ),
-            )
-            connection.execute(
-                """
-                UPDATE fund_accounts
-                SET current_balance = current_balance + ?
-                WHERE id = ?
-                """,
-                (actual_received, payload.fund_account_id),
-            )
-
-        connection.execute(
-            """
-            UPDATE sales_orders
-            SET status = 'PAID',
-                fund_account_id = ?,
-                actual_received_amount = ?,
-                payment_reference_code = ?,
-                paid_at = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (
-                payload.fund_account_id,
-                actual_received,
-                payment_reference,
-                paid_at,
-                order_id,
-            ),
+        apply_payment(
+            connection,
+            order_id,
+            fund_account_id=payload.fund_account_id,
+            actual_received_amount=payload.actual_received_amount,
+            paid_at=paid_at,
         )
         connection.commit()
 
@@ -1216,7 +1174,7 @@ def void_order(
     reason: str | None = Query(default=None),
 ) -> SaleOrderOutput:
     voided_at = datetime.now().isoformat(timespec="microseconds")
-    reason_clean = clean_text(reason) or "Hủy đơn bán"
+    reason_clean = clean_text(reason) or "Xóa đơn bán"
 
     with connect() as connection:
         order = select_order(connection, order_id)
@@ -1228,71 +1186,26 @@ def void_order(
         if order["status"] == "VOID":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Đơn bán đã được hủy.",
+                detail="Đơn bán đã được xóa.",
             )
 
-        if order["status"] == "PAID":
-            payment = connection.execute(
-                """
-                SELECT id, fund_account_id, amount
-                FROM fund_transactions
-                WHERE source_type = 'SALE'
-                  AND source_id = ?
-                  AND direction = 'IN'
-                  AND is_void = 0
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (str(order_id),),
-            ).fetchone()
-            if payment is not None:
-                connection.execute(
-                    "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
-                    (int(payment["id"]),),
-                )
-                connection.execute(
-                    """
-                    UPDATE fund_accounts
-                    SET current_balance = current_balance - ?
-                    WHERE id = ?
-                    """,
-                    (int(payment["amount"]), int(payment["fund_account_id"])),
-                )
+        ensure_not_invoiced(order)
 
-            sale_movements = connection.execute(
-                """
-                SELECT item_id, quantity_delta, source_line_id
-                FROM inventory_movements
-                WHERE source_type = 'SALE'
-                  AND source_id = ?
-                ORDER BY id ASC
-                """,
-                (str(order_id),),
-            ).fetchall()
-            for movement in sale_movements:
-                connection.execute(
-                    """
-                    INSERT INTO inventory_movements (
-                        item_id,
-                        movement_time,
-                        quantity_delta,
-                        source_type,
-                        source_id,
-                        source_line_id,
-                        note,
-                        created_at
-                    )
-                    VALUES (?, ?, ?, 'SALE_VOID', ?, ?, ?, CURRENT_TIMESTAMP)
-                    """,
-                    (
-                        int(movement["item_id"]),
-                        voided_at,
-                        -float(movement["quantity_delta"]),
-                        str(order_id),
-                        movement["source_line_id"],
-                        f"Hủy bán hàng {order['order_code']}",
-                    ),
-                )
+        if order["status"] == "PAID":
+            reverse_paid_effects(
+                connection,
+                order,
+                voided_at,
+                note_prefix="Xóa bán hàng",
+            )
+
+        record_order_revision(
+            connection,
+            order,
+            action="DELETE",
+            new_total_amount=None,
+            reason=reason_clean,
+        )
 
         connection.execute(
             """
@@ -1313,3 +1226,12 @@ def void_order(
 
     backup_database(reason="sale-order-voided")
     return output
+
+
+@router.delete("/orders/{order_id}", response_model=SaleOrderOutput)
+def delete_order(
+    order_id: int,
+    reason: str | None = Query(default=None),
+) -> SaleOrderOutput:
+    return void_order(order_id, reason)
+
