@@ -240,6 +240,7 @@ def create_payment_transaction(
     account_type: str,
     fund_account_id: int,
     component: str | None,
+    reference_code_override: str | None = None,
 ) -> str:
     if amount <= 0:
         raise HTTPException(
@@ -291,7 +292,10 @@ def create_payment_transaction(
         )
 
     category_id = get_or_create_supplier_payment_category(connection)
-    reference_code = next_payment_reference(connection, transaction_time)
+    reference_code = (
+        reference_code_override
+        or next_payment_reference(connection, transaction_time)
+    )
     if normalized_component == "GOODS":
         description = f"Tiền hàng phiếu nhập {receipt_code} - {supplier_name}"
     elif normalized_component == "SHIPPING":
@@ -934,6 +938,22 @@ def update_purchase_receipt(
 
             goods_total = int(existing["goods_total"])
             new_total_amount = goods_total + payload.shipping_fee
+            existing_shipping_payment = select_payment_info(
+                connection,
+                receipt_id,
+                "SHIPPING",
+            )
+            goods_reference_code = (
+                str(existing["payment_reference_code"])
+                if existing["payment_reference_code"]
+                else None
+            )
+            shipping_reference_code = (
+                str(existing_shipping_payment["reference_code"])
+                if existing_shipping_payment
+                and existing_shipping_payment["reference_code"]
+                else None
+            )
             if new_total_amount > 0 and payload.payment is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1002,6 +1022,7 @@ def update_purchase_receipt(
                         account_type=payload.payment.account_type,
                         fund_account_id=payload.payment.fund_account_id,
                         component=None,
+                        reference_code_override=goods_reference_code,
                     )
                 else:
                     if goods_total > 0:
@@ -1015,6 +1036,7 @@ def update_purchase_receipt(
                             account_type=payload.payment.account_type,
                             fund_account_id=payload.payment.fund_account_id,
                             component="GOODS",
+                            reference_code_override=goods_reference_code,
                         )
                     if payload.shipping_fee > 0:
                         assert payload.shipping_payment is not None
@@ -1028,6 +1050,7 @@ def update_purchase_receipt(
                             account_type=payload.shipping_payment.account_type,
                             fund_account_id=payload.shipping_payment.fund_account_id,
                             component="SHIPPING",
+                            reference_code_override=shipping_reference_code,
                         )
 
             connection.execute(
