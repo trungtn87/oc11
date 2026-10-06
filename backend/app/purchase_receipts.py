@@ -861,6 +861,11 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         supplier = ensure_supplier(connection, payload.supplier_id)
         prepared_items, goods_total = prepare_items(connection, payload.items)
         total_amount = goods_total + payload.shipping_fee
+        actual_paid_amount = resolve_actual_paid_amount(
+            payment_status,
+            total_amount,
+            payload.actual_paid_amount,
+        )
         receipt_code = next_receipt_code(connection)
 
         if payment_status == "PAID" and total_amount > 0 and payload.payment is None:
@@ -880,12 +885,13 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 goods_total,
                 shipping_fee,
                 total_amount,
+                actual_paid_amount,
                 payment_status,
                 replaces_receipt_id,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
                 receipt_code,
@@ -896,6 +902,7 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
                 goods_total,
                 payload.shipping_fee,
                 total_amount,
+                actual_paid_amount,
                 payment_status,
                 payload.replaces_receipt_id,
             ),
@@ -911,41 +918,49 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
         )
 
         payment_reference: str | None = None
-        if payment_status == "PAID" and total_amount > 0:
+        if payment_status == "PAID" and actual_paid_amount is not None and actual_paid_amount > 0:
             assert payload.payment is not None
+            goods_paid_amount, shipping_paid_amount = split_actual_payment_amounts(
+                goods_total=goods_total,
+                shipping_fee=payload.shipping_fee,
+                actual_paid_amount=actual_paid_amount,
+                has_separate_shipping_payment=(
+                    payload.shipping_fee > 0 and payload.shipping_payment is not None
+                ),
+            )
             if payload.shipping_fee > 0 and payload.shipping_payment is None:
                 payment_reference = create_payment_transaction(
                     connection,
                     receipt_id=receipt_id,
                     receipt_code=receipt_code,
                     supplier_name=supplier["name"],
-                    amount=total_amount,
+                    amount=goods_paid_amount,
                     transaction_time=payload.receipt_time,
                     account_type=payload.payment.account_type,
                     fund_account_id=payload.payment.fund_account_id,
                     component=None,
                 )
             else:
-                if goods_total > 0:
+                if goods_paid_amount > 0:
                     payment_reference = create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=receipt_code,
                         supplier_name=supplier["name"],
-                        amount=goods_total,
+                        amount=goods_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.payment.account_type,
                         fund_account_id=payload.payment.fund_account_id,
                         component="GOODS",
                     )
-                if payload.shipping_fee > 0:
+                if shipping_paid_amount > 0:
                     assert payload.shipping_payment is not None
                     create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=receipt_code,
                         supplier_name=supplier["name"],
-                        amount=payload.shipping_fee,
+                        amount=shipping_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.shipping_payment.account_type,
                         fund_account_id=payload.shipping_payment.fund_account_id,
