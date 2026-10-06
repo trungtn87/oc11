@@ -607,13 +607,13 @@ function MoneyLedgerPage({
               <Table.Summary.Cell index={0} colSpan={6}>
                 <Text strong>Tổng phát sinh trong kỳ</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={8} align="right">
+              <Table.Summary.Cell index={6} align="right">
                 <Text strong>{formatMoney(totalIn)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={6} align="right">
+              <Table.Summary.Cell index={7} align="right">
                 <Text strong>{formatMoney(totalOut)}</Text>
               </Table.Summary.Cell>
-              <Table.Summary.Cell index={7} align="right">
+              <Table.Summary.Cell index={8} align="right">
                 <Text strong>{formatMoney(closingBalance)}</Text>
               </Table.Summary.Cell>
               <Table.Summary.Cell index={9} />
