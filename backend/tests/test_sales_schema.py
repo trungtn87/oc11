@@ -82,6 +82,30 @@ def test_sales_schema_is_created(tmp_path, monkeypatch):
             "cost_total_snapshot",
         }.issubset(line_columns)
 
+        item_surcharge_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(sales_order_item_surcharges)"
+            ).fetchall()
+        }
+        assert {
+            "sales_order_item_id",
+            "name",
+            "amount",
+        }.issubset(item_surcharge_columns)
+
+        order_surcharge_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(sales_order_surcharges)"
+            ).fetchall()
+        }
+        assert {
+            "sales_order_id",
+            "name",
+            "amount",
+        }.issubset(order_surcharge_columns)
+
         category = connection.execute(
             """
             SELECT direction
