@@ -32,6 +32,12 @@ import type {
 
 const { Title, Text } = Typography;
 
+type CartSurcharge = {
+  key: string;
+  name: string;
+  amount: number;
+};
+
 type CartLine = {
   key: string;
   menu_item_id: number;
@@ -41,7 +47,19 @@ type CartLine = {
   unit_name: string;
   quantity: number;
   unit_price: number;
+  surcharges: CartSurcharge[];
 };
+
+let surchargeSequence = 0;
+
+function nextSurchargeKey() {
+  surchargeSequence += 1;
+  return `surcharge-${surchargeSequence}`;
+}
+
+function surchargeTotal(surcharges: CartSurcharge[]) {
+  return surcharges.reduce((sum, surcharge) => sum + surcharge.amount, 0);
+}
 
 function money(value: number) {
   return new Intl.NumberFormat("vi-VN").format(Math.round(value));
@@ -77,6 +95,12 @@ export function SalesPosPage({
   const [actualReceived, setActualReceived] = useState<number>(0);
   const [actualTouched, setActualTouched] = useState(false);
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
+  const [orderSurcharges, setOrderSurcharges] = useState<CartSurcharge[]>([]);
+  const [surchargeTarget, setSurchargeTarget] = useState<
+    { type: "ITEM"; lineKey: string } | { type: "ORDER" } | null
+  >(null);
+  const [surchargeName, setSurchargeName] = useState("");
+  const [surchargeAmount, setSurchargeAmount] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [messageApi, messageContext] = message.useMessage();
@@ -153,10 +177,13 @@ export function SalesPosPage({
   const total = useMemo(
     () =>
       cart.reduce(
-        (sum, line) => sum + line.quantity * line.unit_price,
+        (sum, line) =>
+          sum +
+          line.quantity * line.unit_price +
+          surchargeTotal(line.surcharges),
         0
-      ),
-    [cart]
+      ) + surchargeTotal(orderSurcharges),
+    [cart, orderSurcharges]
   );
 
   useEffect(() => {
@@ -184,7 +211,8 @@ export function SalesPosPage({
           option_name: option?.service_option_name ?? null,
           unit_name: item.sale_unit_name,
           quantity: 1,
-          unit_price: option?.sale_price ?? item.base_price
+          unit_price: option?.sale_price ?? item.base_price,
+          surcharges: []
         }
       ];
     });
@@ -209,6 +237,74 @@ export function SalesPosPage({
       current.map((line) =>
         line.key === key ? { ...line, quantity } : line
       )
+    );
+  };
+
+  const openItemSurcharge = (lineKey: string) => {
+    setSurchargeName("");
+    setSurchargeAmount(0);
+    setSurchargeTarget({ type: "ITEM", lineKey });
+  };
+
+  const openOrderSurcharge = () => {
+    setSurchargeName("");
+    setSurchargeAmount(0);
+    setSurchargeTarget({ type: "ORDER" });
+  };
+
+  const addSurcharge = () => {
+    const name = surchargeName.trim();
+    const amount = Math.round(Number(surchargeAmount || 0));
+    if (!name) {
+      messageApi.warning("Nhập tên phụ thu.");
+      return;
+    }
+    if (amount <= 0) {
+      messageApi.warning("Số tiền phụ thu phải lớn hơn 0.");
+      return;
+    }
+
+    const surcharge: CartSurcharge = {
+      key: nextSurchargeKey(),
+      name,
+      amount
+    };
+
+    if (surchargeTarget?.type === "ITEM") {
+      setCart((current) =>
+        current.map((line) =>
+          line.key === surchargeTarget.lineKey
+            ? { ...line, surcharges: [...line.surcharges, surcharge] }
+            : line
+        )
+      );
+    } else if (surchargeTarget?.type === "ORDER") {
+      setOrderSurcharges((current) => [...current, surcharge]);
+    }
+
+    setSurchargeTarget(null);
+    setSurchargeName("");
+    setSurchargeAmount(0);
+  };
+
+  const removeItemSurcharge = (lineKey: string, surchargeKey: string) => {
+    setCart((current) =>
+      current.map((line) =>
+        line.key === lineKey
+          ? {
+              ...line,
+              surcharges: line.surcharges.filter(
+                (surcharge) => surcharge.key !== surchargeKey
+              )
+            }
+          : line
+      )
+    );
+  };
+
+  const removeOrderSurcharge = (surchargeKey: string) => {
+    setOrderSurcharges((current) =>
+      current.filter((surcharge) => surcharge.key !== surchargeKey)
     );
   };
 
@@ -245,7 +341,15 @@ export function SalesPosPage({
         items: cart.map((line) => ({
           menu_item_id: line.menu_item_id,
           menu_item_option_id: line.menu_item_option_id,
-          quantity: line.quantity
+          quantity: line.quantity,
+          surcharges: line.surcharges.map((surcharge) => ({
+            name: surcharge.name,
+            amount: surcharge.amount
+          }))
+        })),
+        surcharges: orderSurcharges.map((surcharge) => ({
+          name: surcharge.name,
+          amount: surcharge.amount
         }))
       });
 
@@ -255,6 +359,7 @@ export function SalesPosPage({
       });
 
       setCart([]);
+      setOrderSurcharges([]);
       setActualTouched(false);
       setActualReceived(0);
       messageApi.success(
@@ -354,6 +459,33 @@ export function SalesPosPage({
                   <Text type="secondary">
                     {line.option_name ?? line.unit_name}
                   </Text>
+                  <div className="sales-line-surcharge-list">
+                    {line.surcharges.map((surcharge) => (
+                      <span
+                        className="sales-surcharge-chip"
+                        key={surcharge.key}
+                      >
+                        + {surcharge.name}: {money(surcharge.amount)} đ
+                        <button
+                          type="button"
+                          aria-label={`Xóa phụ thu ${surcharge.name}`}
+                          onClick={() =>
+                            removeItemSurcharge(line.key, surcharge.key)
+                          }
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    <Button
+                      type="link"
+                      size="small"
+                      className="sales-add-surcharge"
+                      onClick={() => openItemSurcharge(line.key)}
+                    >
+                      + Phụ thu
+                    </Button>
+                  </div>
                 </div>
                 <div className="sales-cart-qty">
                   <Button
@@ -380,8 +512,17 @@ export function SalesPosPage({
                 </div>
                 <div className="sales-cart-price">
                   <span>{money(line.unit_price)} đ</span>
+                  {line.surcharges.length > 0 && (
+                    <span>
+                      + phụ thu {money(surchargeTotal(line.surcharges))} đ
+                    </span>
+                  )}
                   <strong>
-                    {money(line.quantity * line.unit_price)} đ
+                    {money(
+                      line.quantity * line.unit_price +
+                        surchargeTotal(line.surcharges)
+                    )}{" "}
+                    đ
                   </strong>
                 </div>
                 <Button
@@ -403,6 +544,36 @@ export function SalesPosPage({
           </div>
 
           <div className="sales-payment-box">
+            <div className="sales-order-surcharge-box">
+              <div className="sales-order-surcharge-head">
+                <Text type="secondary">Phụ thu đơn hàng</Text>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={openOrderSurcharge}
+                >
+                  + Thêm phụ thu
+                </Button>
+              </div>
+              {orderSurcharges.map((surcharge) => (
+                <div
+                  className="sales-order-surcharge-row"
+                  key={surcharge.key}
+                >
+                  <span>{surcharge.name}</span>
+                  <strong>+{money(surcharge.amount)} đ</strong>
+                  <Button
+                    type="text"
+                    danger
+                    size="small"
+                    onClick={() => removeOrderSurcharge(surcharge.key)}
+                  >
+                    ×
+                  </Button>
+                </div>
+              ))}
+            </div>
+
             <div className="sales-total">
               <span>Tổng thanh toán</span>
               <strong>{money(total)} đ</strong>
@@ -498,6 +669,54 @@ export function SalesPosPage({
                 <strong>{money(option.sale_price)} đ</strong>
               </Button>
             ))}
+        </div>
+      </Modal>
+
+      <Modal
+        open={surchargeTarget !== null}
+        title={
+          surchargeTarget?.type === "ITEM"
+            ? "Thêm phụ thu cho món"
+            : "Thêm phụ thu đơn hàng"
+        }
+        okText="Thêm phụ thu"
+        cancelText="Hủy"
+        onOk={addSurcharge}
+        onCancel={() => setSurchargeTarget(null)}
+      >
+        <div className="sales-surcharge-form">
+          <label>
+            <span>Tên phụ thu</span>
+            <Input
+              autoFocus
+              value={surchargeName}
+              maxLength={120}
+              placeholder="VD: Thêm sốt, thêm phô mai..."
+              onChange={(event) => setSurchargeName(event.target.value)}
+              onPressEnter={addSurcharge}
+            />
+          </label>
+          <label>
+            <span>Số tiền</span>
+            <InputNumber<number>
+              min={1}
+              precision={0}
+              value={surchargeAmount}
+              onChange={(value) => setSurchargeAmount(Number(value ?? 0))}
+              formatter={(value) =>
+                value === undefined || value === null
+                  ? ""
+                  : money(Number(value))
+              }
+              parser={(value) =>
+                Number((value ?? "").replace(/[^0-9]/g, ""))
+              }
+              addonAfter="đ"
+            />
+          </label>
+          <Text type="secondary">
+            Phụ thu chỉ cộng vào tiền thanh toán, không tự trừ nguyên liệu trong kho.
+          </Text>
         </div>
       </Modal>
     </>
@@ -725,6 +944,10 @@ export function SalesOrdersPage() {
                 <strong>{money(selected.total_amount)} đ</strong>
               </div>
               <div>
+                <Text type="secondary">Tổng phụ thu</Text>
+                <strong>{money(selected.surcharge_total)} đ</strong>
+              </div>
+              <div>
                 <Text type="secondary">Tiền thực thu</Text>
                 <strong>
                   {selected.actual_received_amount === null
@@ -767,6 +990,14 @@ export function SalesOrdersPage() {
                           </Text>
                         </div>
                       )}
+                      {row.surcharges.map((surcharge) => (
+                        <div
+                          className="sales-order-line-surcharge"
+                          key={surcharge.id}
+                        >
+                          + {surcharge.name}: {money(surcharge.amount)} đ
+                        </div>
+                      ))}
                     </div>
                   )
                 },
@@ -789,14 +1020,34 @@ export function SalesOrdersPage() {
                   render: (value: number) => money(value)
                 },
                 {
+                  title: "Phụ thu",
+                  dataIndex: "surcharge_total",
+                  align: "right",
+                  width: 110,
+                  render: (value: number) =>
+                    value > 0 ? `+${money(value)}` : "—"
+                },
+                {
                   title: "Thành tiền",
-                  dataIndex: "line_total",
+                  dataIndex: "total_with_surcharges",
                   align: "right",
                   width: 140,
                   render: (value: number) => money(value)
                 }
               ]}
             />
+
+            {selected.surcharges.length > 0 && (
+              <div className="sales-order-extra-surcharges">
+                <Text strong>Phụ thu đơn hàng</Text>
+                {selected.surcharges.map((surcharge) => (
+                  <div key={surcharge.id}>
+                    <span>{surcharge.name}</span>
+                    <strong>+{money(surcharge.amount)} đ</strong>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {selected.status === "VOID" && selected.void_reason && (
               <div className="sales-void-note">
