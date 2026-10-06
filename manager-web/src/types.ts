@@ -601,6 +601,17 @@ export type ConsumptionSummary = {
 
 export type SaleOrderStatus = "OPEN" | "PAID" | "VOID";
 
+export type SaleSurcharge = {
+  id: number;
+  name: string;
+  amount: number;
+};
+
+export type SaleSurchargeInput = {
+  name: string;
+  amount: number;
+};
+
 export type SaleOrderItem = {
   id: number;
   menu_item_id: number | null;
@@ -611,9 +622,12 @@ export type SaleOrderItem = {
   quantity: number;
   unit_price: number;
   line_total: number;
+  surcharge_total: number;
+  total_with_surcharges: number;
   unit_cost_snapshot: number | null;
   cost_total_snapshot: number | null;
   note: string | null;
+  surcharges: SaleSurcharge[];
 };
 
 export type SaleOrder = {
@@ -626,6 +640,7 @@ export type SaleOrder = {
   fund_account_id: number | null;
   fund_account_name: string | null;
   total_amount: number;
+  surcharge_total: number;
   actual_received_amount: number | null;
   payment_reference_code: string | null;
   paid_at: string | null;
@@ -636,6 +651,7 @@ export type SaleOrder = {
   updated_at: string | null;
   stock_deducted: boolean;
   items: SaleOrderItem[];
+  surcharges: SaleSurcharge[];
 };
 
 export type SaleOrderInput = {
@@ -647,7 +663,9 @@ export type SaleOrderInput = {
     menu_item_option_id?: number | null;
     quantity: number;
     note?: string | null;
+    surcharges?: SaleSurchargeInput[];
   }>;
+  surcharges?: SaleSurchargeInput[];
 };
 
 export type SalePaymentInput = {
