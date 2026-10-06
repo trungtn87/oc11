@@ -650,6 +650,10 @@ export type SaleOrder = {
   created_at: string;
   updated_at: string | null;
   stock_deducted: boolean;
+  has_einvoice: boolean;
+  einvoice_issued_at: string | null;
+  can_edit: boolean;
+  can_delete: boolean;
   items: SaleOrderItem[];
   surcharges: SaleSurcharge[];
 };
@@ -665,7 +669,20 @@ export type SaleOrderInput = {
     note?: string | null;
     surcharges?: SaleSurchargeInput[];
   }>;
+export type SaleOrderInput = {
+  order_time?: string | null;
+  customer_id?: number | null;
+  note?: string | null;
+  items: Array<{
+    menu_item_id: number;
+    menu_item_option_id?: number | null;
+    quantity: number;
+    note?: string | null;
+    surcharges?: SaleSurchargeInput[];
+  }>;
   surcharges?: SaleSurchargeInput[];
+  fund_account_id?: number | null;
+  actual_received_amount?: number | null;
 };
 
 export type SalePaymentInput = {
