@@ -31,6 +31,9 @@ class FundTransactionOutput(BaseModel):
     direction: str
     amount: int
     reference_code: str | None
+    source_type: str | None
+    source_id: str | None
+    source_reference_code: str | None
     description: str | None
     note: str | None
     running_balance: int
@@ -651,11 +654,20 @@ def list_fund_transactions(
                 t.direction,
                 t.amount,
                 t.reference_code,
+                t.source_type,
+                t.source_id,
+                CASE
+                    WHEN t.source_type = 'PURCHASE_RECEIPT' THEN pr.receipt_code
+                    ELSE NULL
+                END AS source_reference_code,
                 t.description,
                 t.note
             FROM fund_transactions AS t
             JOIN fund_accounts AS a ON a.id = t.fund_account_id
             LEFT JOIN fund_transaction_categories AS c ON c.id = t.category_id
+            LEFT JOIN purchase_receipts AS pr
+              ON t.source_type = 'PURCHASE_RECEIPT'
+             AND CAST(pr.id AS TEXT) = t.source_id
             WHERE {" AND ".join(range_where)}
             ORDER BY t.transaction_time ASC, t.id ASC
             """,
@@ -690,6 +702,9 @@ def list_fund_transactions(
                 direction=row["direction"],
                 amount=amount,
                 reference_code=row["reference_code"],
+                source_type=row["source_type"],
+                source_id=row["source_id"],
+                source_reference_code=row["source_reference_code"],
                 description=row["description"],
                 note=row["note"],
                 running_balance=running_balance,
