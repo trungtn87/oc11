@@ -90,6 +90,7 @@ import type {
   ItemGroup,
   ItemGroupInput,
   PurchaseReceipt,
+  SaleOrder,
   Supplier,
   SupplierInput,
   Unit,
@@ -2515,6 +2516,7 @@ function App() {
   const [collapsed, setCollapsed] = useState(true);
   const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
   const [linkedPurchaseReceiptId, setLinkedPurchaseReceiptId] = useState<number | null>(null);
+  const [editingSaleOrder, setEditingSaleOrder] = useState<SaleOrder | null>(null);
   const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
   const renderPage = () => {
@@ -2523,11 +2525,30 @@ function App() {
     }
 
     if (page === "sales-pos") {
-      return <SalesPosPage onOpenOrders={() => setPage("sales-orders")} />;
+      return (
+        <SalesPosPage
+          editingOrder={editingSaleOrder}
+          onEditDone={() => {
+            setEditingSaleOrder(null);
+            setPage("sales-orders");
+          }}
+          onOpenOrders={() => {
+            setEditingSaleOrder(null);
+            setPage("sales-orders");
+          }}
+        />
+      );
     }
 
     if (page === "sales-orders") {
-      return <SalesOrdersPage />;
+      return (
+        <SalesOrdersPage
+          onEditOrder={(order) => {
+            setEditingSaleOrder(order);
+            setPage("sales-pos");
+          }}
+        />
+      );
     }
 
     if (page === "item-list") {
