@@ -18,8 +18,29 @@ def test_sales_schema_is_created(tmp_path, monkeypatch):
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
+        assert "customers" in tables
         assert "sales_orders" in tables
         assert "sales_order_items" in tables
+
+        customer_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(customers)"
+            ).fetchall()
+        }
+        assert {
+            "customer_code",
+            "customer_type",
+            "name",
+            "tax_code",
+            "address",
+            "phone",
+            "email",
+            "contact_name",
+            "bank_account",
+            "bank_name",
+            "is_active",
+        }.issubset(customer_columns)
 
         order_columns = {
             row[1]
@@ -31,6 +52,7 @@ def test_sales_schema_is_created(tmp_path, monkeypatch):
             "order_code",
             "order_time",
             "status",
+            "customer_id",
             "fund_account_id",
             "total_amount",
             "actual_received_amount",
@@ -227,3 +249,83 @@ def test_sale_line_keeps_snapshot_when_menu_option_is_deleted(
         assert row[0] is None
         assert row[1] == "Mực hấp"
         assert row[2] == "Hấp"
+
+
+def test_customer_tax_code_is_unique(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    init_db()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO customers (
+                customer_code,
+                customer_type,
+                name,
+                tax_code,
+                address
+            )
+            VALUES ('KH000001', 'ORGANIZATION', 'Công ty A', '0101234567', 'Cao Bằng')
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO customers (
+                    customer_code,
+                    customer_type,
+                    name,
+                    tax_code,
+                    address
+                )
+                VALUES ('KH000002', 'ORGANIZATION', 'Công ty A 2', '0101234567', 'Hà Nội')
+                """
+            )
+
+
+def test_sales_order_can_link_customer(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    init_db()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO customers (
+                customer_code,
+                customer_type,
+                name,
+                phone,
+                email
+            )
+            VALUES ('KH000001', 'PERSON', 'Nguyễn Văn A', '0987654321', 'a@example.com')
+            """
+        )
+        customer_id = connection.execute(
+            "SELECT id FROM customers WHERE customer_code = 'KH000001'"
+        ).fetchone()[0]
+
+        connection.execute(
+            """
+            INSERT INTO sales_orders (
+                order_code,
+                order_time,
+                status,
+                customer_id,
+                total_amount
+            )
+            VALUES ('BH000001', '2026-10-06T18:00', 'OPEN', ?, 100000)
+            """,
+            (customer_id,),
+        )
+
+        linked = connection.execute(
+            "SELECT customer_id FROM sales_orders WHERE order_code = 'BH000001'"
+        ).fetchone()[0]
+
+        assert linked == customer_id
