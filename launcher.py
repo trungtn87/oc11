@@ -13,9 +13,10 @@ import webbrowser
 from pathlib import Path
 
 
-APP_HOST = "127.0.0.1"
+APP_BIND_HOST = "0.0.0.0"
+APP_LOCAL_HOST = "127.0.0.1"
 APP_PORT = 8000
-APP_URL = f"http://{APP_HOST}:{APP_PORT}"
+APP_URL = f"http://{APP_LOCAL_HOST}:{APP_PORT}"
 STARTUP_VALUE_NAME = "OC11"
 
 
@@ -333,7 +334,7 @@ def main() -> None:
 
     uvicorn.run(
         app,
-        host=APP_HOST,
+        host=APP_BIND_HOST,
         port=APP_PORT,
         log_level="warning",
     )
