@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime
 
@@ -34,6 +35,8 @@ class SaleOrderInput(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     items: list[SaleOrderItemInput] = Field(min_length=1)
     surcharges: list[SaleSurchargeInput] = Field(default_factory=list)
+    fund_account_id: int | None = None
+    actual_received_amount: int | None = Field(default=None, ge=0)
 
 
 class SalePaymentInput(BaseModel):
@@ -85,6 +88,10 @@ class SaleOrderOutput(BaseModel):
     created_at: str
     updated_at: str | None
     stock_deducted: bool
+    has_einvoice: bool
+    einvoice_issued_at: str | None
+    can_edit: bool
+    can_delete: bool
     items: list[SaleOrderItemOutput] = Field(default_factory=list)
     surcharges: list[SaleSurchargeOutput] = Field(default_factory=list)
 
@@ -393,7 +400,19 @@ def select_order(
                 FROM inventory_movements AS im
                 WHERE im.source_type = 'SALE'
                   AND im.source_id = CAST(so.id AS TEXT)
-            ) AS stock_deducted
+            ) AS stock_deducted,
+            EXISTS (
+                SELECT 1
+                FROM electronic_invoices AS ei
+                WHERE ei.sales_order_id = so.id
+                  AND ei.issued_at IS NOT NULL
+            ) AS has_einvoice,
+            (
+                SELECT MAX(ei.issued_at)
+                FROM electronic_invoices AS ei
+                WHERE ei.sales_order_id = so.id
+                  AND ei.issued_at IS NOT NULL
+            ) AS einvoice_issued_at
         FROM sales_orders AS so
         LEFT JOIN customers AS c ON c.id = so.customer_id
         LEFT JOIN fund_accounts AS fa ON fa.id = so.fund_account_id
@@ -559,6 +578,16 @@ def order_to_output(
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         stock_deducted=bool(row["stock_deducted"]),
+        has_einvoice=bool(row["has_einvoice"]),
+        einvoice_issued_at=row["einvoice_issued_at"],
+        can_edit=(
+            not bool(row["has_einvoice"])
+            and row["status"] != "VOID"
+        ),
+        can_delete=(
+            not bool(row["has_einvoice"])
+            and row["status"] != "VOID"
+        ),
         items=items,
         surcharges=order_surcharges,
     )
