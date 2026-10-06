@@ -597,3 +597,60 @@ export type ConsumptionSummary = {
   to_time: string;
   items: ConsumptionSummaryItem[];
 };
+
+
+export type SaleOrderStatus = "OPEN" | "PAID" | "VOID";
+
+export type SaleOrderItem = {
+  id: number;
+  menu_item_id: number | null;
+  menu_item_option_id: number | null;
+  item_name_snapshot: string;
+  option_name_snapshot: string | null;
+  unit_name_snapshot: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  unit_cost_snapshot: number | null;
+  cost_total_snapshot: number | null;
+  note: string | null;
+};
+
+export type SaleOrder = {
+  id: number;
+  order_code: string;
+  order_time: string;
+  status: SaleOrderStatus;
+  customer_id: number | null;
+  customer_name: string | null;
+  fund_account_id: number | null;
+  fund_account_name: string | null;
+  total_amount: number;
+  actual_received_amount: number | null;
+  payment_reference_code: string | null;
+  paid_at: string | null;
+  note: string | null;
+  void_reason: string | null;
+  voided_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+  stock_deducted: boolean;
+  items: SaleOrderItem[];
+};
+
+export type SaleOrderInput = {
+  order_time?: string | null;
+  customer_id?: number | null;
+  note?: string | null;
+  items: Array<{
+    menu_item_id: number;
+    menu_item_option_id?: number | null;
+    quantity: number;
+    note?: string | null;
+  }>;
+};
+
+export type SalePaymentInput = {
+  fund_account_id: number;
+  actual_received_amount?: number | null;
+};
