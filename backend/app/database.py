@@ -832,6 +832,64 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS electronic_invoices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_id INTEGER NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'MISA_MEINVOICE',
+                status TEXT NOT NULL DEFAULT 'DRAFT'
+                    CHECK (
+                        status IN (
+                            'DRAFT',
+                            'ISSUED',
+                            'CANCELLED',
+                            'REPLACED',
+                            'ADJUSTED'
+                        )
+                    ),
+                invoice_series TEXT,
+                invoice_number TEXT,
+                external_id TEXT,
+                issued_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT,
+                FOREIGN KEY (sales_order_id)
+                    REFERENCES sales_orders(id) ON DELETE RESTRICT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_electronic_invoices_sale
+            ON electronic_invoices (sales_order_id, issued_at, id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sales_order_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_id INTEGER NOT NULL,
+                action TEXT NOT NULL
+                    CHECK (action IN ('UPDATE', 'DELETE')),
+                previous_total_amount INTEGER NOT NULL DEFAULT 0,
+                new_total_amount INTEGER,
+                reason TEXT,
+                snapshot_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sales_order_id)
+                    REFERENCES sales_orders(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_sales_order_revisions_order
+            ON sales_order_revisions (sales_order_id, created_at, id)
+            """
+        )
+
+        connection.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS ux_fund_transactions_sale_active
             ON fund_transactions (source_type, source_id)
             WHERE source_type = 'SALE'
