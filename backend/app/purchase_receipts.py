@@ -1043,6 +1043,11 @@ def update_purchase_receipt(
 
             goods_total = int(existing["goods_total"])
             new_total_amount = goods_total + payload.shipping_fee
+            new_actual_paid_amount = resolve_actual_paid_amount(
+                existing_status,
+                new_total_amount,
+                payload.actual_paid_amount,
+            )
             existing_shipping_payment = select_payment_info(
                 connection,
                 receipt_id,
@@ -1093,7 +1098,12 @@ def update_purchase_receipt(
                     payments = [legacy]
 
             old_paid_total = sum(int(payment["amount"]) for payment in payments)
-            if old_paid_total != int(existing["total_amount"]):
+            old_expected_paid = (
+                int(existing["actual_paid_amount"])
+                if existing["actual_paid_amount"] is not None
+                else int(existing["total_amount"])
+            )
+            if old_paid_total != old_expected_paid:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Số tiền các phiếu chi không khớp phiếu nhập. Cần kiểm tra trước khi sửa.",
@@ -1114,15 +1124,23 @@ def update_purchase_receipt(
                 )
 
             payment_reference: str | None = None
-            if new_total_amount > 0:
+            if new_actual_paid_amount is not None and new_actual_paid_amount > 0:
                 assert payload.payment is not None
+                goods_paid_amount, shipping_paid_amount = split_actual_payment_amounts(
+                    goods_total=goods_total,
+                    shipping_fee=payload.shipping_fee,
+                    actual_paid_amount=new_actual_paid_amount,
+                    has_separate_shipping_payment=(
+                        payload.shipping_fee > 0 and payload.shipping_payment is not None
+                    ),
+                )
                 if payload.shipping_fee > 0 and payload.shipping_payment is None:
                     payment_reference = create_payment_transaction(
                         connection,
                         receipt_id=receipt_id,
                         receipt_code=existing["receipt_code"],
                         supplier_name=supplier["name"],
-                        amount=new_total_amount,
+                        amount=goods_paid_amount,
                         transaction_time=payload.receipt_time,
                         account_type=payload.payment.account_type,
                         fund_account_id=payload.payment.fund_account_id,
@@ -1130,27 +1148,27 @@ def update_purchase_receipt(
                         reference_code_override=goods_reference_code,
                     )
                 else:
-                    if goods_total > 0:
+                    if goods_paid_amount > 0:
                         payment_reference = create_payment_transaction(
                             connection,
                             receipt_id=receipt_id,
                             receipt_code=existing["receipt_code"],
                             supplier_name=supplier["name"],
-                            amount=goods_total,
+                            amount=goods_paid_amount,
                             transaction_time=payload.receipt_time,
                             account_type=payload.payment.account_type,
                             fund_account_id=payload.payment.fund_account_id,
                             component="GOODS",
                             reference_code_override=goods_reference_code,
                         )
-                    if payload.shipping_fee > 0:
+                    if shipping_paid_amount > 0:
                         assert payload.shipping_payment is not None
                         create_payment_transaction(
                             connection,
                             receipt_id=receipt_id,
                             receipt_code=existing["receipt_code"],
                             supplier_name=supplier["name"],
-                            amount=payload.shipping_fee,
+                            amount=shipping_paid_amount,
                             transaction_time=payload.receipt_time,
                             account_type=payload.shipping_payment.account_type,
                             fund_account_id=payload.shipping_payment.fund_account_id,
@@ -1166,6 +1184,7 @@ def update_purchase_receipt(
                     description = ?,
                     shipping_fee = ?,
                     total_amount = ?,
+                    actual_paid_amount = ?,
                     payment_reference_code = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -1176,6 +1195,7 @@ def update_purchase_receipt(
                     clean_text(payload.description),
                     payload.shipping_fee,
                     new_total_amount,
+                    new_actual_paid_amount,
                     payment_reference,
                     receipt_id,
                 ),
@@ -1205,6 +1225,11 @@ def update_purchase_receipt(
 
             prepared_items, goods_total = prepare_items(connection, payload.items)
             total_amount = goods_total + payload.shipping_fee
+            actual_paid_amount = resolve_actual_paid_amount(
+                existing_status,
+                total_amount,
+                payload.actual_paid_amount,
+            )
 
             old_item_ids = [
                 int(item["item_id"])
@@ -1232,6 +1257,7 @@ def update_purchase_receipt(
                     goods_total = ?,
                     shipping_fee = ?,
                     total_amount = ?,
+                    actual_paid_amount = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -1242,6 +1268,7 @@ def update_purchase_receipt(
                     goods_total,
                     payload.shipping_fee,
                     total_amount,
+                    actual_paid_amount,
                     receipt_id,
                 ),
             )
