@@ -614,6 +614,277 @@ def get_sale_category_id(connection: sqlite3.Connection) -> int:
     return int(cursor.lastrowid)
 
 
+def ensure_not_invoiced(row: sqlite3.Row) -> None:
+    if bool(row["has_einvoice"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Đơn đã phát hành hóa đơn điện tử nên không thể sửa hoặc xóa.",
+        )
+
+
+def record_order_revision(
+    connection: sqlite3.Connection,
+    row: sqlite3.Row,
+    *,
+    action: str,
+    new_total_amount: int | None,
+    reason: str | None = None,
+) -> None:
+    snapshot = {
+        "order_code": row["order_code"],
+        "status": row["status"],
+        "total_amount": int(row["total_amount"]),
+        "actual_received_amount": (
+            int(row["actual_received_amount"])
+            if row["actual_received_amount"] is not None
+            else None
+        ),
+        "fund_account_id": (
+            int(row["fund_account_id"])
+            if row["fund_account_id"] is not None
+            else None
+        ),
+        "payment_reference_code": row["payment_reference_code"],
+        "paid_at": row["paid_at"],
+    }
+    connection.execute(
+        """
+        INSERT INTO sales_order_revisions (
+            sales_order_id,
+            action,
+            previous_total_amount,
+            new_total_amount,
+            reason,
+            snapshot_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(row["id"]),
+            action,
+            int(row["total_amount"]),
+            new_total_amount,
+            clean_text(reason),
+            json.dumps(snapshot, ensure_ascii=False),
+        ),
+    )
+
+
+def reverse_paid_effects(
+    connection: sqlite3.Connection,
+    order: sqlite3.Row,
+    reversed_at: str,
+    *,
+    note_prefix: str,
+) -> None:
+    payment = connection.execute(
+        """
+        SELECT id, fund_account_id, amount
+        FROM fund_transactions
+        WHERE source_type = 'SALE'
+          AND source_id = ?
+          AND direction = 'IN'
+          AND is_void = 0
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (str(int(order["id"])),),
+    ).fetchone()
+    if payment is not None:
+        connection.execute(
+            "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+            (int(payment["id"]),),
+        )
+        connection.execute(
+            """
+            UPDATE fund_accounts
+            SET current_balance = current_balance - ?
+            WHERE id = ?
+            """,
+            (int(payment["amount"]), int(payment["fund_account_id"])),
+        )
+
+    sale_movements = connection.execute(
+        """
+        SELECT
+            im.item_id,
+            im.quantity_delta,
+            im.source_line_id
+        FROM inventory_movements AS im
+        WHERE im.source_type = 'SALE'
+          AND im.source_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM inventory_movements AS reversed
+              WHERE reversed.source_type = 'SALE_VOID'
+                AND reversed.source_id = im.source_id
+                AND reversed.item_id = im.item_id
+                AND COALESCE(reversed.source_line_id, '') =
+                    COALESCE(im.source_line_id, '')
+          )
+        ORDER BY im.id ASC
+        """,
+        (str(int(order["id"])),),
+    ).fetchall()
+
+    for movement in sale_movements:
+        connection.execute(
+            """
+            INSERT INTO inventory_movements (
+                item_id,
+                movement_time,
+                quantity_delta,
+                source_type,
+                source_id,
+                source_line_id,
+                note,
+                created_at
+            )
+            VALUES (?, ?, ?, 'SALE_VOID', ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                int(movement["item_id"]),
+                reversed_at,
+                -float(movement["quantity_delta"]),
+                str(int(order["id"])),
+                movement["source_line_id"],
+                f"{note_prefix} {order['order_code']}",
+            ),
+        )
+
+
+def apply_payment(
+    connection: sqlite3.Connection,
+    order_id: int,
+    *,
+    fund_account_id: int,
+    actual_received_amount: int | None,
+    paid_at: str,
+) -> None:
+    order = select_order(connection, order_id)
+    assert order is not None
+
+    account = connection.execute(
+        """
+        SELECT id, name, type, is_active
+        FROM fund_accounts
+        WHERE id = ?
+        """,
+        (fund_account_id,),
+    ).fetchone()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy quỹ/tài khoản nhận tiền.",
+        )
+    if not bool(account["is_active"]):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quỹ/tài khoản nhận tiền đang ngừng sử dụng.",
+        )
+
+    total_amount = int(order["total_amount"])
+    actual_received = (
+        total_amount
+        if actual_received_amount is None
+        else int(actual_received_amount)
+    )
+    if total_amount > 0 and actual_received <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Tiền thực thu phải lớn hơn 0.",
+        )
+
+    lines = select_order_items(connection, order_id)
+    if not lines:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Đơn bán chưa có món.",
+        )
+
+    for line in lines:
+        record_sale_consumption(
+            connection,
+            source_id=str(order_id),
+            source_line_id=str(int(line["id"])),
+            movement_time=paid_at,
+            sold_quantity=float(line["quantity"]),
+            menu_item_option_id=(
+                int(line["menu_item_option_id"])
+                if line["menu_item_option_id"] is not None
+                else None
+            ),
+            menu_item_id=(
+                int(line["menu_item_id"])
+                if line["menu_item_id"] is not None
+                else None
+            ),
+        )
+
+    payment_reference: str | None = None
+    if actual_received > 0:
+        category_id = get_sale_category_id(connection)
+        payment_reference = next_receipt_reference(connection, paid_at)
+        connection.execute(
+            """
+            INSERT INTO fund_transactions (
+                fund_account_id,
+                transaction_time,
+                transaction_type,
+                category_id,
+                direction,
+                amount,
+                source_type,
+                source_id,
+                reference_code,
+                description,
+                created_at,
+                is_void
+            )
+            VALUES (?, ?, 'NORMAL', ?, 'IN', ?, 'SALE', ?, ?, ?, CURRENT_TIMESTAMP, 0)
+            """,
+            (
+                fund_account_id,
+                paid_at,
+                category_id,
+                actual_received,
+                str(order_id),
+                payment_reference,
+                f"Bán hàng {order['order_code']}",
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE fund_accounts
+            SET current_balance = current_balance + ?
+            WHERE id = ?
+            """,
+            (actual_received, fund_account_id),
+        )
+
+    connection.execute(
+        """
+        UPDATE sales_orders
+        SET status = 'PAID',
+            fund_account_id = ?,
+            actual_received_amount = ?,
+            payment_reference_code = ?,
+            paid_at = ?,
+            void_reason = NULL,
+            voided_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            fund_account_id,
+            actual_received,
+            payment_reference,
+            paid_at,
+            order_id,
+        ),
+    )
+
+
 @router.get("/orders", response_model=list[SaleOrderOutput])
 def list_orders(
     order_status: str | None = Query(default=None, alias="status"),
