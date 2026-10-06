@@ -69,6 +69,8 @@ type ReceiptForm = {
   payment_status: PurchasePaymentStatus;
   account_type?: FundAccountType;
   fund_account_id?: number;
+  shipping_account_type?: FundAccountType;
+  shipping_fund_account_id?: number;
 };
 
 type QuickSupplierForm = {
@@ -149,6 +151,7 @@ export default function PurchaseOrdersPage({
   const [quickConversionForm] = Form.useForm<QuickConversionForm>();
   const paymentStatus = Form.useWatch("payment_status", form);
   const accountType = Form.useWatch("account_type", form);
+  const shippingAccountType = Form.useWatch("shipping_account_type", form);
   const paidEdit = editingReceipt?.payment_status === "PAID";
   const [messageApi, messageContext] = message.useMessage();
 
@@ -157,6 +160,9 @@ export default function PurchaseOrdersPage({
   const activeUnits = units.filter((unit) => unit.is_active);
   const paymentAccounts = accounts.filter(
     (account) => account.is_active && account.type === accountType
+  );
+  const shippingPaymentAccounts = accounts.filter(
+    (account) => account.is_active && account.type === shippingAccountType
   );
 
   const loadMasterData = async () => {
@@ -282,7 +288,9 @@ export default function PurchaseOrdersPage({
       shipping_fee: 0,
       payment_status: "PAID",
       account_type: "CASH",
-      fund_account_id: firstCashAccount?.id
+      fund_account_id: firstCashAccount?.id,
+      shipping_account_type: "CASH",
+      shipping_fund_account_id: firstCashAccount?.id
     });
     setLines([newLine()]);
     setModalOpen(true);
@@ -326,6 +334,22 @@ export default function PurchaseOrdersPage({
       fund_account_id:
         receipt.payment_status === "PAID"
           ? (receipt.payment_fund_account_id ?? undefined)
+          : undefined,
+      shipping_account_type:
+        receipt.payment_status === "PAID"
+          ? (
+              receipt.shipping_payment_account_type ??
+              receipt.payment_account_type ??
+              undefined
+            )
+          : undefined,
+      shipping_fund_account_id:
+        receipt.payment_status === "PAID"
+          ? (
+              receipt.shipping_payment_fund_account_id ??
+              receipt.payment_fund_account_id ??
+              undefined
+            )
           : undefined
     });
     setLines(receiptToLines(receipt));
@@ -419,6 +443,13 @@ export default function PurchaseOrdersPage({
                 fund_account_id: values.fund_account_id as number
               }
             : null,
+        shipping_payment:
+          values.payment_status === "PAID" && (values.shipping_fee ?? 0) > 0
+            ? {
+                account_type: values.shipping_account_type as FundAccountType,
+                fund_account_id: values.shipping_fund_account_id as number
+              }
+            : null,
         replaces_receipt_id: replacingReceiptId,
         items: lines.map((line) => ({
           item_id: line.item_id as number,
@@ -442,7 +473,7 @@ export default function PurchaseOrdersPage({
         });
         messageApi.success(
           editingReceipt.payment_status === "PAID"
-            ? "Đã cập nhật thông tin phiếu và quỹ/tài khoản thanh toán. Hàng hóa giữ nguyên."
+            ? "Đã cập nhật phiếu và các quỹ/tài khoản thanh toán. Hàng hóa giữ nguyên."
             : "Đã cập nhật phiếu trả nợ và đồng bộ lại tồn kho."
         );
       } else {
@@ -860,7 +891,7 @@ export default function PurchaseOrdersPage({
               {paymentStatus === "PAID" && (
                 <div className="purchase-payment-grid">
                   <Form.Item
-                    label="Loại tiền"
+                    label="Loại tiền hàng"
                     name="account_type"
                     rules={[{ required: true, message: "Chọn loại tiền." }]}
                   >
@@ -886,7 +917,7 @@ export default function PurchaseOrdersPage({
                     />
                   </Form.Item>
                   <Form.Item
-                    label="Quỹ / tài khoản"
+                    label="Quỹ / tài khoản tiền hàng"
                     name="fund_account_id"
                     rules={[{ required: true, message: "Chọn quỹ/tài khoản." }]}
                   >
@@ -1015,7 +1046,7 @@ export default function PurchaseOrdersPage({
             </Button>
             {paidEdit && (
               <Text type="secondary">
-                Phiếu đã thanh toán: chỉ sửa thông tin chung, phí vận chuyển và quỹ/tài khoản thanh toán. Muốn đổi hàng hóa, số lượng hoặc đơn giá hãy dùng Hủy.
+                Phiếu đã thanh toán: có thể sửa thông tin chung, phí vận chuyển và từng quỹ/tài khoản của tiền hàng / vận chuyển. Muốn đổi hàng hóa, số lượng hoặc đơn giá hãy dùng Hủy.
               </Text>
             )}
 
@@ -1032,8 +1063,59 @@ export default function PurchaseOrdersPage({
                     parser={(value) => Number((value ?? "").replace(/[^0-9]/g, ""))}
                   />
                 </Form.Item>
+                {paymentStatus === "PAID" && shippingFee > 0 && (
+                  <div className="purchase-payment-grid">
+                    <Form.Item
+                      label="Loại tiền phí vận chuyển"
+                      name="shipping_account_type"
+                      rules={[{ required: true, message: "Chọn loại tiền phí vận chuyển." }]}
+                    >
+                      <Select
+                        options={[
+                          { value: "CASH", label: "Tiền mặt" },
+                          { value: "BANK", label: "Tiền gửi" }
+                        ]}
+                        onChange={(nextType: FundAccountType) => {
+                          const preferred =
+                            accounts.find(
+                              (account) =>
+                                account.is_active &&
+                                account.type === nextType &&
+                                account.is_default
+                            ) ??
+                            accounts.find(
+                              (account) =>
+                                account.is_active && account.type === nextType
+                            );
+                          form.setFieldValue(
+                            "shipping_fund_account_id",
+                            preferred?.id
+                          );
+                        }}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="Quỹ / tài khoản phí vận chuyển"
+                      name="shipping_fund_account_id"
+                      rules={[
+                        {
+                          required: true,
+                          message: "Chọn quỹ/tài khoản phí vận chuyển."
+                        }
+                      ]}
+                    >
+                      <Select
+                        placeholder="Chọn quỹ/tài khoản"
+                        options={shippingPaymentAccounts.map((account) => ({
+                          value: account.id,
+                          label: account.name
+                        }))}
+                      />
+                    </Form.Item>
+                  </div>
+                )}
                 <Text type="secondary">
-                  Để trống hoặc 0 nếu không phát sinh. Dữ liệu này được lưu riêng để dùng khi tính giá vốn.
+                  Phí vận chuyển được lưu và hạch toán riêng với tiền hàng. Mặc định dùng tiền mặt nhưng có thể đổi sang tài khoản khác.
                 </Text>
               </div>
               <div className="purchase-totals">
