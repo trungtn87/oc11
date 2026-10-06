@@ -66,6 +66,7 @@ type ReceiptForm = {
   receipt_time: string;
   description?: string;
   shipping_fee?: number;
+  actual_paid_amount?: number;
   payment_status: PurchasePaymentStatus;
   account_type?: FundAccountType;
   fund_account_id?: number;
@@ -145,11 +146,13 @@ export default function PurchaseOrdersPage({
   const [quickSaving, setQuickSaving] = useState(false);
   const [viewReceipt, setViewReceipt] = useState<PurchaseReceipt | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [actualPaidTouched, setActualPaidTouched] = useState(false);
   const [form] = Form.useForm<ReceiptForm>();
   const [quickSupplierForm] = Form.useForm<QuickSupplierForm>();
   const [quickItemForm] = Form.useForm<QuickItemForm>();
   const [quickConversionForm] = Form.useForm<QuickConversionForm>();
   const paymentStatus = Form.useWatch("payment_status", form);
+  const actualPaidAmount = Form.useWatch("actual_paid_amount", form);
   const accountType = Form.useWatch("account_type", form);
   const shippingAccountType = Form.useWatch("shipping_account_type", form);
   const paidEdit = editingReceipt?.payment_status === "PAID";
@@ -251,6 +254,17 @@ export default function PurchaseOrdersPage({
   );
   const shippingFee = Form.useWatch("shipping_fee", form) ?? 0;
   const totalAmount = goodsTotal + shippingFee;
+  const roundingDifference =
+    paymentStatus === "PAID"
+      ? (actualPaidAmount ?? totalAmount) - totalAmount
+      : 0;
+
+  useEffect(() => {
+    if (!modalOpen || paymentStatus !== "PAID" || actualPaidTouched) {
+      return;
+    }
+    form.setFieldValue("actual_paid_amount", Math.round(totalAmount));
+  }, [modalOpen, paymentStatus, totalAmount, actualPaidTouched, form]);
 
   const updateLine = (key: string, patch: Partial<ReceiptLineDraft>) => {
     setLines((current) =>
@@ -270,6 +284,7 @@ export default function PurchaseOrdersPage({
   const openCreate = () => {
     setEditingReceipt(null);
     setReplacingReceiptId(null);
+    setActualPaidTouched(false);
     form.resetFields();
 
     const firstCashAccount =
@@ -286,6 +301,7 @@ export default function PurchaseOrdersPage({
     form.setFieldsValue({
       receipt_time: toLocalDateTimeInput(new Date()),
       shipping_fee: 0,
+      actual_paid_amount: 0,
       payment_status: "PAID",
       account_type: "CASH",
       fund_account_id: firstCashAccount?.id,
@@ -300,6 +316,7 @@ export default function PurchaseOrdersPage({
     setModalOpen(false);
     setEditingReceipt(null);
     setReplacingReceiptId(null);
+    setActualPaidTouched(false);
     setLines([newLine()]);
     form.resetFields();
   };
@@ -320,12 +337,17 @@ export default function PurchaseOrdersPage({
   ) => {
     setEditingReceipt(mode === "edit" ? receipt : null);
     setReplacingReceiptId(mode === "replace" ? receipt.id : null);
+    setActualPaidTouched(mode === "edit");
     form.resetFields();
     form.setFieldsValue({
       supplier_id: receipt.supplier_id,
       receipt_time: receipt.receipt_time.slice(0, 16),
       description: receipt.description ?? undefined,
       shipping_fee: receipt.shipping_fee,
+      actual_paid_amount:
+        receipt.payment_status === "PAID"
+          ? (receipt.actual_paid_amount ?? receipt.total_amount)
+          : undefined,
       payment_status: receipt.payment_status,
       account_type:
         receipt.payment_status === "PAID"
@@ -435,6 +457,10 @@ export default function PurchaseOrdersPage({
         receipt_time: values.receipt_time,
         description: values.description?.trim() || null,
         shipping_fee: values.shipping_fee ?? 0,
+        actual_paid_amount:
+          values.payment_status === "PAID"
+            ? Math.round(values.actual_paid_amount ?? totalAmount)
+            : null,
         payment_status: values.payment_status,
         payment:
           values.payment_status === "PAID"
@@ -1124,6 +1150,44 @@ export default function PurchaseOrdersPage({
                 <div className="purchase-grand-total">
                   <span>Tổng thanh toán</span><strong>{money(totalAmount)} đ</strong>
                 </div>
+                {paymentStatus === "PAID" && (
+                  <>
+                    <div className="purchase-actual-paid">
+                      <span>Tiền thực trả</span>
+                      <Form.Item
+                        name="actual_paid_amount"
+                        noStyle
+                        rules={[
+                          {
+                            required: true,
+                            message: "Nhập tiền thực trả."
+                          }
+                        ]}
+                      >
+                        <InputNumber<number>
+                          min={0}
+                          precision={0}
+                          onChange={() => setActualPaidTouched(true)}
+                          formatter={(value) =>
+                            value === undefined || value === null
+                              ? ""
+                              : money(Number(value))
+                          }
+                          parser={(value) =>
+                            Number((value ?? "").replace(/[^0-9]/g, ""))
+                          }
+                        />
+                      </Form.Item>
+                    </div>
+                    <div className="purchase-rounding-difference">
+                      <span>Chênh lệch làm tròn</span>
+                      <strong>
+                        {roundingDifference > 0 ? "+" : ""}
+                        {money(roundingDifference)} đ
+                      </strong>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </Card>
@@ -1332,7 +1396,13 @@ export default function PurchaseOrdersPage({
                       : "Trả nợ"}
                 </strong>
               </div>
-              <div><Text type="secondary">Tổng tiền</Text><strong>{money(viewReceipt.total_amount)} đ</strong></div>
+              <div><Text type="secondary">Tổng tính</Text><strong>{money(viewReceipt.total_amount)} đ</strong></div>
+              {viewReceipt.payment_status === "PAID" && (
+                <div>
+                  <Text type="secondary">Tiền thực trả</Text>
+                  <strong>{money(viewReceipt.actual_paid_amount ?? viewReceipt.total_amount)} đ</strong>
+                </div>
+              )}
             </div>
             <Table
               size="small"
