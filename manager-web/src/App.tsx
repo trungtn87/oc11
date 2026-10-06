@@ -79,6 +79,7 @@ import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
+import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
 import { oc11LogoDataUri } from "./oc11LogoData";
 import type {
   BackupStatus,
@@ -149,9 +150,8 @@ const menuItems: MenuProps["items"] = [
     icon: <ShoppingCartOutlined />,
     label: "Bán hàng",
     children: [
-      { key: "sales-pos", icon: <ShoppingCartOutlined />, label: "POS (Bán hàng)" },
-      { key: "sales-invoices", icon: <FileTextOutlined />, label: "Hóa đơn" },
-      { key: "sales-returns", icon: <RollbackOutlined />, label: "Trả hàng" }
+      { key: "sales-pos", icon: <ShoppingCartOutlined />, label: "Bán hàng" },
+      { key: "sales-orders", icon: <FileTextOutlined />, label: "Đơn bán hàng" }
     ]
   },
   {
@@ -2489,9 +2489,8 @@ function PlaceholderPage({ title }: { title: string }) {
 }
 
 const pageTitles: Record<string, string> = {
-  "sales-pos": "POS (Bán hàng)",
-  "sales-invoices": "Hóa đơn",
-  "sales-returns": "Trả hàng",
+  "sales-pos": "Bán hàng",
+  "sales-orders": "Đơn bán hàng",
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
   "menu-items": "Món thực đơn",
@@ -2522,6 +2521,14 @@ function App() {
   const renderPage = () => {
     if (page === "dashboard") {
       return <Dashboard onNavigate={setPage} />;
+    }
+
+    if (page === "sales-pos") {
+      return <SalesPosPage onOpenOrders={() => setPage("sales-orders")} />;
+    }
+
+    if (page === "sales-orders") {
+      return <SalesOrdersPage />;
     }
 
     if (page === "item-list") {
