@@ -251,6 +251,13 @@ def init_db() -> None:
                 REFERENCES fund_transaction_categories(id)
                 """
             )
+        if "source_component" not in fund_transaction_columns:
+            connection.execute(
+                """
+                ALTER TABLE fund_transactions
+                ADD COLUMN source_component TEXT
+                """
+            )
 
 
         connection.execute(
