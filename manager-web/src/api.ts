@@ -538,12 +538,15 @@ export function getSaleOrders(params?: {
   search?: string;
   from_date?: string;
   to_date?: string;
+  fund_account_id?: number;
 }): Promise<SaleOrder[]> {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
   if (params?.search?.trim()) query.set("search", params.search.trim());
   if (params?.from_date) query.set("from_date", params.from_date);
   if (params?.to_date) query.set("to_date", params.to_date);
+  if (params?.fund_account_id !== undefined)
+    query.set("fund_account_id", String(params.fund_account_id));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SaleOrder[]>(`/api/sales/orders${suffix}`);
 }
