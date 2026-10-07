@@ -663,6 +663,17 @@ export type SaleSurchargeInput = {
   amount: number;
 };
 
+export type SurchargePreset = {
+  id: number;
+  name: string;
+  amount: number;
+};
+
+export type SurchargePresetInput = {
+  name: string;
+  amount: number;
+};
+
 export type SaleOrderItem = {
   id: number;
   menu_item_id: number | null;
