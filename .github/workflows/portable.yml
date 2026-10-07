@@ -80,6 +80,99 @@ jobs:
             }
           }
 
+      - name: Smoke test upgrade takeover
+        shell: pwsh
+        run: |
+          @'
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == "/openapi.json":
+                      body = json.dumps({"info": {"title": "OC11 API"}}).encode()
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", str(len(body)))
+                      self.end_headers()
+                      self.wfile.write(body)
+                      return
+                  if self.path == "/api/health":
+                      body = json.dumps({"status": "ok"}).encode()
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", str(len(body)))
+                      self.end_headers()
+                      self.wfile.write(body)
+                      return
+                  self.send_response(404)
+                  self.end_headers()
+
+              def log_message(self, format, *args):
+                  pass
+
+          HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
+          '@ | Set-Content -Encoding UTF8 "legacy-oc11.py"
+
+          $env:OC11_NO_BROWSER = "1"
+          $env:OC11_NO_STARTUP_REGISTER = "1"
+          $legacy = Start-Process -FilePath "python" -ArgumentList "legacy-oc11.py" -PassThru -WindowStyle Hidden
+          $current = $null
+
+          try {
+            $legacyReady = $false
+            for ($i = 0; $i -lt 20; $i++) {
+              Start-Sleep -Milliseconds 250
+              try {
+                $openapi = Invoke-RestMethod -Uri "http://127.0.0.1:8000/openapi.json" -TimeoutSec 2
+                if ($openapi.info.title -eq "OC11 API") {
+                  $legacyReady = $true
+                  break
+                }
+              } catch {
+              }
+            }
+
+            if (-not $legacyReady) {
+              throw "Legacy OC11 test server did not start."
+            }
+
+            $current = Start-Process -FilePath "dist/OC11.exe" -PassThru -WindowStyle Hidden
+            $takenOver = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $runtime = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/runtime" -TimeoutSec 2
+                if ($runtime.app -eq "OC11" -and [int]$runtime.pid -ne $legacy.Id) {
+                  $takenOver = $true
+                  break
+                }
+              } catch {
+              }
+            }
+
+            if (-not $takenOver) {
+              throw "New OC11.exe did not take over port 8000 from a legacy OC11 instance."
+            }
+
+            $legacy.Refresh()
+            if (-not $legacy.HasExited) {
+              throw "Legacy OC11 process is still running after takeover."
+            }
+          } finally {
+            if ($current) {
+              $current.Refresh()
+              if (-not $current.HasExited) {
+                Stop-Process -Id $current.Id -Force
+              }
+            }
+            $legacy.Refresh()
+            if (-not $legacy.HasExited) {
+              Stop-Process -Id $legacy.Id -Force
+            }
+            Remove-Item "legacy-oc11.py" -ErrorAction SilentlyContinue
+          }
+
       - name: Create portable folder
         shell: pwsh
         run: |
@@ -115,8 +208,9 @@ jobs:
 
           Cap nhat:
           - Tai ban OC11-Portable.zip moi.
-          - Chay OC11.exe ban moi.
-          - Ban moi se tu dong dong OC11.exe cu neu no dang chiem cong 8000.
+          - Khong can vao Task Manager de dong ban cu.
+          - Chay OC11.exe ban moi; ban moi se nhan dien va tu thay the OC11 cu dang chiem cong 8000.
+          - Neu OC11 da la dung ban moi, bam OC11.exe chi mo giao dien, khong khoi dong server lan 2.
           - GIU NGUYEN thu muc data/oc11.db khi thay file OC11.exe.
           "@ | Set-Content -Encoding UTF8 "portable/OC11-Portable/HUONG-DAN.txt"
 
