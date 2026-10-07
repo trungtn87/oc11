@@ -435,7 +435,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       : 0;
 
   const recentActivities = [
-    ...activeReceipts.map((receipt) => ({
+    ...periodReceipts.map((receipt) => ({
       id: `purchase-${receipt.id}`,
       time: receipt.receipt_time,
       title: `Nhập hàng ${receipt.receipt_code}`,
@@ -443,7 +443,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       amount: receipt.total_amount,
       direction: "PURCHASE" as const
     })),
-    ...fundTransactions
+    ...periodTransactions
       .filter((transaction) => transaction.transaction_type === "NORMAL")
       .map((transaction) => ({
         id: `fund-${transaction.id}`,
@@ -602,32 +602,40 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <Col xs={24} xl={16}>
           <Card
             className="dashboard-card"
-            title="Doanh thu 7 ngày gần nhất"
-            extra={
-              <Select
-                value="7 ngày"
-                options={[{ value: "7 ngày", label: "7 ngày" }]}
-              />
-            }
+            title={`Doanh thu ${dashboardPeriodLabel(period)}`}
+            loading={loading}
           >
-            <div className="empty-chart">
-              <div className="chart-bars" aria-hidden="true">
-                {[18, 28, 24, 40, 34, 48, 42].map((height, index) => (
-                  <div className="chart-column" key={index}>
-                    <div
-                      className="chart-bar"
-                      style={{ height: `${height}%` }}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="empty-overlay">
-                <Text strong>Chưa có dữ liệu bán hàng</Text>
-                <Text type="secondary">
-                  Biểu đồ doanh thu sẽ hoạt động khi POS được triển khai.
-                </Text>
-              </div>
-            </div>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Tổng tiền đơn"
+                  value={periodSalesTotal}
+                  suffix="đ"
+                  formatter={(value) =>
+                    new Intl.NumberFormat("vi-VN").format(Number(value))
+                  }
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Số đơn"
+                  value={periodSalesOrders.length}
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Thực thu"
+                  value={periodSalesOrders.reduce(
+                    (sum, order) => sum + (order.actual_received_amount ?? 0),
+                    0
+                  )}
+                  suffix="đ"
+                  formatter={(value) =>
+                    new Intl.NumberFormat("vi-VN").format(Number(value))
+                  }
+                />
+              </Col>
+            </Row>
           </Card>
         </Col>
 
@@ -664,24 +672,28 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Dòng tiền hôm nay" loading={loading}>
+          <Card
+            className="dashboard-card"
+            title={`Dòng tiền ${dashboardPeriodLabel(period)}`}
+            loading={loading}
+          >
             <div className="dashboard-money-summary">
               <div>
                 <Text type="secondary">Thu</Text>
                 <Text strong className="dashboard-money-in">
-                  {formatMoney(todayIncomeTotal)}
+                  {formatMoney(periodIncomeTotal)}
                 </Text>
               </div>
               <div>
                 <Text type="secondary">Chi</Text>
                 <Text strong type="danger">
-                  {formatMoney(todayExpenseTotal)}
+                  {formatMoney(periodExpenseTotal)}
                 </Text>
               </div>
               <div>
                 <Text type="secondary">Chênh lệch</Text>
                 <Text strong>
-                  {formatMoney(todayIncomeTotal - todayExpenseTotal)}
+                  {formatMoney(periodIncomeTotal - periodExpenseTotal)}
                 </Text>
               </div>
             </div>
@@ -694,13 +706,13 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <Col xs={24} lg={8}>
           <Card
             className="dashboard-card"
-            title="Nhập hàng gần đây"
-            extra={<Tag>{activeReceipts.length} phiếu</Tag>}
+            title={`Nhập hàng ${dashboardPeriodLabel(period)}`}
+            extra={<Tag>{periodReceipts.length} phiếu</Tag>}
             loading={loading}
           >
-            {activeReceipts.length > 0 ? (
+            {periodReceipts.length > 0 ? (
               <div className="dashboard-mini-list">
-                {activeReceipts
+                {periodReceipts
                   .slice()
                   .sort(
                     (a, b) =>
@@ -731,7 +743,11 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Hoạt động gần đây" loading={loading}>
+          <Card
+            className="dashboard-card"
+            title={`Hoạt động ${dashboardPeriodLabel(period)}`}
+            loading={loading}
+          >
             {recentActivities.length > 0 ? (
               <div className="dashboard-activity-list">
                 {recentActivities.map((activity) => (
