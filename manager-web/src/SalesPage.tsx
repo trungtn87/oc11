@@ -401,15 +401,15 @@ export function SalesPosPage({
     setFundAccountId(preferred?.id);
   };
 
-  const checkout = async () => {
+  const checkout = async (payNow: boolean) => {
     if (!cart.length) {
       messageApi.warning("Chưa có món trong đơn.");
       return;
     }
-    if (
-      (!editingOrder || editingOrder.status === "PAID") &&
-      !fundAccountId
-    ) {
+
+    const needsPaymentAccount =
+      editingOrder?.status === "PAID" || (!editingOrder && payNow);
+    if (needsPaymentAccount && !fundAccountId) {
       messageApi.warning("Chọn quỹ/tài khoản nhận tiền.");
       return;
     }
@@ -445,7 +445,9 @@ export function SalesPosPage({
       if (editingOrder) {
         const updated = await updateSaleOrder(editingOrder.id, orderPayload);
         messageApi.success(
-          `Đã cập nhật ${updated.order_code}. Tiền và kho đã được cân lại tự động.`
+          updated.status === "PAID"
+            ? `Đã cập nhật ${updated.order_code}. Tiền và kho đã được cân lại tự động.`
+            : `Đã cập nhật ${updated.order_code}. Kho đã được cân lại, đơn vẫn chưa thanh toán.`
         );
         onEditDone?.();
         return;
@@ -453,36 +455,44 @@ export function SalesPosPage({
 
       created = await createSaleOrder(orderPayload);
 
-      const paid = await paySaleOrder(created.id, {
-        fund_account_id: fundAccountId as number,
-        actual_received_amount: Math.round(actualReceived)
-      });
+      if (payNow) {
+        const paid = await paySaleOrder(created.id, {
+          fund_account_id: fundAccountId as number,
+          actual_received_amount: Math.round(actualReceived)
+        });
+        messageApi.success(
+          `Đã thanh toán ${paid.order_code}. Kho đã được trừ tự động.`
+        );
+      } else {
+        messageApi.success(
+          `Đã lưu ${created.order_code}. Kho đã trừ, đơn đang chờ thanh toán.`
+        );
+      }
 
       setCart([]);
       setOrderSurcharges([]);
       setActualTouched(false);
       setActualReceived(0);
-      messageApi.success(
-        `Đã thanh toán ${paid.order_code}. Kho đã được trừ tự động.`
-      );
     } catch (error) {
-      if (created) {
-        try {
-          await voidSaleOrder(
-            created.id,
-            "Hủy tự động do thanh toán không hoàn tất"
-          );
-        } catch {
-          // Keep the original payment/stock error visible.
-        }
+      if (created && payNow) {
+        setCart([]);
+        setOrderSurcharges([]);
+        setActualTouched(false);
+        setActualReceived(0);
+        messageApi.error(
+          error instanceof Error
+            ? `Đã lưu ${created.order_code} nhưng chưa thanh toán: ${error.message}`
+            : `Đã lưu ${created.order_code} nhưng chưa thanh toán. Có thể thanh toán lại trong danh sách đơn.`
+        );
+      } else {
+        messageApi.error(
+          error instanceof Error
+            ? error.message
+            : editingOrder
+              ? "Không sửa được đơn bán."
+              : "Không lưu được đơn bán."
+        );
       }
-      messageApi.error(
-        error instanceof Error
-          ? error.message
-          : editingOrder
-            ? "Không sửa được đơn bán."
-            : "Không hoàn tất được đơn bán."
-      );
     } finally {
       setSaving(false);
     }
@@ -499,7 +509,7 @@ export function SalesPosPage({
           <Text type="secondary">
             {editingOrder
               ? "Đơn chưa xuất hóa đơn điện tử: có thể sửa món, số lượng, phụ thu và tiền thực thu."
-              : "Thanh toán xong hệ thống tự ghi thu và trừ nguyên liệu trong kho."}
+              : "Lưu đơn sẽ trừ kho ngay; có thể thanh toán ngay hoặc thanh toán sau trong danh sách đơn."}
           </Text>
         </div>
         {onOpenOrders && (
@@ -743,16 +753,40 @@ export function SalesPosPage({
               </Text>
             </div>
 
-            <Button
-              type="primary"
-              size="large"
-              block
-              loading={saving}
-              disabled={!cart.length}
-              onClick={() => void checkout()}
-            >
-              {editingOrder ? "LƯU THAY ĐỔI" : "THANH TOÁN"}
-            </Button>
+            {editingOrder ? (
+              <Button
+                type="primary"
+                size="large"
+                block
+                loading={saving}
+                disabled={!cart.length}
+                onClick={() => void checkout(false)}
+              >
+                LƯU THAY ĐỔI
+              </Button>
+            ) : (
+              <Space.Compact block>
+                <Button
+                  size="large"
+                  block
+                  loading={saving}
+                  disabled={!cart.length}
+                  onClick={() => void checkout(false)}
+                >
+                  LƯU ĐƠN
+                </Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  block
+                  loading={saving}
+                  disabled={!cart.length}
+                  onClick={() => void checkout(true)}
+                >
+                  THANH TOÁN
+                </Button>
+              </Space.Compact>
+            )}
           </div>
         </Card>
       </div>
@@ -842,21 +876,31 @@ export function SalesOrdersPage({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [selected, setSelected] = useState<SaleOrder | null>(null);
+  const [accounts, setAccounts] = useState<FundAccount[]>([]);
+  const [paymentOrder, setPaymentOrder] = useState<SaleOrder | null>(null);
+  const [paymentAccountType, setPaymentAccountType] =
+    useState<FundAccountType>("CASH");
+  const [paymentFundAccountId, setPaymentFundAccountId] = useState<number>();
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [paying, setPaying] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [messageApi, messageContext] = message.useMessage();
 
   const load = async () => {
     setLoading(true);
     try {
-      setOrders(
-        await getSaleOrders({
+      const [nextOrders, nextAccounts] = await Promise.all([
+        getSaleOrders({
           search: search.trim() || undefined,
           status:
             statusFilter === "ALL"
               ? undefined
               : (statusFilter as "OPEN" | "PAID" | "VOID")
-        })
-      );
+        }),
+        getFundAccounts()
+      ]);
+      setOrders(nextOrders);
+      setAccounts(nextAccounts);
     } catch (error) {
       messageApi.error(
         error instanceof Error ? error.message : "Không tải được đơn bán."
@@ -876,13 +920,91 @@ export function SalesOrdersPage({
     return <Tag color="warning">Chưa thanh toán</Tag>;
   };
 
+  const activePaymentAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (account) =>
+          account.is_active && account.type === paymentAccountType
+      ),
+    [accounts, paymentAccountType]
+  );
+
+  const defaultPaymentAccount = (
+    type: FundAccountType,
+    source = accounts
+  ) =>
+    source.find(
+      (account) =>
+        account.is_active &&
+        account.type === type &&
+        account.is_default
+    ) ??
+    source.find(
+      (account) => account.is_active && account.type === type
+    );
+
+  const openPayment = (order: SaleOrder) => {
+    const preferred =
+      defaultPaymentAccount("CASH") ??
+      accounts.find((account) => account.is_active);
+
+    setPaymentOrder(order);
+    setPaymentAmount(order.total_amount);
+    if (preferred) {
+      setPaymentAccountType(preferred.type);
+      setPaymentFundAccountId(preferred.id);
+    } else {
+      setPaymentAccountType("CASH");
+      setPaymentFundAccountId(undefined);
+    }
+  };
+
+  const changePaymentAccountType = (nextType: FundAccountType) => {
+    setPaymentAccountType(nextType);
+    setPaymentFundAccountId(defaultPaymentAccount(nextType)?.id);
+  };
+
+  const confirmPayment = async () => {
+    if (!paymentOrder) return;
+    if (!paymentFundAccountId) {
+      messageApi.warning("Chọn quỹ/tài khoản nhận tiền.");
+      return;
+    }
+    if (paymentOrder.total_amount > 0 && paymentAmount <= 0) {
+      messageApi.warning("Tiền thực thu phải lớn hơn 0.");
+      return;
+    }
+
+    setPaying(true);
+    try {
+      const paid = await paySaleOrder(paymentOrder.id, {
+        fund_account_id: paymentFundAccountId,
+        actual_received_amount: Math.round(paymentAmount)
+      });
+      if (selected?.id === paid.id) {
+        setSelected(paid);
+      }
+      setPaymentOrder(null);
+      await load();
+      messageApi.success(
+        `Đã thanh toán ${paid.order_code}. Tiền đã ghi vào quỹ/tài khoản.`
+      );
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không thanh toán được đơn."
+      );
+    } finally {
+      setPaying(false);
+    }
+  };
+
   const confirmDelete = (order: SaleOrder) => {
     Modal.confirm({
       title: `Xóa ${order.order_code}?`,
       content:
         order.status === "PAID"
           ? "Đơn sẽ được xóa mềm; tiền thu được đảo lại và nguyên liệu được hoàn kho."
-          : "Đơn chưa thanh toán sẽ được chuyển sang trạng thái đã xóa.",
+          : "Đơn chưa thanh toán sẽ được xóa mềm và nguyên liệu đã trừ sẽ được hoàn về kho.",
       okText: "Xóa đơn",
       cancelText: "Không",
       okButtonProps: { danger: true },
@@ -895,7 +1017,7 @@ export function SalesOrdersPage({
           messageApi.success(
             order.status === "PAID"
               ? "Đã xóa đơn, hoàn tiền và hoàn kho."
-              : "Đã xóa đơn."
+              : "Đã xóa đơn và hoàn kho."
           );
         } catch (error) {
           messageApi.error(
@@ -977,9 +1099,18 @@ export function SalesOrdersPage({
     },
     {
       title: "Thao tác",
-      width: 125,
+      width: 210,
       render: (_, row) => (
         <Space size={2}>
+          {row.status === "OPEN" && (
+            <Button
+              type="link"
+              size="small"
+              onClick={() => openPayment(row)}
+            >
+              Thanh toán
+            </Button>
+          )}
           <Button
             type="link"
             size="small"
@@ -1066,6 +1197,14 @@ export function SalesOrdersPage({
               <Button onClick={() => setSelected(null)}>Đóng</Button>
               {selected.status !== "VOID" && (
                 <>
+                  {selected.status === "OPEN" && (
+                    <Button
+                      type="primary"
+                      onClick={() => openPayment(selected)}
+                    >
+                      Thanh toán
+                    </Button>
+                  )}
                   <Button
                     disabled={!selected.can_edit}
                     onClick={() => onEditOrder?.(selected)}
@@ -1220,6 +1359,86 @@ export function SalesOrdersPage({
               </div>
             )}
           </>
+        )}
+      </Modal>
+
+      <Modal
+        open={paymentOrder !== null}
+        title={
+          paymentOrder
+            ? `Thanh toán ${paymentOrder.order_code}`
+            : "Thanh toán đơn"
+        }
+        okText="Xác nhận thanh toán"
+        cancelText="Hủy"
+        confirmLoading={paying}
+        onOk={() => void confirmPayment()}
+        onCancel={() => {
+          if (!paying) setPaymentOrder(null);
+        }}
+      >
+        {paymentOrder && (
+          <div className="sales-payment-box">
+            <div className="sales-total">
+              <span>Tổng thanh toán</span>
+              <strong>{money(paymentOrder.total_amount)} đ</strong>
+            </div>
+
+            <div className="sales-payment-grid">
+              <label>
+                <span>Loại tiền</span>
+                <Select
+                  value={paymentAccountType}
+                  onChange={changePaymentAccountType}
+                  options={[
+                    { value: "CASH", label: "Tiền mặt" },
+                    { value: "BANK", label: "Chuyển khoản" }
+                  ]}
+                />
+              </label>
+              <label>
+                <span>Quỹ / tài khoản</span>
+                <Select
+                  value={paymentFundAccountId}
+                  onChange={setPaymentFundAccountId}
+                  placeholder="Chọn quỹ"
+                  options={activePaymentAccounts.map((account) => ({
+                    value: account.id,
+                    label: account.name
+                  }))}
+                />
+              </label>
+            </div>
+
+            <div className="sales-actual-row">
+              <span>Tiền thực thu</span>
+              <InputNumber<number>
+                min={0}
+                precision={0}
+                value={paymentAmount}
+                onChange={(value) =>
+                  setPaymentAmount(Number(value ?? 0))
+                }
+                formatter={(value) =>
+                  value === undefined || value === null
+                    ? ""
+                    : money(Number(value))
+                }
+                parser={(value) =>
+                  Number((value ?? "").replace(/[^0-9]/g, ""))
+                }
+                addonAfter="đ"
+              />
+            </div>
+
+            <div className="sales-rounding-row">
+              <Text type="secondary">Chênh lệch làm tròn</Text>
+              <Text>
+                {paymentAmount - paymentOrder.total_amount > 0 ? "+" : ""}
+                {money(paymentAmount - paymentOrder.total_amount)} đ
+              </Text>
+            </div>
+          </div>
         )}
       </Modal>
     </>
