@@ -676,6 +676,107 @@ def test_paid_sale_can_be_edited_and_deleted_before_einvoice(
         ]
 
 
+def test_paid_sale_can_be_changed_back_to_debt_without_restoring_stock(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "order_time": "2026-10-06T18:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+        assert order["status"] == "OPEN"
+        assert order["stock_deducted"] is True
+
+        paid = client.post(
+            f"/api/sales/orders/{order['id']}/pay",
+            json={
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 150_000,
+            },
+        )
+        assert paid.status_code == 200
+        assert paid.json()["status"] == "PAID"
+
+        changed = client.put(
+            f"/api/sales/orders/{order['id']}",
+            json={
+                "order_time": "2026-10-06T18:00:00",
+                "payment_status": "DEBT",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ],
+            },
+        )
+        assert changed.status_code == 200
+        debt = changed.json()
+        assert debt["status"] == "OPEN"
+        assert debt["fund_account_id"] is None
+        assert debt["actual_received_amount"] is None
+        assert debt["payment_reference_code"] is None
+        assert debt["paid_at"] is None
+        assert debt["stock_deducted"] is True
+
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9.5
+
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        fund = next(row for row in funds if row["id"] == ids["fund_account_id"])
+        assert fund["current_balance"] == 0
+
+        paid_again = client.put(
+            f"/api/sales/orders/{order['id']}",
+            json={
+                "order_time": "2026-10-06T18:00:00",
+                "payment_status": "PAID",
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 149_000,
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ],
+            },
+        )
+        assert paid_again.status_code == 200
+        paid_again_order = paid_again.json()
+        assert paid_again_order["status"] == "PAID"
+        assert paid_again_order["actual_received_amount"] == 149_000
+        assert paid_again_order["stock_deducted"] is True
+
+        stock_after = client.get("/api/inventory/stock").json()
+        mực_after = next(
+            row for row in stock_after if row["item_id"] == ids["item_id"]
+        )
+        assert mực_after["stock_quantity"] == 9.5
+
+        funds_after = client.get("/api/fund-accounts?type=CASH").json()
+        fund_after = next(
+            row for row in funds_after if row["id"] == ids["fund_account_id"]
+        )
+        assert fund_after["current_balance"] == 149_000
+
+
 def test_issued_einvoice_locks_sale_edit_and_delete(
     tmp_path,
     monkeypatch,
