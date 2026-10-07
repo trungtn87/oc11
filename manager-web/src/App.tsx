@@ -80,6 +80,10 @@ import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
 import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
+import {
+  KitchenPrinterSettings,
+  RestaurantTablesSettings
+} from "./RestaurantSettingsPage";
 import { oc11LogoDataUri } from "./oc11LogoData";
 import type {
   BackupStatus,
@@ -2785,7 +2789,28 @@ function App() {
     }
 
     if (page === "settings") {
-      return <BackupSettingsPage />;
+      return (
+        <Tabs
+          defaultActiveKey="tables"
+          items={[
+            {
+              key: "tables",
+              label: "Khu vực & bàn",
+              children: <RestaurantTablesSettings />
+            },
+            {
+              key: "printer",
+              label: "Máy in bếp",
+              children: <KitchenPrinterSettings />
+            },
+            {
+              key: "backup",
+              label: "Sao lưu dữ liệu",
+              children: <BackupSettingsPage />
+            }
+          ]}
+        />
+      );
     }
 
     return <PlaceholderPage title={pageTitles[page] ?? "Ốc 11"} />;
