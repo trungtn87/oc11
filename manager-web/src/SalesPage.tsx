@@ -81,6 +81,67 @@ function cartKey(menuItemId: number, optionId: number | null) {
   return `${menuItemId}:${optionId ?? "base"}`;
 }
 
+type SalesPeriod =
+  | "TODAY"
+  | "YESTERDAY"
+  | "MONTH"
+  | "QUARTER"
+  | "YEAR"
+  | "CUSTOM";
+
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function periodRange(
+  period: SalesPeriod,
+  customFrom = "",
+  customTo = ""
+): { from: string; to: string } {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (period === "CUSTOM") {
+    return { from: customFrom, to: customTo };
+  }
+
+  let from = new Date(today);
+  let to = new Date(today);
+
+  if (period === "YESTERDAY") {
+    from.setDate(from.getDate() - 1);
+    to = new Date(from);
+  } else if (period === "MONTH") {
+    from = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (period === "QUARTER") {
+    const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+    from = new Date(today.getFullYear(), quarterStartMonth, 1);
+  } else if (period === "YEAR") {
+    from = new Date(today.getFullYear(), 0, 1);
+  }
+
+  return { from: dateKey(from), to: dateKey(to) };
+}
+
+function toLocalDateTimeInput(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function periodLabel(period: SalesPeriod) {
+  if (period === "TODAY") return "Hôm nay";
+  if (period === "YESTERDAY") return "Hôm qua";
+  if (period === "MONTH") return "Tháng này";
+  if (period === "QUARTER") return "Quý này";
+  if (period === "YEAR") return "Năm nay";
+  return "Tùy chọn";
+}
+
 export function SalesPosPage({
   onOpenOrders,
   editingOrder,
@@ -111,6 +172,9 @@ export function SalesPosPage({
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadedEditOrderId, setLoadedEditOrderId] = useState<number | null>(null);
+  const [orderTimeLocal, setOrderTimeLocal] = useState(() =>
+    toLocalDateTimeInput(new Date())
+  );
   const [messageApi, messageContext] = message.useMessage();
 
   useEffect(() => {
@@ -220,6 +284,7 @@ export function SalesPosPage({
       editingOrder.actual_received_amount ?? editingOrder.total_amount
     );
     setActualTouched(editingOrder.status === "PAID");
+    setOrderTimeLocal(toLocalDateTimeInput(editingOrder.order_time));
     setLoadedEditOrderId(editingOrder.id);
   }, [
     accounts,
@@ -420,8 +485,14 @@ export function SalesPosPage({
       return;
     }
 
+    const parsedOrderTime = new Date(orderTimeLocal);
+    if (!orderTimeLocal || Number.isNaN(parsedOrderTime.getTime())) {
+      messageApi.warning("Chọn thời gian hóa đơn hợp lệ.");
+      return;
+    }
+
     const orderPayload = {
-      order_time: editingOrder?.order_time ?? new Date().toISOString(),
+      order_time: parsedOrderTime.toISOString(),
       customer_id: editingOrder?.customer_id ?? null,
       note: editingOrder?.note ?? null,
       items: cart.map((line) => ({
@@ -482,6 +553,7 @@ export function SalesPosPage({
       setOrderSurcharges([]);
       setActualTouched(false);
       setActualReceived(0);
+      setOrderTimeLocal(toLocalDateTimeInput(new Date()));
     } catch (error) {
       if (created && payNow) {
         setCart([]);
@@ -579,6 +651,15 @@ export function SalesPosPage({
           className="sales-cart-panel"
           title={editingOrder ? `Đang sửa ${editingOrder.order_code}` : "Đơn hiện tại"}
         >
+          <div style={{ marginBottom: 12 }}>
+            <Text type="secondary">Thời gian hóa đơn</Text>
+            <Input
+              type="datetime-local"
+              value={orderTimeLocal}
+              onChange={(event) => setOrderTimeLocal(event.target.value)}
+              disabled={Boolean(editingOrder?.has_einvoice)}
+            />
+          </div>
           <div className="sales-cart-lines">
             {cart.map((line) => (
               <div className="sales-cart-line" key={line.key}>
@@ -911,6 +992,9 @@ export function SalesOrdersPage({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [period, setPeriod] = useState<SalesPeriod>("TODAY");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [selected, setSelected] = useState<SaleOrder | null>(null);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
   const [paymentOrder, setPaymentOrder] = useState<SaleOrder | null>(null);
@@ -925,13 +1009,16 @@ export function SalesOrdersPage({
   const load = async () => {
     setLoading(true);
     try {
+      const range = periodRange(period, customFrom, customTo);
       const [nextOrders, nextAccounts] = await Promise.all([
         getSaleOrders({
           search: search.trim() || undefined,
           status:
             statusFilter === "ALL"
               ? undefined
-              : (statusFilter as "OPEN" | "PAID" | "VOID")
+              : (statusFilter as "OPEN" | "PAID" | "VOID"),
+          from_date: range.from || undefined,
+          to_date: range.to || undefined
         }),
         getFundAccounts()
       ]);
@@ -947,8 +1034,9 @@ export function SalesOrdersPage({
   };
 
   useEffect(() => {
+    if (period === "CUSTOM" && (!customFrom || !customTo)) return;
     void load();
-  }, [statusFilter]);
+  }, [statusFilter, period, customFrom, customTo]);
 
   const statusTag = (status: SaleOrder["status"]) => {
     if (status === "PAID") return <Tag color="success">Đã thanh toán</Tag>;
@@ -1065,6 +1153,23 @@ export function SalesOrdersPage({
       }
     });
   };
+
+  const activeOrders = useMemo(
+    () => orders.filter((order) => order.status !== "VOID"),
+    [orders]
+  );
+  const filteredTotal = useMemo(
+    () => activeOrders.reduce((sum, order) => sum + order.total_amount, 0),
+    [activeOrders]
+  );
+  const filteredActualReceived = useMemo(
+    () =>
+      activeOrders.reduce(
+        (sum, order) => sum + (order.actual_received_amount ?? 0),
+        0
+      ),
+    [activeOrders]
+  );
 
   const columns: TableProps<SaleOrder>["columns"] = [
     {
@@ -1197,6 +1302,38 @@ export function SalesOrdersPage({
           className="search-box"
         />
         <Select
+          value={period}
+          onChange={(value) => setPeriod(value as SalesPeriod)}
+          style={{ minWidth: 130 }}
+          options={[
+            { value: "TODAY", label: "Hôm nay" },
+            { value: "YESTERDAY", label: "Hôm qua" },
+            { value: "MONTH", label: "Tháng này" },
+            { value: "QUARTER", label: "Quý này" },
+            { value: "YEAR", label: "Năm nay" },
+            { value: "CUSTOM", label: "Tùy chọn" }
+          ]}
+        />
+        {period === "CUSTOM" && (
+          <>
+            <Input
+              type="date"
+              value={customFrom}
+              onChange={(event) => setCustomFrom(event.target.value)}
+              style={{ width: 145 }}
+              aria-label="Từ ngày"
+            />
+            <Input
+              type="date"
+              value={customTo}
+              min={customFrom || undefined}
+              onChange={(event) => setCustomTo(event.target.value)}
+              style={{ width: 145 }}
+              aria-label="Đến ngày"
+            />
+          </>
+        )}
+        <Select
           value={statusFilter}
           onChange={setStatusFilter}
           options={[
@@ -1208,6 +1345,21 @@ export function SalesOrdersPage({
         />
         <Button onClick={() => void load()}>Làm mới</Button>
       </div>
+
+      <Card size="small" style={{ marginBottom: 12 }}>
+        <Space wrap size="large">
+          <Text strong>{periodLabel(period)}</Text>
+          <Text>
+            <strong>{activeOrders.length}</strong> đơn
+          </Text>
+          <Text>
+            Tổng tiền: <strong>{money(filteredTotal)} đ</strong>
+          </Text>
+          <Text>
+            Thực thu: <strong>{money(filteredActualReceived)} đ</strong>
+          </Text>
+        </Space>
+      </Card>
 
       <div className="table-card">
         <Table<SaleOrder>
