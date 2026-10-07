@@ -80,6 +80,7 @@ import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
 import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
+import SurchargesPage from "./SurchargesPage";
 import {
   KitchenPrinterSettings,
   RestaurantTablesSettings
@@ -156,7 +157,8 @@ const menuItems: MenuProps["items"] = [
     label: "Bán hàng",
     children: [
       { key: "sales-pos", icon: <ShoppingCartOutlined />, label: "Bán hàng" },
-      { key: "sales-orders", icon: <FileTextOutlined />, label: "Đơn bán hàng" }
+      { key: "sales-orders", icon: <FileTextOutlined />, label: "Đơn bán hàng" },
+      { key: "sales-surcharges", icon: <TagsOutlined />, label: "Phụ thu" }
     ]
   },
   {
@@ -2611,6 +2613,7 @@ function PlaceholderPage({ title }: { title: string }) {
 const pageTitles: Record<string, string> = {
   "sales-pos": "Bán hàng",
   "sales-orders": "Đơn bán hàng",
+  "sales-surcharges": "Phụ thu",
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
   "menu-items": "Món thực đơn",
@@ -2669,6 +2672,10 @@ function App() {
           }}
         />
       );
+    }
+
+    if (page === "sales-surcharges") {
+      return <SurchargesPage />;
     }
 
     if (page === "item-list") {
