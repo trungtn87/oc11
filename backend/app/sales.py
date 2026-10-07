@@ -1005,6 +1005,7 @@ def list_orders(
     search: str | None = Query(default=None),
     from_date: str | None = Query(default=None),
     to_date: str | None = Query(default=None),
+    fund_account_id: int | None = Query(default=None, ge=1),
 ) -> list[SaleOrderOutput]:
     conditions: list[str] = []
     params: list[object] = []
@@ -1037,6 +1038,9 @@ def list_orders(
     if to_date:
         conditions.append("date(so.order_time) <= date(?)")
         params.append(to_date)
+    if fund_account_id is not None:
+        conditions.append("so.fund_account_id = ?")
+        params.append(fund_account_id)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
