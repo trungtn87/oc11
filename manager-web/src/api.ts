@@ -36,7 +36,13 @@ import type {
   UnitInput,
   SaleOrder,
   SaleOrderInput,
-  SalePaymentInput
+  SalePaymentInput,
+  RestaurantArea,
+  RestaurantAreaInput,
+  RestaurantTable,
+  RestaurantTableInput,
+  PosSettings,
+  KitchenSendResult
 } from "./types";
 
 type ApiErrorPayload = {
@@ -581,4 +587,91 @@ export function voidSaleOrder(
   return request<SaleOrder>(`/api/sales/orders/${id}/void${query}`, {
     method: "POST"
   });
+}
+
+
+export function getRestaurantAreas(activeOnly = false): Promise<RestaurantArea[]> {
+  const suffix = activeOnly ? "?active_only=true" : "";
+  return request<RestaurantArea[]>(`/api/pos/areas${suffix}`);
+}
+
+export function createRestaurantArea(
+  payload: RestaurantAreaInput
+): Promise<RestaurantArea> {
+  return request<RestaurantArea>("/api/pos/areas", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateRestaurantArea(
+  id: number,
+  payload: RestaurantAreaInput
+): Promise<RestaurantArea> {
+  return request<RestaurantArea>(`/api/pos/areas/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getRestaurantTables(params?: {
+  area_id?: number;
+  active_only?: boolean;
+}): Promise<RestaurantTable[]> {
+  const query = new URLSearchParams();
+  if (params?.area_id !== undefined) query.set("area_id", String(params.area_id));
+  if (params?.active_only) query.set("active_only", "true");
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<RestaurantTable[]>(`/api/pos/tables${suffix}`);
+}
+
+export function createRestaurantTable(
+  payload: RestaurantTableInput
+): Promise<RestaurantTable> {
+  return request<RestaurantTable>("/api/pos/tables", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateRestaurantTable(
+  id: number,
+  payload: RestaurantTableInput
+): Promise<RestaurantTable> {
+  return request<RestaurantTable>(`/api/pos/tables/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getPosSettings(): Promise<PosSettings> {
+  return request<PosSettings>("/api/pos/settings");
+}
+
+export function updatePosSettings(payload: PosSettings): Promise<PosSettings> {
+  return request<PosSettings>("/api/pos/settings", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getInstalledPrinters(): Promise<string[]> {
+  return request<string[]>("/api/pos/printers");
+}
+
+export function testKitchenPrinter(): Promise<{
+  ok: boolean;
+  printer_name: string | null;
+  error: string | null;
+}> {
+  return request("/api/pos/printer/test", { method: "POST" });
+}
+
+export function sendSaleOrderToKitchen(
+  orderId: number
+): Promise<KitchenSendResult> {
+  return request<KitchenSendResult>(
+    `/api/pos/orders/${orderId}/send-kitchen`,
+    { method: "POST" }
+  );
 }

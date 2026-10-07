@@ -599,7 +599,58 @@ export type ConsumptionSummary = {
 };
 
 
+export type RestaurantArea = {
+  id: number;
+  name: string;
+  display_order: number;
+  is_active: boolean;
+};
+
+export type RestaurantAreaInput = Omit<RestaurantArea, "id">;
+
+export type RestaurantTable = {
+  id: number;
+  area_id: number;
+  area_name: string;
+  name: string;
+  seats: number;
+  display_order: number;
+  pos_x: number;
+  pos_y: number;
+  is_active: boolean;
+  open_order_id: number | null;
+  open_order_code: string | null;
+  open_order_total: number | null;
+  open_order_time: string | null;
+  guest_count: number;
+};
+
+export type RestaurantTableInput = {
+  area_id: number;
+  name: string;
+  seats: number;
+  display_order: number;
+  pos_x: number;
+  pos_y: number;
+  is_active: boolean;
+};
+
+export type PosSettings = {
+  kitchen_printer_name: string;
+};
+
+export type KitchenSendResult = {
+  ticket_id: number;
+  order_id: number;
+  order_code: string;
+  sent_at: string;
+  printer_name: string | null;
+  print_status: "PRINTED" | "FAILED";
+  error_message: string | null;
+};
+
 export type SaleOrderStatus = "OPEN" | "PAID" | "VOID";
+export type SaleOrderType = "DINE_IN" | "TAKEAWAY";
 
 export type SaleSurcharge = {
   id: number;
@@ -635,6 +686,13 @@ export type SaleOrder = {
   order_code: string;
   order_time: string;
   status: SaleOrderStatus;
+  order_type: SaleOrderType;
+  table_id: number | null;
+  table_name: string | null;
+  area_id: number | null;
+  area_name: string | null;
+  guest_count: number;
+  kitchen_sent_at: string | null;
   customer_id: number | null;
   customer_name: string | null;
   fund_account_id: number | null;
@@ -660,6 +718,9 @@ export type SaleOrder = {
 
 export type SaleOrderInput = {
   order_time?: string | null;
+  order_type?: SaleOrderType | null;
+  table_id?: number | null;
+  guest_count?: number | null;
   customer_id?: number | null;
   note?: string | null;
   payment_status?: "PAID" | "DEBT" | null;
