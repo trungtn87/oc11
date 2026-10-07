@@ -306,12 +306,35 @@ export function SalesPosPage({
 
     setCart([]);
     setOrderSurcharges([]);
+    setSurchargeTarget(null);
+    setSurchargePresetId(undefined);
+    setSurchargeName("");
+    setSurchargeAmount(0);
     setActualTouched(false);
     setActualReceived(0);
     setEditPaymentStatus("DEBT");
     setOrderTimeLocal(toLocalDateTimeInput(new Date()));
+
+    const preferred =
+      accounts.find(
+        (account) =>
+          account.is_active &&
+          account.type === "CASH" &&
+          account.is_default
+      ) ??
+      accounts.find(
+        (account) => account.is_active && account.type === "CASH"
+      ) ??
+      accounts.find((account) => account.is_active);
+    if (preferred) {
+      setAccountType(preferred.type);
+      setFundAccountId(preferred.id);
+    } else {
+      setFundAccountId(undefined);
+    }
+
     setLoadedEditOrderId(null);
-  }, [editingOrder, loadedEditOrderId]);
+  }, [accounts, editingOrder, loadedEditOrderId]);
 
   const groups = useMemo(
     () =>
