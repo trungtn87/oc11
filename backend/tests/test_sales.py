@@ -313,7 +313,7 @@ def test_unpaid_sale_can_be_edited_then_paid_later_and_filtered(
         created = client.post(
             "/api/sales/orders",
             json={
-                "order_time": "2026-10-07T12:00:00",
+                "order_time": "2026-10-06T12:00:00",
                 "items": [
                     {
                         "menu_item_id": ids["menu_item_id"],
@@ -338,7 +338,7 @@ def test_unpaid_sale_can_be_edited_then_paid_later_and_filtered(
         edited = client.put(
             f"/api/sales/orders/{order['id']}",
             json={
-                "order_time": "2026-10-07T12:00:00",
+                "order_time": "2026-10-06T12:00:00",
                 "items": [
                     {
                         "menu_item_id": ids["menu_item_id"],
