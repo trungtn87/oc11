@@ -884,6 +884,19 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS sale_surcharge_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                amount INTEGER NOT NULL CHECK (amount > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT,
+                UNIQUE (name)
+            )
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS sales_order_item_surcharges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sales_order_item_id INTEGER NOT NULL,
