@@ -134,6 +134,20 @@ def server_is_healthy(timeout: float = 0.6) -> bool:
         return False
 
 
+def probe_legacy_oc11(timeout: float = 0.8) -> bool:
+    """Recognize OC11 builds that predate /api/runtime."""
+    try:
+        with urllib.request.urlopen(
+            f"{APP_URL}/openapi.json",
+            timeout=timeout,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        info = payload.get("info") or {}
+        return info.get("title") == "OC11 API"
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
 def normalize_path(value: str | Path) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(value)))
 
@@ -156,11 +170,16 @@ def listener_pid(port: int) -> int | None:
     suffix = f":{port}"
     for raw_line in result.stdout.splitlines():
         parts = raw_line.split()
-        if len(parts) < 4 or parts[0].upper() != "TCP":
+        if len(parts) < 5 or parts[0].upper() != "TCP":
             continue
         local_address = parts[1]
+        state = parts[-2].upper()
         pid_text = parts[-1]
-        if local_address.endswith(suffix) and pid_text.isdigit():
+        if (
+            state == "LISTENING"
+            and local_address.endswith(suffix)
+            and pid_text.isdigit()
+        ):
             pid = int(pid_text)
             if pid != os.getpid():
                 return pid
@@ -277,9 +296,22 @@ def handle_existing_instance(started_from_windows: bool) -> bool:
     if pid is None:
         return False
 
+    # Old portable builds did not expose /api/runtime, and Windows may report
+    # their process under a different image name. Verify the FastAPI identity
+    # before taking over the listening PID so updates do not get stuck on port 8000.
+    if probe_legacy_oc11():
+        if terminate_process(pid) and wait_for_port_release():
+            return False
+
+        notify_error(
+            "Đã nhận ra bản OC11 cũ nhưng không thể đóng nó để cập nhật. "
+            "Hãy thử chạy lại OC11.exe."
+        )
+        return True
+
     image_name = process_image_name(pid)
     if image_name and image_name.casefold() == "oc11.exe":
-        # Compatibility with older OC11 builds that did not expose /api/runtime.
+        # Last-resort compatibility for very old OC11 builds.
         if terminate_process(pid) and wait_for_port_release():
             return False
 
