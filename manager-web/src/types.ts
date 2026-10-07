@@ -662,6 +662,7 @@ export type SaleOrderInput = {
   order_time?: string | null;
   customer_id?: number | null;
   note?: string | null;
+  payment_status?: "PAID" | "DEBT" | null;
   items: Array<{
     menu_item_id: number;
     menu_item_option_id?: number | null;
