@@ -59,6 +59,7 @@ import {
   getInventoryStock,
   getItemGroups,
   getPurchaseReceipts,
+  getSaleOrders,
   getSuppliers,
   getUnits,
   runBackup,
@@ -257,6 +258,56 @@ function localDateKey(value: string | Date) {
   return `${year}-${month}-${day}`;
 }
 
+type DashboardPeriod =
+  | "TODAY"
+  | "YESTERDAY"
+  | "MONTH"
+  | "QUARTER"
+  | "YEAR"
+  | "CUSTOM";
+
+function dashboardPeriodRange(
+  period: DashboardPeriod,
+  customFrom = "",
+  customTo = ""
+): { from: string; to: string } {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (period === "CUSTOM") {
+    return { from: customFrom, to: customTo };
+  }
+
+  let from = new Date(today);
+  let to = new Date(today);
+
+  if (period === "YESTERDAY") {
+    from.setDate(from.getDate() - 1);
+    to = new Date(from);
+  } else if (period === "MONTH") {
+    from = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else if (period === "QUARTER") {
+    from = new Date(
+      today.getFullYear(),
+      Math.floor(today.getMonth() / 3) * 3,
+      1
+    );
+  } else if (period === "YEAR") {
+    from = new Date(today.getFullYear(), 0, 1);
+  }
+
+  return { from: localDateKey(from), to: localDateKey(to) };
+}
+
+function dashboardPeriodLabel(period: DashboardPeriod) {
+  if (period === "TODAY") return "hôm nay";
+  if (period === "YESTERDAY") return "hôm qua";
+  if (period === "MONTH") return "tháng này";
+  if (period === "QUARTER") return "quý này";
+  if (period === "YEAR") return "năm nay";
+  return "khoảng đã chọn";
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -278,8 +329,10 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
   const [fundAccounts, setFundAccounts] = useState<FundAccount[]>([]);
   const [fundTransactions, setFundTransactions] = useState<FundTransaction[]>([]);
   const [inventoryStock, setInventoryStock] = useState<InventoryStock[]>([]);
-
-  const todayKey = localDateKey(new Date());
+  const [salesOrders, setSalesOrders] = useState<SaleOrder[]>([]);
+  const [period, setPeriod] = useState<DashboardPeriod>("TODAY");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -289,13 +342,14 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       setDashboardError("");
 
       try {
-        const [receipts, accounts, cashLedger, bankLedger, stock] =
+        const [receipts, accounts, cashLedger, bankLedger, stock, orders] =
           await Promise.all([
             getPurchaseReceipts(),
             getFundAccounts(),
             getFundTransactions({ account_type: "CASH" }),
             getFundTransactions({ account_type: "BANK" }),
-            getInventoryStock()
+            getInventoryStock(),
+            getSaleOrders()
           ]);
 
         if (cancelled) {
@@ -306,6 +360,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         setFundAccounts(accounts);
         setFundTransactions([...cashLedger.items, ...bankLedger.items]);
         setInventoryStock(stock);
+        setSalesOrders(orders);
       } catch (error) {
         if (!cancelled) {
           setDashboardError(
@@ -328,25 +383,39 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
     };
   }, []);
 
+  const range = dashboardPeriodRange(period, customFrom, customTo);
+  const inSelectedPeriod = (value: string) => {
+    const key = localDateKey(value);
+    if (!range.from || !range.to) return false;
+    return key >= range.from && key <= range.to;
+  };
+
   const activeReceipts = purchaseReceipts.filter((receipt) => !receipt.is_void);
-  const todayReceipts = activeReceipts.filter(
-    (receipt) => localDateKey(receipt.receipt_time) === todayKey
+  const periodReceipts = activeReceipts.filter((receipt) =>
+    inSelectedPeriod(receipt.receipt_time)
   );
-  const todayTransactions = fundTransactions.filter(
-    (transaction) => localDateKey(transaction.transaction_time) === todayKey
+  const periodTransactions = fundTransactions.filter((transaction) =>
+    inSelectedPeriod(transaction.transaction_time)
   );
-  const normalTodayTransactions = todayTransactions.filter(
+  const normalPeriodTransactions = periodTransactions.filter(
     (transaction) => transaction.transaction_type === "NORMAL"
   );
+  const periodSalesOrders = salesOrders.filter(
+    (order) => order.status !== "VOID" && inSelectedPeriod(order.order_time)
+  );
 
-  const todayPurchaseTotal = todayReceipts.reduce(
+  const periodSalesTotal = periodSalesOrders.reduce(
+    (sum, order) => sum + order.total_amount,
+    0
+  );
+  const periodPurchaseTotal = periodReceipts.reduce(
     (sum, receipt) => sum + receipt.total_amount,
     0
   );
-  const todayExpenseTotal = normalTodayTransactions
+  const periodExpenseTotal = normalPeriodTransactions
     .filter((transaction) => transaction.direction === "OUT")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const todayIncomeTotal = normalTodayTransactions
+  const periodIncomeTotal = normalPeriodTransactions
     .filter((transaction) => transaction.direction === "IN")
     .reduce((sum, transaction) => sum + transaction.amount, 0);
   const totalFundBalance = fundAccounts.reduce(
@@ -366,7 +435,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       : 0;
 
   const recentActivities = [
-    ...activeReceipts.map((receipt) => ({
+    ...periodReceipts.map((receipt) => ({
       id: `purchase-${receipt.id}`,
       time: receipt.receipt_time,
       title: `Nhập hàng ${receipt.receipt_code}`,
@@ -374,7 +443,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       amount: receipt.total_amount,
       direction: "PURCHASE" as const
     })),
-    ...fundTransactions
+    ...periodTransactions
       .filter((transaction) => transaction.transaction_type === "NORMAL")
       .map((transaction) => ({
         id: `fund-${transaction.id}`,
@@ -399,15 +468,22 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
 
   const metricCards = [
     {
-      label: "Nhập hàng hôm nay",
-      value: todayPurchaseTotal,
+      label: `Doanh thu ${dashboardPeriodLabel(period)}`,
+      value: periodSalesTotal,
       suffix: "đ",
-      tone: "blue",
-      note: `${todayReceipts.length} phiếu nhập`
+      tone: "green",
+      note: `${periodSalesOrders.length} đơn bán`
     },
     {
-      label: "Chi hôm nay",
-      value: todayExpenseTotal,
+      label: `Nhập hàng ${dashboardPeriodLabel(period)}`,
+      value: periodPurchaseTotal,
+      suffix: "đ",
+      tone: "blue",
+      note: `${periodReceipts.length} phiếu nhập`
+    },
+    {
+      label: `Chi ${dashboardPeriodLabel(period)}`,
+      value: periodExpenseTotal,
       suffix: "đ",
       tone: "red",
       note: "Không tính chuyển quỹ / cân đối"
@@ -416,18 +492,8 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
       label: "Tổng số dư quỹ",
       value: totalFundBalance,
       suffix: "đ",
-      tone: "green",
-      note: `${fundAccounts.length} quỹ / tài khoản`
-    },
-    {
-      label: "Phiếu nhập hôm nay",
-      value: todayReceipts.length,
-      suffix: "",
       tone: "orange",
-      note:
-        todayReceipts.length > 0
-          ? `Tổng tiền ${formatMoney(todayPurchaseTotal)}`
-          : "Chưa phát sinh"
+      note: `Số dư hiện tại · ${fundAccounts.length} quỹ / tài khoản`
     }
   ];
 
@@ -453,6 +519,40 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
             </div>
           ) : null}
         </div>
+        <Space wrap>
+          <Select
+            value={period}
+            onChange={(value) => setPeriod(value as DashboardPeriod)}
+            style={{ minWidth: 130 }}
+            options={[
+              { value: "TODAY", label: "Hôm nay" },
+              { value: "YESTERDAY", label: "Hôm qua" },
+              { value: "MONTH", label: "Tháng này" },
+              { value: "QUARTER", label: "Quý này" },
+              { value: "YEAR", label: "Năm nay" },
+              { value: "CUSTOM", label: "Tùy chọn" }
+            ]}
+          />
+          {period === "CUSTOM" && (
+            <>
+              <Input
+                type="date"
+                value={customFrom}
+                onChange={(event) => setCustomFrom(event.target.value)}
+                style={{ width: 145 }}
+                aria-label="Từ ngày"
+              />
+              <Input
+                type="date"
+                value={customTo}
+                min={customFrom || undefined}
+                onChange={(event) => setCustomTo(event.target.value)}
+                style={{ width: 145 }}
+                aria-label="Đến ngày"
+              />
+            </>
+          )}
+        </Space>
       </div>
 
       <Card className="dashboard-card dashboard-quick-card" title="Thao tác nhanh">
@@ -502,32 +602,40 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <Col xs={24} xl={16}>
           <Card
             className="dashboard-card"
-            title="Doanh thu 7 ngày gần nhất"
-            extra={
-              <Select
-                value="7 ngày"
-                options={[{ value: "7 ngày", label: "7 ngày" }]}
-              />
-            }
+            title={`Doanh thu ${dashboardPeriodLabel(period)}`}
+            loading={loading}
           >
-            <div className="empty-chart">
-              <div className="chart-bars" aria-hidden="true">
-                {[18, 28, 24, 40, 34, 48, 42].map((height, index) => (
-                  <div className="chart-column" key={index}>
-                    <div
-                      className="chart-bar"
-                      style={{ height: `${height}%` }}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="empty-overlay">
-                <Text strong>Chưa có dữ liệu bán hàng</Text>
-                <Text type="secondary">
-                  Biểu đồ doanh thu sẽ hoạt động khi POS được triển khai.
-                </Text>
-              </div>
-            </div>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Tổng tiền đơn"
+                  value={periodSalesTotal}
+                  suffix="đ"
+                  formatter={(value) =>
+                    new Intl.NumberFormat("vi-VN").format(Number(value))
+                  }
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Số đơn"
+                  value={periodSalesOrders.length}
+                />
+              </Col>
+              <Col xs={24} md={8}>
+                <Statistic
+                  title="Thực thu"
+                  value={periodSalesOrders.reduce(
+                    (sum, order) => sum + (order.actual_received_amount ?? 0),
+                    0
+                  )}
+                  suffix="đ"
+                  formatter={(value) =>
+                    new Intl.NumberFormat("vi-VN").format(Number(value))
+                  }
+                />
+              </Col>
+            </Row>
           </Card>
         </Col>
 
@@ -564,24 +672,28 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Dòng tiền hôm nay" loading={loading}>
+          <Card
+            className="dashboard-card"
+            title={`Dòng tiền ${dashboardPeriodLabel(period)}`}
+            loading={loading}
+          >
             <div className="dashboard-money-summary">
               <div>
                 <Text type="secondary">Thu</Text>
                 <Text strong className="dashboard-money-in">
-                  {formatMoney(todayIncomeTotal)}
+                  {formatMoney(periodIncomeTotal)}
                 </Text>
               </div>
               <div>
                 <Text type="secondary">Chi</Text>
                 <Text strong type="danger">
-                  {formatMoney(todayExpenseTotal)}
+                  {formatMoney(periodExpenseTotal)}
                 </Text>
               </div>
               <div>
                 <Text type="secondary">Chênh lệch</Text>
                 <Text strong>
-                  {formatMoney(todayIncomeTotal - todayExpenseTotal)}
+                  {formatMoney(periodIncomeTotal - periodExpenseTotal)}
                 </Text>
               </div>
             </div>
@@ -594,13 +706,13 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         <Col xs={24} lg={8}>
           <Card
             className="dashboard-card"
-            title="Nhập hàng gần đây"
-            extra={<Tag>{activeReceipts.length} phiếu</Tag>}
+            title={`Nhập hàng ${dashboardPeriodLabel(period)}`}
+            extra={<Tag>{periodReceipts.length} phiếu</Tag>}
             loading={loading}
           >
-            {activeReceipts.length > 0 ? (
+            {periodReceipts.length > 0 ? (
               <div className="dashboard-mini-list">
-                {activeReceipts
+                {periodReceipts
                   .slice()
                   .sort(
                     (a, b) =>
@@ -631,7 +743,11 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
         </Col>
 
         <Col xs={24} lg={8}>
-          <Card className="dashboard-card" title="Hoạt động gần đây" loading={loading}>
+          <Card
+            className="dashboard-card"
+            title={`Hoạt động ${dashboardPeriodLabel(period)}`}
+            loading={loading}
+          >
             {recentActivities.length > 0 ? (
               <div className="dashboard-activity-list">
                 {recentActivities.map((activity) => (
