@@ -670,12 +670,9 @@ def record_order_revision(
     )
 
 
-def reverse_paid_effects(
+def reverse_payment_effects(
     connection: sqlite3.Connection,
     order: sqlite3.Row,
-    reversed_at: str,
-    *,
-    note_prefix: str,
 ) -> None:
     payment = connection.execute(
         """
@@ -690,20 +687,30 @@ def reverse_paid_effects(
         """,
         (str(int(order["id"])),),
     ).fetchone()
-    if payment is not None:
-        connection.execute(
-            "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
-            (int(payment["id"]),),
-        )
-        connection.execute(
-            """
-            UPDATE fund_accounts
-            SET current_balance = current_balance - ?
-            WHERE id = ?
-            """,
-            (int(payment["amount"]), int(payment["fund_account_id"])),
-        )
+    if payment is None:
+        return
 
+    connection.execute(
+        "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+        (int(payment["id"]),),
+    )
+    connection.execute(
+        """
+        UPDATE fund_accounts
+        SET current_balance = current_balance - ?
+        WHERE id = ?
+        """,
+        (int(payment["amount"]), int(payment["fund_account_id"])),
+    )
+
+
+def reverse_stock_effects(
+    connection: sqlite3.Connection,
+    order: sqlite3.Row,
+    reversed_at: str,
+    *,
+    note_prefix: str,
+) -> None:
     sale_movements = connection.execute(
         """
         SELECT
@@ -753,6 +760,55 @@ def reverse_paid_effects(
         )
 
 
+def reverse_paid_effects(
+    connection: sqlite3.Connection,
+    order: sqlite3.Row,
+    reversed_at: str,
+    *,
+    note_prefix: str,
+) -> None:
+    reverse_payment_effects(connection, order)
+    reverse_stock_effects(
+        connection,
+        order,
+        reversed_at,
+        note_prefix=note_prefix,
+    )
+
+
+def record_order_stock(
+    connection: sqlite3.Connection,
+    order_id: int,
+    *,
+    movement_time: str,
+) -> None:
+    lines = select_order_items(connection, order_id)
+    if not lines:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Đơn bán chưa có món.",
+        )
+
+    for line in lines:
+        record_sale_consumption(
+            connection,
+            source_id=str(order_id),
+            source_line_id=str(int(line["id"])),
+            movement_time=movement_time,
+            sold_quantity=float(line["quantity"]),
+            menu_item_option_id=(
+                int(line["menu_item_option_id"])
+                if line["menu_item_option_id"] is not None
+                else None
+            ),
+            menu_item_id=(
+                int(line["menu_item_id"])
+                if line["menu_item_id"] is not None
+                else None
+            ),
+        )
+
+
 def apply_payment(
     connection: sqlite3.Connection,
     order_id: int,
@@ -793,32 +849,6 @@ def apply_payment(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Tiền thực thu phải lớn hơn 0.",
-        )
-
-    lines = select_order_items(connection, order_id)
-    if not lines:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Đơn bán chưa có món.",
-        )
-
-    for line in lines:
-        record_sale_consumption(
-            connection,
-            source_id=str(order_id),
-            source_line_id=str(int(line["id"])),
-            movement_time=paid_at,
-            sold_quantity=float(line["quantity"]),
-            menu_item_option_id=(
-                int(line["menu_item_option_id"])
-                if line["menu_item_option_id"] is not None
-                else None
-            ),
-            menu_item_id=(
-                int(line["menu_item_id"])
-                if line["menu_item_id"] is not None
-                else None
-            ),
         )
 
     payment_reference: str | None = None
@@ -995,6 +1025,11 @@ def create_order(payload: SaleOrderInput) -> SaleOrderOutput:
             "UPDATE sales_orders SET total_amount = ? WHERE id = ?",
             (total, order_id),
         )
+        record_order_stock(
+            connection,
+            order_id,
+            movement_time=order_time,
+        )
         connection.commit()
 
         row = select_order(connection, order_id)
@@ -1038,7 +1073,9 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
         )
 
         if was_paid:
-            reverse_paid_effects(
+            reverse_payment_effects(connection, existing)
+        if bool(existing["stock_deducted"]):
+            reverse_stock_effects(
                 connection,
                 existing,
                 changed_at,
@@ -1100,6 +1137,12 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             ),
         )
 
+        record_order_stock(
+            connection,
+            order_id,
+            movement_time=changed_at,
+        )
+
         if was_paid:
             fund_account_id = (
                 payload.fund_account_id
@@ -1151,6 +1194,13 @@ def pay_order(order_id: int, payload: SalePaymentInput) -> SaleOrderOutput:
                 detail="Đơn bán không còn ở trạng thái chờ thanh toán.",
             )
 
+        if not bool(order["stock_deducted"]):
+            record_order_stock(
+                connection,
+                order_id,
+                movement_time=paid_at,
+            )
+
         apply_payment(
             connection,
             order_id,
@@ -1192,7 +1242,9 @@ def void_order(
         ensure_not_invoiced(order)
 
         if order["status"] == "PAID":
-            reverse_paid_effects(
+            reverse_payment_effects(connection, order)
+        if bool(order["stock_deducted"]):
+            reverse_stock_effects(
                 connection,
                 order,
                 voided_at,
