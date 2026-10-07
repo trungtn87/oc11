@@ -18,6 +18,7 @@ from .items import router as items_router
 from .menu import router as menu_router
 from .inventory import router as inventory_router
 from .purchase_receipts import router as purchase_receipts_router
+from .pos import router as pos_router
 from .sales import router as sales_router
 from .suppliers import router as suppliers_router
 from .units import router as units_router
@@ -56,6 +57,7 @@ app.include_router(items_router)
 app.include_router(menu_router)
 app.include_router(inventory_router)
 app.include_router(purchase_receipts_router)
+app.include_router(pos_router)
 app.include_router(sales_router)
 app.include_router(suppliers_router)
 app.include_router(units_router)
