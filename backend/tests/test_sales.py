@@ -158,7 +158,23 @@ def test_paid_sale_records_money_and_deducts_stock_then_void_restores_all(
         order = created.json()
         assert order["status"] == "OPEN"
         assert order["total_amount"] == 300_000
-        assert order["stock_deducted"] is False
+        assert order["stock_deducted"] is True
+
+        stock_before_payment = client.get("/api/inventory/stock").json()
+        mực_before_payment = next(
+            row for row in stock_before_payment
+            if row["item_id"] == ids["item_id"]
+        )
+        assert mực_before_payment["stock_quantity"] == 9
+
+        funds_before_payment = client.get(
+            "/api/fund-accounts?type=CASH"
+        ).json()
+        fund_before_payment = next(
+            row for row in funds_before_payment
+            if row["id"] == ids["fund_account_id"]
+        )
+        assert fund_before_payment["current_balance"] == 0
 
         paid = client.post(
             f"/api/sales/orders/{order['id']}/pay",
@@ -229,7 +245,7 @@ def test_paid_sale_records_money_and_deducts_stock_then_void_restores_all(
         assert payments == [(299_000, 1)]
 
 
-def test_sale_payment_is_rolled_back_when_menu_has_no_stock_recipe(
+def test_sale_save_is_rolled_back_when_menu_has_no_stock_recipe(
     tmp_path,
     monkeypatch,
 ):
@@ -250,23 +266,11 @@ def test_sale_payment_is_rolled_back_when_menu_has_no_stock_recipe(
                 ]
             },
         )
-        assert created.status_code == 201
-        order = created.json()
+        assert created.status_code == 409
+        assert "nguyên liệu" in created.json()["detail"].lower()
 
-        paid = client.post(
-            f"/api/sales/orders/{order['id']}/pay",
-            json={
-                "fund_account_id": ids["fund_account_id"],
-                "actual_received_amount": 150_000,
-            },
-        )
-        assert paid.status_code == 409
-        assert "nguyên liệu" in paid.json()["detail"].lower()
-
-        fresh = client.get(f"/api/sales/orders/{order['id']}")
-        assert fresh.status_code == 200
-        assert fresh.json()["status"] == "OPEN"
-        assert fresh.json()["stock_deducted"] is False
+        orders = client.get("/api/sales/orders").json()
+        assert orders == []
 
         funds = client.get("/api/fund-accounts?type=CASH").json()
         fund = next(row for row in funds if row["id"] == ids["fund_account_id"])
@@ -278,11 +282,177 @@ def test_sale_payment_is_rolled_back_when_menu_has_no_stock_recipe(
             SELECT COUNT(*)
             FROM inventory_movements
             WHERE source_type = 'SALE'
-              AND source_id = ?
-            """,
-            (str(order["id"]),),
+            """
         ).fetchone()[0]
         payment_count = connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM fund_transactions
+            WHERE source_type = 'SALE'
+            """
+        ).fetchone()[0]
+        order_count = connection.execute(
+            "SELECT COUNT(*) FROM sales_orders"
+        ).fetchone()[0]
+
+        assert sale_count == 0
+        assert payment_count == 0
+        assert order_count == 0
+
+
+def test_unpaid_sale_can_be_edited_then_paid_later_and_filtered(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "order_time": "2026-10-07T12:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 2,
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+        assert order["status"] == "OPEN"
+        assert order["stock_deducted"] is True
+
+        open_orders = client.get("/api/sales/orders?status=OPEN")
+        assert open_orders.status_code == 200
+        assert [row["id"] for row in open_orders.json()] == [order["id"]]
+
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9
+
+        edited = client.put(
+            f"/api/sales/orders/{order['id']}",
+            json={
+                "order_time": "2026-10-07T12:00:00",
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ],
+            },
+        )
+        assert edited.status_code == 200
+        edited_order = edited.json()
+        assert edited_order["status"] == "OPEN"
+        assert edited_order["total_amount"] == 150_000
+        assert edited_order["stock_deducted"] is True
+
+        stock_after_edit = client.get("/api/inventory/stock").json()
+        mực_after_edit = next(
+            row for row in stock_after_edit
+            if row["item_id"] == ids["item_id"]
+        )
+        assert mực_after_edit["stock_quantity"] == 9.5
+
+        funds_before_payment = client.get(
+            "/api/fund-accounts?type=CASH"
+        ).json()
+        fund_before_payment = next(
+            row for row in funds_before_payment
+            if row["id"] == ids["fund_account_id"]
+        )
+        assert fund_before_payment["current_balance"] == 0
+
+        paid = client.post(
+            f"/api/sales/orders/{order['id']}/pay",
+            json={
+                "fund_account_id": ids["fund_account_id"],
+                "actual_received_amount": 149_000,
+            },
+        )
+        assert paid.status_code == 200
+        paid_order = paid.json()
+        assert paid_order["status"] == "PAID"
+        assert paid_order["actual_received_amount"] == 149_000
+
+        stock_after_payment = client.get("/api/inventory/stock").json()
+        mực_after_payment = next(
+            row for row in stock_after_payment
+            if row["item_id"] == ids["item_id"]
+        )
+        assert mực_after_payment["stock_quantity"] == 9.5
+
+        paid_orders = client.get("/api/sales/orders?status=PAID")
+        assert paid_orders.status_code == 200
+        assert [row["id"] for row in paid_orders.json()] == [order["id"]]
+
+        open_after_payment = client.get("/api/sales/orders?status=OPEN")
+        assert open_after_payment.status_code == 200
+        assert open_after_payment.json() == []
+
+        funds_after_payment = client.get(
+            "/api/fund-accounts?type=CASH"
+        ).json()
+        fund_after_payment = next(
+            row for row in funds_after_payment
+            if row["id"] == ids["fund_account_id"]
+        )
+        assert fund_after_payment["current_balance"] == 149_000
+
+
+def test_unpaid_sale_delete_restores_stock_without_creating_money_entry(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "items": [
+                    {
+                        "menu_item_id": ids["menu_item_id"],
+                        "quantity": 1,
+                    }
+                ]
+            },
+        )
+        assert created.status_code == 201
+        order = created.json()
+
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9.5
+
+        deleted = client.delete(
+            f"/api/sales/orders/{order['id']}?reason=Khách hủy trước thanh toán"
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["status"] == "VOID"
+
+        stock_after_delete = client.get("/api/inventory/stock").json()
+        mực_after_delete = next(
+            row for row in stock_after_delete
+            if row["item_id"] == ids["item_id"]
+        )
+        assert mực_after_delete["stock_quantity"] == 10
+
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        fund = next(row for row in funds if row["id"] == ids["fund_account_id"])
+        assert fund["current_balance"] == 0
+
+    with sqlite3.connect(db_path) as connection:
+        payments = connection.execute(
             """
             SELECT COUNT(*)
             FROM fund_transactions
@@ -291,9 +461,8 @@ def test_sale_payment_is_rolled_back_when_menu_has_no_stock_recipe(
             """,
             (str(order["id"]),),
         ).fetchone()[0]
+        assert payments == 0
 
-        assert sale_count == 0
-        assert payment_count == 0
 
 def test_sale_surcharges_are_added_to_total_without_extra_stock_deduction(
     tmp_path,
