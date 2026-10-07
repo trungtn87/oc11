@@ -99,6 +99,8 @@ export function SalesPosPage({
   const [fundAccountId, setFundAccountId] = useState<number>();
   const [actualReceived, setActualReceived] = useState<number>(0);
   const [actualTouched, setActualTouched] = useState(false);
+  const [editPaymentStatus, setEditPaymentStatus] =
+    useState<"PAID" | "DEBT">("DEBT");
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [orderSurcharges, setOrderSurcharges] = useState<CartSurcharge[]>([]);
   const [surchargeTarget, setSurchargeTarget] = useState<
@@ -211,6 +213,9 @@ export function SalesPosPage({
       setFundAccountId(paidAccount.id);
     }
 
+    setEditPaymentStatus(
+      editingOrder.status === "PAID" ? "PAID" : "DEBT"
+    );
     setActualReceived(
       editingOrder.actual_received_amount ?? editingOrder.total_amount
     );
@@ -408,7 +413,8 @@ export function SalesPosPage({
     }
 
     const needsPaymentAccount =
-      editingOrder?.status === "PAID" || (!editingOrder && payNow);
+      (editingOrder && editPaymentStatus === "PAID") ||
+      (!editingOrder && payNow);
     if (needsPaymentAccount && !fundAccountId) {
       messageApi.warning("Chọn quỹ/tài khoản nhận tiền.");
       return;
@@ -431,10 +437,13 @@ export function SalesPosPage({
         name: surcharge.name,
         amount: surcharge.amount
       })),
+      payment_status: editingOrder ? editPaymentStatus : null,
       fund_account_id:
-        editingOrder?.status === "PAID" ? fundAccountId ?? null : null,
+        editingOrder && editPaymentStatus === "PAID"
+          ? fundAccountId ?? null
+          : null,
       actual_received_amount:
-        editingOrder?.status === "PAID"
+        editingOrder && editPaymentStatus === "PAID"
           ? Math.round(actualReceived)
           : null
     };
@@ -447,7 +456,7 @@ export function SalesPosPage({
         messageApi.success(
           updated.status === "PAID"
             ? `Đã cập nhật ${updated.order_code}. Tiền và kho đã được cân lại tự động.`
-            : `Đã cập nhật ${updated.order_code}. Kho đã được cân lại, đơn vẫn chưa thanh toán.`
+            : `Đã cập nhật ${updated.order_code} thành nợ/chưa thanh toán. Tiền đã được đảo khỏi quỹ nếu trước đó đã thu.`
         );
         onEditDone?.();
         return;
@@ -698,60 +707,87 @@ export function SalesPosPage({
               <strong>{money(total)} đ</strong>
             </div>
 
-            <div className="sales-payment-grid">
+            {editingOrder && (
               <label>
-                <span>Loại tiền</span>
+                <span>Trạng thái thanh toán</span>
                 <Select
-                  value={accountType}
-                  onChange={changeAccountType}
+                  value={editPaymentStatus}
+                  onChange={(value: "PAID" | "DEBT") => {
+                    setEditPaymentStatus(value);
+                    if (value === "PAID" && actualReceived <= 0) {
+                      setActualReceived(Math.round(total));
+                    }
+                  }}
                   options={[
-                    { value: "CASH", label: "Tiền mặt" },
-                    { value: "BANK", label: "Chuyển khoản" }
+                    { value: "PAID", label: "Đã thanh toán" },
+                    { value: "DEBT", label: "Nợ / Chưa thanh toán" }
                   ]}
                 />
               </label>
-              <label>
-                <span>Quỹ / tài khoản</span>
-                <Select
-                  value={fundAccountId}
-                  onChange={setFundAccountId}
-                  placeholder="Chọn quỹ"
-                  options={activeAccounts.map((account) => ({
-                    value: account.id,
-                    label: account.name
-                  }))}
-                />
-              </label>
-            </div>
+            )}
 
-            <div className="sales-actual-row">
-              <span>Tiền thực thu</span>
-              <InputNumber<number>
-                min={0}
-                precision={0}
-                value={actualReceived}
-                onChange={(value) => {
-                  setActualTouched(true);
-                  setActualReceived(Number(value ?? 0));
-                }}
-                formatter={(value) =>
-                  value === undefined || value === null
-                    ? ""
-                    : money(Number(value))
-                }
-                parser={(value) =>
-                  Number((value ?? "").replace(/[^0-9]/g, ""))
-                }
-              />
-            </div>
+            {(!editingOrder || editPaymentStatus === "PAID") ? (
+              <>
+                <div className="sales-payment-grid">
+                  <label>
+                    <span>Loại tiền</span>
+                    <Select
+                      value={accountType}
+                      onChange={changeAccountType}
+                      options={[
+                        { value: "CASH", label: "Tiền mặt" },
+                        { value: "BANK", label: "Chuyển khoản" }
+                      ]}
+                    />
+                  </label>
+                  <label>
+                    <span>Quỹ / tài khoản</span>
+                    <Select
+                      value={fundAccountId}
+                      onChange={setFundAccountId}
+                      placeholder="Chọn quỹ"
+                      options={activeAccounts.map((account) => ({
+                        value: account.id,
+                        label: account.name
+                      }))}
+                    />
+                  </label>
+                </div>
 
-            <div className="sales-rounding-row">
-              <Text type="secondary">Chênh lệch làm tròn</Text>
-              <Text>
-                {actualReceived - total > 0 ? "+" : ""}
-                {money(actualReceived - total)} đ
+                <div className="sales-actual-row">
+                  <span>Tiền thực thu</span>
+                  <InputNumber<number>
+                    min={0}
+                    precision={0}
+                    value={actualReceived}
+                    onChange={(value) => {
+                      setActualTouched(true);
+                      setActualReceived(Number(value ?? 0));
+                    }}
+                    formatter={(value) =>
+                      value === undefined || value === null
+                        ? ""
+                        : money(Number(value))
+                    }
+                    parser={(value) =>
+                      Number((value ?? "").replace(/[^0-9]/g, ""))
+                    }
+                  />
+                </div>
+
+                <div className="sales-rounding-row">
+                  <Text type="secondary">Chênh lệch làm tròn</Text>
+                  <Text>
+                    {actualReceived - total > 0 ? "+" : ""}
+                    {money(actualReceived - total)} đ
+                  </Text>
+                </div>
+              </>
+            ) : (
+              <Text type="secondary">
+                Đơn nợ vẫn giữ nguyên phần kho đã bán, chưa ghi tiền vào quỹ/tài khoản.
               </Text>
-            </div>
+            )}
 
             {editingOrder ? (
               <Button
@@ -917,7 +953,7 @@ export function SalesOrdersPage({
   const statusTag = (status: SaleOrder["status"]) => {
     if (status === "PAID") return <Tag color="success">Đã thanh toán</Tag>;
     if (status === "VOID") return <Tag>Đã hủy</Tag>;
-    return <Tag color="warning">Chưa thanh toán</Tag>;
+    return <Tag color="warning">Nợ / Chưa thanh toán</Tag>;
   };
 
   const activePaymentAccounts = useMemo(
@@ -1166,7 +1202,7 @@ export function SalesOrdersPage({
           options={[
             { value: "ALL", label: "Tất cả trạng thái" },
             { value: "PAID", label: "Đã thanh toán" },
-            { value: "OPEN", label: "Chưa thanh toán" },
+            { value: "OPEN", label: "Nợ / Chưa thanh toán" },
             { value: "VOID", label: "Đã hủy" }
           ]}
         />
