@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -35,6 +36,7 @@ class SaleOrderInput(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     items: list[SaleOrderItemInput] = Field(min_length=1)
     surcharges: list[SaleSurchargeInput] = Field(default_factory=list)
+    payment_status: Literal["PAID", "DEBT"] | None = None
     fund_account_id: int | None = None
     actual_received_amount: int | None = Field(default=None, ge=0)
 
@@ -1061,6 +1063,11 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
         ensure_customer(connection, payload.customer_id)
 
         was_paid = existing["status"] == "PAID"
+        should_be_paid = (
+            was_paid
+            if payload.payment_status is None
+            else payload.payment_status == "PAID"
+        )
         old_fund_account_id = (
             int(existing["fund_account_id"])
             if existing["fund_account_id"] is not None
@@ -1143,7 +1150,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             movement_time=changed_at,
         )
 
-        if was_paid:
+        if should_be_paid:
             fund_account_id = (
                 payload.fund_account_id
                 if payload.fund_account_id is not None
@@ -1152,7 +1159,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             if fund_account_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Đơn đã thanh toán cần quỹ/tài khoản nhận tiền.",
+                    detail="Đơn thanh toán cần quỹ/tài khoản nhận tiền.",
                 )
             actual_received = (
                 payload.actual_received_amount
