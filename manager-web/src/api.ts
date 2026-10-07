@@ -37,6 +37,8 @@ import type {
   SaleOrder,
   SaleOrderInput,
   SalePaymentInput,
+  SurchargePreset,
+  SurchargePresetInput,
   RestaurantArea,
   RestaurantAreaInput,
   RestaurantTable,
@@ -586,6 +588,36 @@ export function voidSaleOrder(
     : "";
   return request<SaleOrder>(`/api/sales/orders/${id}/void${query}`, {
     method: "POST"
+  });
+}
+
+
+export function getSurchargePresets(): Promise<SurchargePreset[]> {
+  return request<SurchargePreset[]>("/api/sales/surcharges");
+}
+
+export function createSurchargePreset(
+  payload: SurchargePresetInput
+): Promise<SurchargePreset> {
+  return request<SurchargePreset>("/api/sales/surcharges", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSurchargePreset(
+  id: number,
+  payload: SurchargePresetInput
+): Promise<SurchargePreset> {
+  return request<SurchargePreset>(`/api/sales/surcharges/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteSurchargePreset(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/sales/surcharges/${id}`, {
+    method: "DELETE"
   });
 }
 
