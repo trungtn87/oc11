@@ -46,6 +46,11 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed --name OC11 --add-data "manager-web/dist;static" launcher.py
 
+      - name: Build OC11-POS.exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name OC11-POS pos_launcher.py
+
       - name: Smoke test OC11.exe
         shell: pwsh
         run: |
@@ -194,6 +199,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "portable/OC11-Portable/data" | Out-Null
           Copy-Item "dist/OC11.exe" "portable/OC11-Portable/OC11.exe"
+          Copy-Item "dist/OC11-POS.exe" "portable/OC11-Portable/OC11-POS.exe"
 
           @"
           OC11 Portable
@@ -201,8 +207,14 @@ jobs:
 
           Cach dung:
           1. Giai nen file OC11-Portable.zip vao mot thu muc tren Windows.
-          2. Chay OC11.exe.
-          3. Trinh duyet se tu mo trang quan ly tai http://127.0.0.1:8000
+          2. Chay OC11.exe de mo trang quan ly.
+          3. Chay OC11-POS.exe de mo app ban hang PC. POS se tu khoi dong OC11.exe ngam neu backend chua chay.
+          4. POS dung bo cuc Order / So do / Ban hang va dung chung database voi web quan ly.
+
+          Gui bep:
+          - Vao Web quan ly > Cai dat > May in bep.
+          - Chon may in Windows va bam In thu.
+          - Tren POS bam "Gui bep" de in bill mon xuong bep.
 
           Du lieu:
           - Database chinh nam tai data/oc11.db.
