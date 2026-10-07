@@ -16,9 +16,11 @@ import type { TableProps } from "antd";
 
 import {
   createSaleOrder,
+  createSurchargePreset,
   getFundAccounts,
   getMenuItems,
   getSaleOrders,
+  getSurchargePresets,
   paySaleOrder,
   updateSaleOrder,
   voidSaleOrder
@@ -28,7 +30,8 @@ import type {
   FundAccountType,
   MenuItem,
   MenuItemOption,
-  SaleOrder
+  SaleOrder,
+  SurchargePreset
 } from "./types";
 
 const { Title, Text } = Typography;
@@ -153,6 +156,7 @@ export function SalesPosPage({
 }) {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
+  const [surchargePresets, setSurchargePresets] = useState<SurchargePreset[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [search, setSearch] = useState("");
   const [group, setGroup] = useState<string>("ALL");
@@ -169,6 +173,7 @@ export function SalesPosPage({
   >(null);
   const [surchargeName, setSurchargeName] = useState("");
   const [surchargeAmount, setSurchargeAmount] = useState<number>(0);
+  const [surchargePresetId, setSurchargePresetId] = useState<number>();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadedEditOrderId, setLoadedEditOrderId] = useState<number | null>(null);
@@ -182,13 +187,15 @@ export function SalesPosPage({
     async function load() {
       setLoading(true);
       try {
-        const [menu, funds] = await Promise.all([
+        const [menu, funds, presets] = await Promise.all([
           getMenuItems(),
-          getFundAccounts()
+          getFundAccounts(),
+          getSurchargePresets()
         ]);
         if (cancelled) return;
         setMenuItems(menu.filter((item) => item.is_active));
         setAccounts(funds);
+        setSurchargePresets(presets);
         const preferred =
           funds.find(
             (account) =>
@@ -294,6 +301,18 @@ export function SalesPosPage({
     onEditDone
   ]);
 
+  useEffect(() => {
+    if (editingOrder || loadedEditOrderId === null) return;
+
+    setCart([]);
+    setOrderSurcharges([]);
+    setActualTouched(false);
+    setActualReceived(0);
+    setEditPaymentStatus("DEBT");
+    setOrderTimeLocal(toLocalDateTimeInput(new Date()));
+    setLoadedEditOrderId(null);
+  }, [editingOrder, loadedEditOrderId]);
+
   const groups = useMemo(
     () =>
       Array.from(
@@ -389,18 +408,35 @@ export function SalesPosPage({
   };
 
   const openItemSurcharge = (lineKey: string) => {
+    setSurchargePresetId(undefined);
     setSurchargeName("");
     setSurchargeAmount(0);
     setSurchargeTarget({ type: "ITEM", lineKey });
   };
 
   const openOrderSurcharge = () => {
+    setSurchargePresetId(undefined);
     setSurchargeName("");
     setSurchargeAmount(0);
     setSurchargeTarget({ type: "ORDER" });
   };
 
-  const addSurcharge = () => {
+  const selectSurchargePreset = (presetId: number | undefined) => {
+    setSurchargePresetId(presetId);
+    const preset = surchargePresets.find((item) => item.id === presetId);
+    if (preset) {
+      setSurchargeName(preset.name);
+      setSurchargeAmount(preset.amount);
+    }
+  };
+
+  const startNewSurcharge = () => {
+    setSurchargePresetId(undefined);
+    setSurchargeName("");
+    setSurchargeAmount(0);
+  };
+
+  const addSurcharge = async () => {
     const name = surchargeName.trim();
     const amount = Math.round(Number(surchargeAmount || 0));
     if (!name) {
@@ -410,6 +446,26 @@ export function SalesPosPage({
     if (amount <= 0) {
       messageApi.warning("Số tiền phụ thu phải lớn hơn 0.");
       return;
+    }
+
+    const knownPreset = surchargePresets.find(
+      (item) => item.name.trim().toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+    );
+    if (!knownPreset) {
+      try {
+        const saved = await createSurchargePreset({ name, amount });
+        setSurchargePresets((current) => {
+          const exists = current.some((item) => item.id === saved.id);
+          return exists ? current : [...current, saved].sort((a, b) =>
+            a.name.localeCompare(b.name, "vi")
+          );
+        });
+      } catch (error) {
+        messageApi.error(
+          error instanceof Error ? error.message : "Không lưu được phụ thu dùng nhanh."
+        );
+        return;
+      }
     }
 
     const surcharge: CartSurcharge = {
@@ -431,6 +487,7 @@ export function SalesPosPage({
     }
 
     setSurchargeTarget(null);
+    setSurchargePresetId(undefined);
     setSurchargeName("");
     setSurchargeAmount(0);
   };
@@ -941,10 +998,35 @@ export function SalesPosPage({
         }
         okText="Thêm phụ thu"
         cancelText="Hủy"
-        onOk={addSurcharge}
+        onOk={() => void addSurcharge()}
         onCancel={() => setSurchargeTarget(null)}
       >
         <div className="sales-surcharge-form">
+          <label>
+            <span>Phụ thu đã lưu</span>
+            <Space.Compact style={{ width: "100%" }}>
+              <Select
+                style={{ width: "100%" }}
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="Chọn phụ thu đã dùng"
+                value={surchargePresetId}
+                onChange={selectSurchargePreset}
+                options={surchargePresets.map((preset) => ({
+                  value: preset.id,
+                  label: `${preset.name} - ${money(preset.amount)} đ`
+                }))}
+              />
+              <Button
+                aria-label="Tạo phụ thu mới"
+                title="Tạo phụ thu mới"
+                onClick={startNewSurcharge}
+              >
+                +
+              </Button>
+            </Space.Compact>
+          </label>
           <label>
             <span>Tên phụ thu</span>
             <Input
@@ -953,7 +1035,7 @@ export function SalesPosPage({
               maxLength={120}
               placeholder="VD: Thêm sốt, thêm phô mai..."
               onChange={(event) => setSurchargeName(event.target.value)}
-              onPressEnter={addSurcharge}
+              onPressEnter={() => void addSurcharge()}
             />
           </label>
           <label>
