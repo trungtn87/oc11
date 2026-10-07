@@ -52,6 +52,7 @@ jobs:
           $env:OC11_NO_BROWSER = "1"
           $env:OC11_NO_STARTUP_REGISTER = "1"
           $process = Start-Process -FilePath "dist/OC11.exe" -PassThru -WindowStyle Hidden
+          $runtimePid = $null
           try {
             $healthy = $false
             for ($i = 0; $i -lt 30; $i++) {
@@ -70,14 +71,24 @@ jobs:
               throw "OC11.exe did not become healthy."
             }
 
+            $runtime = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/runtime" -TimeoutSec 5
+            $runtimePid = [int]$runtime.pid
+
             $backup = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/backup/status" -TimeoutSec 5
             if (-not $backup.folder) {
               throw "Backup API did not return a backup folder."
             }
           } finally {
-            if ($process -and -not $process.HasExited) {
-              Stop-Process -Id $process.Id -Force
+            if ($runtimePid) {
+              Stop-Process -Id $runtimePid -Force -ErrorAction SilentlyContinue
             }
+            if ($process) {
+              $process.Refresh()
+              if (-not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            Start-Sleep -Seconds 1
           }
 
       - name: Smoke test upgrade takeover
@@ -118,6 +129,7 @@ jobs:
           $env:OC11_NO_STARTUP_REGISTER = "1"
           $legacy = Start-Process -FilePath "python" -ArgumentList "legacy-oc11.py" -PassThru -WindowStyle Hidden
           $current = $null
+          $currentRuntimePid = $null
 
           try {
             $legacyReady = $false
@@ -144,6 +156,7 @@ jobs:
               try {
                 $runtime = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/runtime" -TimeoutSec 2
                 if ($runtime.app -eq "OC11" -and [int]$runtime.pid -ne $legacy.Id) {
+                  $currentRuntimePid = [int]$runtime.pid
                   $takenOver = $true
                   break
                 }
@@ -160,15 +173,18 @@ jobs:
               throw "Legacy OC11 process is still running after takeover."
             }
           } finally {
+            if ($currentRuntimePid) {
+              Stop-Process -Id $currentRuntimePid -Force -ErrorAction SilentlyContinue
+            }
             if ($current) {
               $current.Refresh()
               if (-not $current.HasExited) {
-                Stop-Process -Id $current.Id -Force
+                Stop-Process -Id $current.Id -Force -ErrorAction SilentlyContinue
               }
             }
             $legacy.Refresh()
             if (-not $legacy.HasExited) {
-              Stop-Process -Id $legacy.Id -Force
+              Stop-Process -Id $legacy.Id -Force -ErrorAction SilentlyContinue
             }
             Remove-Item "legacy-oc11.py" -ErrorAction SilentlyContinue
           }
