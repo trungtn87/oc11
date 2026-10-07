@@ -32,6 +32,9 @@ class SaleOrderItemInput(BaseModel):
 
 class SaleOrderInput(BaseModel):
     order_time: str | None = None
+    order_type: Literal["DINE_IN", "TAKEAWAY"] | None = None
+    table_id: int | None = None
+    guest_count: int | None = Field(default=None, ge=0)
     customer_id: int | None = None
     note: str | None = Field(default=None, max_length=500)
     items: list[SaleOrderItemInput] = Field(min_length=1)
@@ -75,6 +78,13 @@ class SaleOrderOutput(BaseModel):
     order_code: str
     order_time: str
     status: str
+    order_type: str
+    table_id: int | None
+    table_name: str | None
+    area_id: int | None
+    area_name: str | None
+    guest_count: int
+    kitchen_sent_at: str | None
     customer_id: int | None
     customer_name: str | None
     fund_account_id: int | None
@@ -136,6 +146,62 @@ def next_receipt_reference(connection: sqlite3.Connection, transaction_time: str
         (pattern,),
     ).fetchone()
     return f"PT-{day_key}-{int(row['total']) + 1:03d}"
+
+
+def ensure_table_for_order(
+    connection: sqlite3.Connection,
+    *,
+    order_type: str,
+    table_id: int | None,
+    excluding_order_id: int | None = None,
+) -> int | None:
+    if order_type == "TAKEAWAY":
+        return None
+    if table_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Đơn tại bàn cần chọn bàn.",
+        )
+
+    table = connection.execute(
+        """
+        SELECT rt.id
+        FROM restaurant_tables AS rt
+        JOIN restaurant_areas AS ra ON ra.id = rt.area_id
+        WHERE rt.id = ?
+          AND rt.is_active = 1
+          AND ra.is_active = 1
+        """,
+        (table_id,),
+    ).fetchone()
+    if table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy bàn đang hoạt động.",
+        )
+
+    params: list[object] = [table_id]
+    exclude_sql = ""
+    if excluding_order_id is not None:
+        exclude_sql = " AND id <> ?"
+        params.append(excluding_order_id)
+    occupied = connection.execute(
+        f"""
+        SELECT order_code
+        FROM sales_orders
+        WHERE table_id = ?
+          AND status = 'OPEN'
+          {exclude_sql}
+        LIMIT 1
+        """,
+        tuple(params),
+    ).fetchone()
+    if occupied is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Bàn đang có đơn {occupied['order_code']}.",
+        )
+    return table_id
 
 
 def ensure_customer(
@@ -384,6 +450,13 @@ def select_order(
             so.order_code,
             so.order_time,
             so.status,
+            so.order_type,
+            so.table_id,
+            rt.name AS table_name,
+            ra.id AS area_id,
+            ra.name AS area_name,
+            so.guest_count,
+            so.kitchen_sent_at,
             so.customer_id,
             c.name AS customer_name,
             so.fund_account_id,
@@ -418,6 +491,8 @@ def select_order(
         FROM sales_orders AS so
         LEFT JOIN customers AS c ON c.id = so.customer_id
         LEFT JOIN fund_accounts AS fa ON fa.id = so.fund_account_id
+        LEFT JOIN restaurant_tables AS rt ON rt.id = so.table_id
+        LEFT JOIN restaurant_areas AS ra ON ra.id = rt.area_id
         WHERE so.id = ?
         """,
         (order_id,),
@@ -555,6 +630,13 @@ def order_to_output(
         order_code=row["order_code"],
         order_time=row["order_time"],
         status=row["status"],
+        order_type=row["order_type"],
+        table_id=(int(row["table_id"]) if row["table_id"] is not None else None),
+        table_name=row["table_name"],
+        area_id=(int(row["area_id"]) if row["area_id"] is not None else None),
+        area_name=row["area_name"],
+        guest_count=int(row["guest_count"] or 0),
+        kitchen_sent_at=row["kitchen_sent_at"],
         customer_id=(
             int(row["customer_id"]) if row["customer_id"] is not None else None
         ),
@@ -939,10 +1021,15 @@ def list_orders(
 
     if search and search.strip():
         conditions.append(
-            "(so.order_code LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE)"
+            "("
+            "so.order_code LIKE ? COLLATE NOCASE "
+            "OR c.name LIKE ? COLLATE NOCASE "
+            "OR rt.name LIKE ? COLLATE NOCASE "
+            "OR ra.name LIKE ? COLLATE NOCASE"
+            ")"
         )
         value = f"%{search.strip()}%"
-        params.extend([value, value])
+        params.extend([value, value, value, value])
 
     if from_date:
         conditions.append("date(so.order_time) >= date(?)")
@@ -959,6 +1046,8 @@ def list_orders(
             SELECT so.id
             FROM sales_orders AS so
             LEFT JOIN customers AS c ON c.id = so.customer_id
+            LEFT JOIN restaurant_tables AS rt ON rt.id = so.table_id
+            LEFT JOIN restaurant_areas AS ra ON ra.id = rt.area_id
             {where}
             ORDER BY so.order_time DESC, so.id DESC
             """,
@@ -994,28 +1083,51 @@ def create_order(payload: SaleOrderInput) -> SaleOrderOutput:
     order_time = normalize_datetime(payload.order_time)
     with connect() as connection:
         ensure_customer(connection, payload.customer_id)
-        order_code = next_order_code(connection)
-        cursor = connection.execute(
-            """
-            INSERT INTO sales_orders (
-                order_code,
-                order_time,
-                status,
-                customer_id,
-                total_amount,
-                note,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, 'OPEN', ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """,
-            (
-                order_code,
-                order_time,
-                payload.customer_id,
-                clean_text(payload.note),
-            ),
+        order_type = payload.order_type or (
+            "DINE_IN" if payload.table_id is not None else "TAKEAWAY"
         )
+        table_id = ensure_table_for_order(
+            connection,
+            order_type=order_type,
+            table_id=payload.table_id,
+        )
+        guest_count = int(payload.guest_count or 0)
+        order_code = next_order_code(connection)
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO sales_orders (
+                    order_code,
+                    order_time,
+                    status,
+                    order_type,
+                    table_id,
+                    guest_count,
+                    customer_id,
+                    total_amount,
+                    note,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, 'OPEN', ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    order_code,
+                    order_time,
+                    order_type,
+                    table_id,
+                    guest_count,
+                    payload.customer_id,
+                    clean_text(payload.note),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if table_id is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Bàn vừa được mở bởi một đơn khác.",
+                ) from exc
+            raise
         order_id = int(cursor.lastrowid)
         total = insert_order_items(connection, order_id, payload.items)
         total += insert_order_surcharges(
@@ -1061,6 +1173,28 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
 
         ensure_not_invoiced(existing)
         ensure_customer(connection, payload.customer_id)
+
+        order_type = payload.order_type or existing["order_type"]
+        candidate_table_id = (
+            payload.table_id
+            if payload.table_id is not None or payload.order_type is not None
+            else (
+                int(existing["table_id"])
+                if existing["table_id"] is not None
+                else None
+            )
+        )
+        table_id = ensure_table_for_order(
+            connection,
+            order_type=order_type,
+            table_id=candidate_table_id,
+            excluding_order_id=order_id,
+        )
+        guest_count = (
+            int(existing["guest_count"] or 0)
+            if payload.guest_count is None
+            else int(payload.guest_count)
+        )
 
         was_paid = existing["status"] == "PAID"
         should_be_paid = (
@@ -1123,6 +1257,10 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             UPDATE sales_orders
             SET order_time = ?,
                 status = 'OPEN',
+                order_type = ?,
+                table_id = ?,
+                guest_count = ?,
+                kitchen_sent_at = NULL,
                 customer_id = ?,
                 fund_account_id = NULL,
                 total_amount = ?,
@@ -1137,6 +1275,9 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             """,
             (
                 order_time,
+                order_type,
+                table_id,
+                guest_count,
                 payload.customer_id,
                 total,
                 clean_text(payload.note),

@@ -686,12 +686,68 @@ def init_db() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS restaurant_areas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_restaurant_areas_name
+            ON restaurant_areas (name COLLATE NOCASE)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS restaurant_tables (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                area_id INTEGER NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
+                seats INTEGER NOT NULL DEFAULT 4 CHECK (seats >= 0),
+                display_order INTEGER NOT NULL DEFAULT 0,
+                pos_x REAL NOT NULL DEFAULT 0,
+                pos_y REAL NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_active IN (0, 1)),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT,
+                FOREIGN KEY (area_id) REFERENCES restaurant_areas(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_restaurant_tables_area_name
+            ON restaurant_tables (area_id, name COLLATE NOCASE)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_restaurant_tables_area
+            ON restaurant_tables (area_id, is_active, display_order, id)
+            """
+        )
+
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS sales_orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_code TEXT NOT NULL UNIQUE,
                 order_time TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'OPEN'
                     CHECK (status IN ('OPEN', 'PAID', 'VOID')),
+                order_type TEXT NOT NULL DEFAULT 'TAKEAWAY'
+                    CHECK (order_type IN ('DINE_IN', 'TAKEAWAY')),
+                table_id INTEGER,
+                guest_count INTEGER NOT NULL DEFAULT 0
+                    CHECK (guest_count >= 0),
+                kitchen_sent_at TEXT,
                 customer_id INTEGER,
                 fund_account_id INTEGER,
                 total_amount INTEGER NOT NULL DEFAULT 0
@@ -709,7 +765,8 @@ def init_db() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT,
                 FOREIGN KEY (customer_id) REFERENCES customers(id),
-                FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id)
+                FOREIGN KEY (fund_account_id) REFERENCES fund_accounts(id),
+                FOREIGN KEY (table_id) REFERENCES restaurant_tables(id)
             )
             """
         )
@@ -728,7 +785,42 @@ def init_db() -> None:
                     REFERENCES customers(id)
                 """
             )
+        if "order_type" not in sales_order_columns:
+            connection.execute(
+                """
+                ALTER TABLE sales_orders
+                ADD COLUMN order_type TEXT NOT NULL DEFAULT 'TAKEAWAY'
+                    CHECK (order_type IN ('DINE_IN', 'TAKEAWAY'))
+                """
+            )
+        if "table_id" not in sales_order_columns:
+            connection.execute(
+                """
+                ALTER TABLE sales_orders
+                ADD COLUMN table_id INTEGER
+                    REFERENCES restaurant_tables(id)
+                """
+            )
+        if "guest_count" not in sales_order_columns:
+            connection.execute(
+                """
+                ALTER TABLE sales_orders
+                ADD COLUMN guest_count INTEGER NOT NULL DEFAULT 0
+                    CHECK (guest_count >= 0)
+                """
+            )
+        if "kitchen_sent_at" not in sales_order_columns:
+            connection.execute(
+                "ALTER TABLE sales_orders ADD COLUMN kitchen_sent_at TEXT"
+            )
 
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_orders_open_table
+            ON sales_orders (table_id)
+            WHERE status = 'OPEN' AND table_id IS NOT NULL
+            """
+        )
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_sales_orders_time_status
@@ -827,6 +919,30 @@ def init_db() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_sales_order_surcharges_order
             ON sales_order_surcharges (sales_order_id, id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kitchen_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sales_order_id INTEGER NOT NULL,
+                sent_at TEXT NOT NULL,
+                printer_name TEXT,
+                print_status TEXT NOT NULL
+                    CHECK (print_status IN ('PRINTED', 'FAILED')),
+                error_message TEXT,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sales_order_id)
+                    REFERENCES sales_orders(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_kitchen_tickets_order
+            ON kitchen_tickets (sales_order_id, sent_at, id)
             """
         )
 

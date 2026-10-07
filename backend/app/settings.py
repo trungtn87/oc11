@@ -38,6 +38,7 @@ def default_settings() -> dict:
         "backup_enabled": True,
         "backup_folder": str(default_backup_folder()),
         "google_drive_configured": False,
+        "kitchen_printer_name": "",
     }
 
 
