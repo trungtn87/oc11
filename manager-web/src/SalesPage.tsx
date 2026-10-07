@@ -1097,6 +1097,7 @@ export function SalesOrdersPage({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [fundAccountFilter, setFundAccountFilter] = useState<string>("ALL");
   const [period, setPeriod] = useState<SalesPeriod>("TODAY");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -1123,7 +1124,9 @@ export function SalesOrdersPage({
               ? undefined
               : (statusFilter as "OPEN" | "PAID" | "VOID"),
           from_date: range.from || undefined,
-          to_date: range.to || undefined
+          to_date: range.to || undefined,
+          fund_account_id:
+            fundAccountFilter === "ALL" ? undefined : Number(fundAccountFilter)
         }),
         getFundAccounts()
       ]);
@@ -1141,7 +1144,7 @@ export function SalesOrdersPage({
   useEffect(() => {
     if (period === "CUSTOM" && (!customFrom || !customTo)) return;
     void load();
-  }, [statusFilter, period, customFrom, customTo]);
+  }, [statusFilter, fundAccountFilter, period, customFrom, customTo]);
 
   const statusTag = (status: SaleOrder["status"]) => {
     if (status === "PAID") return <Tag color="success">Đã thanh toán</Tag>;
@@ -1446,6 +1449,18 @@ export function SalesOrdersPage({
             { value: "PAID", label: "Đã thanh toán" },
             { value: "OPEN", label: "Nợ / Chưa thanh toán" },
             { value: "VOID", label: "Đã hủy" }
+          ]}
+        />
+        <Select
+          value={fundAccountFilter}
+          onChange={setFundAccountFilter}
+          style={{ minWidth: 170 }}
+          options={[
+            { value: "ALL", label: "Tất cả tài khoản" },
+            ...accounts.map((account) => ({
+              value: String(account.id),
+              label: account.name
+            }))
           ]}
         />
         <Button onClick={() => void load()}>Làm mới</Button>
