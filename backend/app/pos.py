@@ -61,7 +61,7 @@ PrinterTarget = Literal["KITCHEN", "CASHIER", "BOTH"]
 class PosSettingsInput(BaseModel):
     kitchen_printer_name: str | None = Field(default="", max_length=300)
     cashier_printer_name: str | None = Field(default="", max_length=300)
-    send_kitchen_targets: PrinterTarget = "KITCHEN"
+    send_kitchen_targets: PrinterTarget = "BOTH"
     print_receipt_targets: PrinterTarget = "CASHIER"
 
 
@@ -510,7 +510,7 @@ def pos_settings_output(settings: dict) -> PosSettingsOutput:
     return PosSettingsOutput(
         kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
         cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
-        send_kitchen_targets=target("send_kitchen_targets", "KITCHEN"),
+        send_kitchen_targets="BOTH",
         print_receipt_targets=target("print_receipt_targets", "CASHIER"),
     )
 
@@ -525,7 +525,7 @@ def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings = load_settings()
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
     settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
-    settings["send_kitchen_targets"] = payload.send_kitchen_targets
+    settings["send_kitchen_targets"] = "BOTH"
     settings["print_receipt_targets"] = payload.print_receipt_targets
     save_settings(settings)
     return pos_settings_output(settings)
