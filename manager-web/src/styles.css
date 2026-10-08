@@ -2199,3 +2199,41 @@ body {
     justify-items: start;
   }
 }
+
+/* Sales: one shared debt workflow for Web and POS. */
+.sales-customer-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 12px 0;
+}
+.sales-customer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sales-customer-create {
+  display: grid;
+  gap: 12px;
+}
+.sales-customer-create label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sales-checkout-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.sales-checkout-choices .ant-btn {
+  padding-left: 4px;
+  padding-right: 4px;
+  white-space: normal;
+  height: auto;
+  min-height: 48px;
+}
+@media (max-width: 1100px) {
+  .sales-checkout-choices { grid-template-columns: 1fr; }
+}
