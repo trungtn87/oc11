@@ -10,6 +10,7 @@ import type {
   FundTransactionCategoryInput,
   InventoryItem,
   InventoryItemInput,
+  ItemPurchaseDefault,
   InventoryItemHistory,
   InventoryStock,
   StockAdjustment,
@@ -188,6 +189,10 @@ export function updateUnit(
 
 export function getInventoryItems(): Promise<InventoryItem[]> {
   return request<InventoryItem[]>("/api/items");
+}
+
+export function getItemPurchaseDefaults(): Promise<ItemPurchaseDefault[]> {
+  return request<ItemPurchaseDefault[]>("/api/items/purchase-defaults");
 }
 
 export function createInventoryItem(
