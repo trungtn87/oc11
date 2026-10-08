@@ -583,8 +583,8 @@ public static class Oc11Thermal80 {
                     e.Graphics.PageUnit = GraphicsUnit.Millimeter;
                     float y = 2.0f;
                     foreach (string line in lines) {
-                        bool isHeading = line.Trim() == "CHE BIEN" ||
-                                         line.Trim() == "KIEM DO";
+                        bool isHeading = line.Trim() == "CHẾ BIẾN" ||
+                                         line.Trim() == "KIỂM ĐỒ";
                         e.Graphics.DrawString(
                             line, isHeading ? heading : body,
                             Brushes.Black, 2.0f, y
