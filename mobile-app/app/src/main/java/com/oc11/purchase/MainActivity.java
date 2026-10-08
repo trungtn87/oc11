@@ -902,6 +902,53 @@ public class MainActivity extends Activity {
         dialog.show();
     }
 
+    private Long suggestedPurchasePrice(
+            JSONObject item,
+            JSONObject purchaseDefault,
+            JSONObject stock,
+            int unitId) {
+        if (purchaseDefault != null) {
+            JSONArray prices = purchaseDefault.optJSONArray("unit_prices");
+            if (prices == null) return null;
+            for (int i = 0; i < prices.length(); i++) {
+                JSONObject row = prices.optJSONObject(i);
+                if (row != null && row.optInt("unit_id") == unitId
+                        && row.has("suggested_unit_price")
+                        && !row.isNull("suggested_unit_price")) {
+                    return row.optLong("suggested_unit_price");
+                }
+            }
+            return null; // Real lack of history, not stale inventory cache.
+        }
+        // Compatibility with an old local cache before the first new sync.
+        return suggestedPurchasePrice(item, stock, unitId);
+    }
+
+    private String purchasePriceHint(
+            JSONObject stock,
+            JSONObject purchaseDefault,
+            Long suggested,
+            String unitName) {
+        String msg = stock == null
+                ? "Chưa có dữ liệu tồn"
+                : "Tồn trước: " +
+                  trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
+                  stock.optString("smallest_unit_name");
+        if (suggested == null) {
+            return msg + (purchaseDefault == null
+                    ? " • Bấm Đồng bộ để tải giá nhập gần nhất"
+                    : " • Chưa có giá nhập gần nhất, hãy nhập tay");
+        }
+        msg += " • Giá nhập gần nhất: " + MONEY.format(suggested) + " đ / " + unitName;
+        if (purchaseDefault != null) {
+            String receipt = purchaseDefault.optString("last_purchase_receipt_code", "");
+            if (!receipt.isEmpty()) msg += " (" + receipt + ")";
+        } else {
+            msg += " • Cần đồng bộ giá mới";
+        }
+        return msg;
+    }
+
     private Long suggestedPurchasePrice(JSONObject item, JSONObject stock, int unitId) {
         if (stock == null || stock.isNull("last_purchase_unit_price")
                 || !stock.has("last_purchase_unit_price")) return null;
