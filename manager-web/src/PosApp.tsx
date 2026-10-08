@@ -7,6 +7,28 @@ import "./PosApp.css";
 
 type PosView = "ORDERS" | "MAP";
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function defaultTablePosition(index: number) {
+  const columns = 5;
+  return {
+    x: 4 + (index % columns) * 19,
+    y: 6 + Math.floor(index / columns) * 19
+  };
+}
+
+function tablePosition(table: RestaurantTable, index: number) {
+  if (table.pos_x === 0 && table.pos_y === 0) {
+    return defaultTablePosition(index);
+  }
+  return {
+    x: clamp(table.pos_x, 0, 84),
+    y: clamp(table.pos_y, 0, 84)
+  };
+}
+
 export default function PosApp() {
   const [view, setView] = useState<PosView>("MAP");
   const [areas, setAreas] = useState<RestaurantArea[]>([]);
@@ -56,9 +78,12 @@ export default function PosApp() {
 
   const selectedArea =
     areas.find((area) => area.id === selectedAreaId) ?? null;
-  const areaTables = tables.filter(
-    (table) => table.area_id === selectedAreaId
-  );
+  const areaTables = tables
+    .filter((table) => table.area_id === selectedAreaId)
+    .sort(
+      (left, right) =>
+        left.display_order - right.display_order || left.id - right.id
+    );
   const totalEmpty = tables.filter((table) => !table.open_order_id).length;
   const areaEmpty = areaTables.filter((table) => !table.open_order_id).length;
 
@@ -95,56 +120,25 @@ export default function PosApp() {
         <div className="pos-topbar-spacer" />
 
         <div
-          style={{
-            position: "relative",
-            display: "flex",
-            alignItems: "stretch"
-          }}
+          className="pos-menu-wrap"
           onClick={(event) => event.stopPropagation()}
         >
           <button
             type="button"
+            className="pos-menu-button"
             aria-label="Menu"
             onClick={() => setMenuOpen((current) => !current)}
-            style={{
-              fontSize: 26,
-              lineHeight: 1,
-              padding: "0 22px"
-            }}
           >
             ☰
           </button>
 
           {menuOpen && (
-            <div
-              style={{
-                position: "absolute",
-                right: 8,
-                top: 48,
-                width: 190,
-                background: "#fff",
-                border: "1px solid #cfcfcf",
-                boxShadow: "0 4px 12px rgba(0,0,0,.18)",
-                zIndex: 50
-              }}
-            >
+            <div className="pos-menu-popup">
               <button
                 type="button"
                 onClick={() => {
                   setMenuOpen(false);
                   window.open("/", "_blank", "noopener,noreferrer");
-                }}
-                style={{
-                  width: "100%",
-                  height: 46,
-                  border: 0,
-                  background: "#fff",
-                  color: "#222",
-                  textAlign: "left",
-                  padding: "0 16px",
-                  fontSize: 15,
-                  fontWeight: 600,
-                  cursor: "pointer"
                 }}
               >
                 Đến Web quản lý
@@ -164,7 +158,7 @@ export default function PosApp() {
 
             {selectedArea && (
               <>
-                <span style={{ color: "#8a8a8a" }}>›</span>
+                <span className="pos-map-chevron">›</span>
                 <strong>{selectedArea.name}:</strong>
                 <span>
                   Trống {areaEmpty}/{areaTables.length} bàn
@@ -172,7 +166,7 @@ export default function PosApp() {
               </>
             )}
 
-            <span className="pos-legend" style={{ marginLeft: "auto" }}>
+            <span className="pos-legend pos-legend-first">
               <i className="empty" /> Bàn trống
             </span>
             <span className="pos-legend">
@@ -215,30 +209,29 @@ export default function PosApp() {
             </aside>
 
             <section className="pos-table-map">
-              {areaTables.map((table) => (
-                <button
-                  key={table.id}
-                  type="button"
-                  className={`pos-table ${
-                    table.open_order_id ? "busy" : "empty"
-                  }`}
-                >
-                  <span className="table-icon">▣</span>
-                  <strong>{table.name}</strong>
-                  {table.open_order_id ? (
-                    <small>Đang phục vụ</small>
-                  ) : (
-                    <small>
-                      {table.seats > 0 ? `${table.seats} ghế` : "Trống"}
-                    </small>
-                  )}
-                </button>
-              ))}
+              {areaTables.map((table, index) => {
+                const position = tablePosition(table, index);
+                return (
+                  <button
+                    key={table.id}
+                    type="button"
+                    className={`pos-table ${
+                      table.open_order_id ? "busy" : "empty"
+                    }`}
+                    style={{
+                      left: `${position.x}%`,
+                      top: `${position.y}%`
+                    }}
+                  >
+                    <span className="table-icon">▣</span>
+                    <strong>{table.name}</strong>
+                    {table.open_order_id && <small>Đang phục vụ</small>}
+                  </button>
+                );
+              })}
 
               {!loading && selectedArea && areaTables.length === 0 && (
-                <div className="pos-empty">
-                  Khu vực này chưa có bàn.
-                </div>
+                <div className="pos-empty">Khu vực này chưa có bàn.</div>
               )}
 
               {loading && (
@@ -249,43 +242,10 @@ export default function PosApp() {
         </main>
       ) : (
         <main className="pos-order-view">
-          <div
-            style={{
-              height: "100%",
-              background: "#f4f4f4",
-              display: "grid",
-              placeItems: "center",
-              padding: 24
-            }}
-          >
-            <div
-              style={{
-                width: "min(680px, 92vw)",
-                background: "#fff",
-                border: "1px solid #d8d8d8",
-                borderRadius: 8,
-                padding: "34px 40px",
-                textAlign: "center",
-                boxShadow: "0 2px 8px rgba(0,0,0,.06)"
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 30,
-                  fontWeight: 800,
-                  color: "#087bbb",
-                  marginBottom: 10
-                }}
-              >
-                Order
-              </div>
-              <div
-                style={{
-                  fontSize: 16,
-                  color: "#5f6368",
-                  lineHeight: 1.7
-                }}
-              >
+          <div className="pos-placeholder">
+            <div className="pos-placeholder-card">
+              <div className="pos-placeholder-title">Order</div>
+              <div className="pos-placeholder-text">
                 Phần danh sách Order sẽ làm ở bước sau.
               </div>
             </div>
