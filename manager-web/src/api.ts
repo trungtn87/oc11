@@ -48,6 +48,8 @@ import type {
   PosSettings,
   KitchenSendResult,
   PosPrintResult,
+  PosCustomer,
+  PosCustomerInput,
   PrinterRole
 } from "./types";
 
@@ -569,7 +571,7 @@ export function getConsumptionSummary(params: {
 
 
 export function getSaleOrders(params?: {
-  status?: "OPEN" | "PAID" | "VOID";
+  status?: "OPEN" | "PAID" | "DEBT" | "VOID";
   search?: string;
   from_date?: string;
   to_date?: string;
@@ -765,4 +767,28 @@ export function printSaleOrderReceipt(orderId: number): Promise<PosPrintResult> 
     `/api/pos/orders/${orderId}/print-receipt`,
     { method: "POST" }
   );
+}
+
+export function getPosCustomers(query = ""): Promise<PosCustomer[]> {
+  return request<PosCustomer[]>(
+    `/api/pos/customers?q=${encodeURIComponent(query)}`
+  );
+}
+
+export function createPosCustomer(payload: PosCustomerInput): Promise<PosCustomer> {
+  return request<PosCustomer>("/api/pos/customers", {
+    method: "POST", body: JSON.stringify(payload)
+  });
+}
+
+export function printSaleOrderEstimate(orderId: number): Promise<PosPrintResult> {
+  return request<PosPrintResult>(`/api/pos/orders/${orderId}/print-estimate`, {
+    method: "POST"
+  });
+}
+
+export function printSaleOrderCancellation(orderId: number): Promise<PosPrintResult> {
+  return request<PosPrintResult>(`/api/pos/orders/${orderId}/print-cancel`, {
+    method: "POST"
+  });
 }

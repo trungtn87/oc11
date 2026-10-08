@@ -11,8 +11,10 @@ import {
 
 import {
   createSaleOrder,
+  createPosCustomer,
   createSurchargePreset,
   getFundAccounts,
+  getPosCustomers,
   getInstalledPrinters,
   getMenuItems,
   getRestaurantAreas,
@@ -22,11 +24,14 @@ import {
   getSurchargePresets,
   getPosSettings,
   paySaleOrder,
+  printSaleOrderCancellation,
+  printSaleOrderEstimate,
   printSaleOrderReceipt,
   sendSaleOrderToKitchen,
   testPosPrinter,
   updatePosSettings,
-  updateSaleOrder
+  updateSaleOrder,
+  voidSaleOrder
 } from "./api";
 import type {
   FundAccount,
@@ -34,6 +39,8 @@ import type {
   MenuItem,
   MenuItemOption,
   PosSettings,
+  PosCustomer,
+  PosCustomerInput,
   PrinterRole,
   PrinterTarget,
   RestaurantArea,
@@ -45,7 +52,7 @@ import type {
 } from "./types";
 import "./PosApp.css";
 
-type PosView = "MAP" | "ORDERS" | "SALE";
+type PosView = "MAP" | "ORDERS" | "SALE" | "CHECKOUT";
 
 type CartLine = {
   key: string;
@@ -136,7 +143,19 @@ export default function PosApp() {
   const [surchargeName, setSurchargeName] = useState("");
   const [surchargeAmount, setSurchargeAmount] = useState(0);
   const [surchargeSaving, setSurchargeSaving] = useState(false);
+  const [tableActions, setTableActions] = useState<RestaurantTable | null>(null);
+  const [checkoutOrder, setCheckoutOrder] = useState<SaleOrder | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentStep, setPaymentStep] = useState<"CHOICE" | "CUSTOMER" | "METHOD" | "CONFIRM">("CHOICE");
+  const [requestInvoice, setRequestInvoice] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK" | "DEBT">("CASH");
+  const [customers, setCustomers] = useState<PosCustomer[]>([]);
+  const [customerId, setCustomerId] = useState<number>();
+  const [customerCreating, setCustomerCreating] = useState(false);
+  const [customerDraft, setCustomerDraft] = useState<PosCustomerInput>({
+    customer_type: "PERSON", name: "", phone: null, tax_code: null,
+    address: null, email: null, contact_name: null
+  });
   const [paymentAccountType, setPaymentAccountType] = useState<FundAccountType>("CASH");
   const [paymentFundAccountId, setPaymentFundAccountId] = useState<number>();
   const [paymentAmount, setPaymentAmount] = useState(0);
@@ -292,7 +311,7 @@ export default function PosApp() {
   function openTable(table: RestaurantTable) {
     if (busy) return;
     if (table.open_order_id !== null) {
-      void openExisting(table.open_order_id);
+      setTableActions(table);
     } else {
       newOrder(table);
     }
@@ -596,55 +615,224 @@ export default function PosApp() {
     });
   }
 
-  function openPayment() {
+  async function startCheckout(orderId: number) {
     if (busy) return;
-    void (async () => {
-      const saved = await saveOrder(false);
-      if (!saved) return;
-      const active = accounts.filter((account) => account.is_active);
-      const preferred =
-        active.find((account) => account.type === "CASH" && account.is_default) ??
-        active.find((account) => account.type === "CASH") ??
-        active.find((account) => account.is_default) ??
-        active[0];
-      setPaymentAccountType(preferred?.type ?? "CASH");
-      setPaymentFundAccountId(preferred?.id);
-      setPaymentAmount(saved.total_amount);
-      setPaymentOpen(true);
-    })();
+    setBusy(true);
+    try {
+      const order = await getSaleOrder(orderId);
+      if (order.status !== "OPEN" || order.order_type !== "DINE_IN") {
+        messageApi.warning("Order không còn đang phục vụ.");
+        await refresh();
+        return;
+      }
+      setTableActions(null);
+      setCheckoutOrder(order);
+      setView("CHECKOUT");
+      setDirty(false);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không mở được thanh toán.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkoutFromSale() {
+    const saved = await saveOrder(false);
+    if (!saved) return;
+    await startCheckout(saved.id);
+  }
+
+  async function tryPrintCancelSlip(orderId: number) {
+    try {
+      const printed = await printSaleOrderCancellation(orderId);
+      if (printed.print_status === "PRINTED") {
+        messageApi.success("Đã in phiếu hủy ở máy bếp.");
+        return;
+      }
+      throw new Error(printed.error_message || "Máy bếp chưa nhận được phiếu hủy.");
+    } catch (error) {
+      Modal.confirm({
+        title: "Order đã hủy, nhưng phiếu hủy bếp chưa được in",
+        content: error instanceof Error ? error.message : "Kiểm tra máy in bếp.",
+        okText: "Thử in lại",
+        cancelText: "Để sau",
+        onOk: () => tryPrintCancelSlip(orderId)
+      });
+    }
+  }
+
+  async function printEstimate() {
+    if (!checkoutOrder || busy) return;
+    setBusy(true);
+    try {
+      const printed = await printSaleOrderEstimate(checkoutOrder.id);
+      if (printed.print_status === "PRINTED")
+        messageApi.success("Đã in phiếu tạm tính ở máy thu ngân.");
+      else messageApi.error(printed.error_message || "Không in được phiếu tạm tính.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không in được tạm tính.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmCancelOrder(order: SaleOrder | null | undefined) {
+    if (!order || busy) return;
+    let reason = "Khách hủy Order";
+    Modal.confirm({
+      title: `Hủy toàn bộ ${order.order_code}?`,
+      content: (
+        <div className="pos-cancel-form">
+          <p>Order {order.table_name ?? ""} sẽ được lưu lịch sử hủy; bàn trở về trạng thái trống.</p>
+          <label>Lý do hủy</label>
+          <Input.TextArea defaultValue={reason} maxLength={200}
+            onChange={(event) => { reason = event.target.value; }} />
+          {order.kitchen_sent_at && <p className="pos-warning">
+            Đơn đã gửi bếp. Hệ thống sẽ in phiếu hủy ở máy bếp.
+          </p>}
+        </div>
+      ),
+      okText: "Xác nhận hủy",
+      okButtonProps: { danger: true },
+      cancelText: "Không hủy",
+      onOk: async () => {
+        if (!reason.trim()) { messageApi.warning("Nhập lý do hủy."); throw new Error("Missing reason"); }
+        setBusy(true);
+        try {
+          const canceled = await voidSaleOrder(order.id, reason.trim());
+          setTableActions(null);
+          setCheckoutOrder(null);
+          setEditingOrder(null);
+          setTableId(null);
+          setCart([]);
+          setDirty(false);
+          setView("MAP");
+          if (canceled.table_id !== null) kitchenNoteDrafts.current.delete(canceled.table_id);
+          setKitchenNote("");
+          await refresh().catch(() =>
+            messageApi.warning("Đã hủy Order nhưng chưa cập nhật được sơ đồ."));
+          messageApi.success(`Đã hủy ${canceled.order_code} và giải phóng bàn.`);
+          if (canceled.kitchen_sent_at) {
+            await tryPrintCancelSlip(canceled.id);
+          }
+        } catch (error) {
+          messageApi.error(error instanceof Error ? error.message : "Không hủy được Order.");
+          throw error;
+        } finally {
+          setBusy(false);
+        }
+      }
+    });
+  }
+
+  async function loadCustomers(query = "") {
+    try { setCustomers(await getPosCustomers(query)); }
+    catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không tải được khách hàng.");
+    }
+  }
+
+  function choosePayment(method: "CASH" | "BANK" | "DEBT", invoice = false) {
+    setRequestInvoice(invoice);
+    setPaymentMethod(method);
+    if (method !== "DEBT") {
+      setPaymentAccountType(method);
+      const matching = accounts.filter((account) =>
+        account.is_active && account.type === method
+      );
+      setPaymentFundAccountId(
+        (matching.find((account) => account.is_default) ?? matching[0])?.id
+      );
+    } else {
+      setPaymentFundAccountId(undefined);
+    }
+    setPaymentStep(method === "DEBT" && !invoice ? "CUSTOMER" : "CONFIRM");
+  }
+
+  function openPayment() {
+    if (!checkoutOrder || busy) return;
+    setPaymentOpen(true);
+    setPaymentStep("CHOICE");
+    setRequestInvoice(false);
+    setCustomerCreating(false);
+    setCustomerId(checkoutOrder.customer_id ?? undefined);
+    setPaymentAmount(checkoutOrder.total_amount);
+    void loadCustomers();
+  }
+
+  async function saveCustomer() {
+    if (!customerDraft.name.trim()) {
+      messageApi.warning("Nhập tên khách hàng.");
+      return;
+    }
+    if (customerDraft.tax_code?.trim() && !customerDraft.address?.trim()) {
+      messageApi.warning("Khách có mã số thuế cần nhập địa chỉ.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const saved = await createPosCustomer(customerDraft);
+      setCustomers((current) => [saved, ...current]);
+      setCustomerId(saved.id);
+      setCustomerCreating(false);
+      setCustomerDraft({
+        customer_type: "PERSON", name: "", phone: null, tax_code: null,
+        address: null, email: null, contact_name: null
+      });
+      messageApi.success("Đã thêm khách hàng.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không tạo được khách hàng.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function confirmPayment() {
-    if (!editingOrder || !paymentFundAccountId || busy) {
-      if (!paymentFundAccountId) messageApi.warning("Chọn quỹ hoặc tài khoản nhận tiền.");
+    if (!checkoutOrder || busy) return;
+    if ((requestInvoice || paymentMethod === "DEBT") && !customerId) {
+      messageApi.warning("Chọn khách hàng trước khi xác nhận.");
       return;
     }
-    if (!Number.isFinite(paymentAmount) || (total > 0 && paymentAmount <= 0)) {
+    if (paymentMethod !== "DEBT" && !paymentFundAccountId) {
+      messageApi.warning("Chọn quỹ hoặc tài khoản nhận tiền.");
+      return;
+    }
+    if (paymentMethod !== "DEBT" &&
+      (!Number.isFinite(paymentAmount) ||
+        (checkoutOrder.total_amount > 0 && paymentAmount <= 0))) {
       messageApi.warning("Tiền thực thu phải lớn hơn 0.");
       return;
     }
     setBusy(true);
     try {
-      const paid = await paySaleOrder(editingOrder.id, {
-        fund_account_id: paymentFundAccountId,
-        actual_received_amount: Math.round(paymentAmount)
+      const paid = await paySaleOrder(checkoutOrder.id, {
+        payment_method: paymentMethod,
+        expected_total_amount: checkoutOrder.total_amount,
+        fund_account_id: paymentMethod === "DEBT" ? null : paymentFundAccountId,
+        actual_received_amount: paymentMethod === "DEBT" ? null : Math.round(paymentAmount),
+        customer_id: customerId ?? null,
+        request_einvoice: requestInvoice
       });
       setPaymentOpen(false);
-      if (tableId !== null) {
-        kitchenNoteDrafts.current.delete(tableId);
-      }
+      if (paid.table_id !== null) kitchenNoteDrafts.current.delete(paid.table_id);
       setKitchenNote("");
+      setTableActions(null);
+      setCheckoutOrder(null);
       setEditingOrder(null);
       setCart([]);
       setTableId(null);
       setSelectedLineKey(null);
       setDirty(false);
       setView("MAP");
-      messageApi.success(`Đã thanh toán ${paid.order_code}. Tiền đã ghi vào quỹ.`);
+      messageApi.success(paymentMethod === "DEBT"
+        ? `Đã ghi nợ ${paid.order_code}; bàn đã được giải phóng.`
+        : `Đã thanh toán ${paid.order_code} và ghi vào quỹ.`);
+      if (requestInvoice)
+        messageApi.info("Đã lưu yêu cầu HĐĐT. Phát hành thủ công sau trên Web quản lý.");
       await refresh().catch(() => messageApi.warning(
-        "Đã thanh toán nhưng chưa cập nhật sơ đồ."
+        "Đơn đã kết thúc nhưng chưa cập nhật được sơ đồ."
       ));
-      await tryPrintPaidReceipt(paid.id);
+      if (paymentMethod !== "DEBT") await tryPrintPaidReceipt(paid.id);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Thanh toán thất bại.");
     } finally {
@@ -1029,7 +1217,7 @@ export default function PosApp() {
                 <Button className="pos-save-order" disabled={!cart.length} loading={busy}
                   onClick={() => void saveOrder()}>Lưu</Button>
                 <Button className="pos-pay-button" type="primary" disabled={!cart.length || busy}
-                  onClick={openPayment}>Tính tiền</Button>
+                  onClick={() => void checkoutFromSale()}>Tính tiền</Button>
               </div>
             </div>
           </section>
@@ -1211,59 +1399,196 @@ export default function PosApp() {
       </Modal>
 
       <Modal
-        open={paymentOpen}
-        title="Tính tiền · Thanh toán Order"
-        okText="Xác nhận thanh toán"
-        okButtonProps={{ loading: busy }}
-        cancelText="Để sau"
-        onCancel={() => { if (!busy) setPaymentOpen(false); }}
-        onOk={() => void confirmPayment()}
+        open={tableActions !== null}
+        title={`Bàn ${tableActions?.name ?? ""} · Đang phục vụ`}
+        onCancel={() => setTableActions(null)}
+        footer={null}
         destroyOnClose
       >
-        <div className="pos-payment-modal">
-          <div><span>Tổng tiền</span><strong>{money(total)} đ</strong></div>
-          <label>Loại tài khoản
-            <Select
-              value={paymentAccountType}
-              onChange={(type: FundAccountType) => {
-                setPaymentAccountType(type);
-                const available = accounts.filter((account) =>
-                  account.is_active && account.type === type
-                );
-                setPaymentFundAccountId(
-                  (available.find((account) => account.is_default) ?? available[0])?.id
-                );
-              }}
-              options={[
-                { value: "CASH", label: "Tiền mặt" },
-                { value: "BANK", label: "Ngân hàng" }
-              ]}
-            />
-          </label>
-          <label>Quỹ / tài khoản nhận tiền
-            <Select
-              placeholder="Chọn quỹ nhận tiền"
-              value={paymentFundAccountId}
-              onChange={setPaymentFundAccountId}
-              options={accounts.filter((account) =>
-                account.is_active && account.type === paymentAccountType
-              ).map((account) => ({
-                value: account.id, label: account.name
-              }))}
-            />
-          </label>
-          <label>Tiền thực thu (đ)
-            <InputNumber<number>
-              min={0}
-              precision={0}
-              value={paymentAmount}
-              onChange={(value) => setPaymentAmount(Number(value ?? 0))}
-            />
-          </label>
-          <div className="pos-payment-difference">
-            <span>Chênh lệch làm tròn</span>
-            <strong>{money(paymentAmount - total)} đ</strong>
+        <div className="pos-table-actions">
+          <strong>{money(tableActions?.open_order_total ?? 0)} đ</strong>
+          <Button block onClick={() => {
+            const id = tableActions?.open_order_id;
+            setTableActions(null);
+            if (id) void openExisting(id);
+          }}>Tiếp tục order</Button>
+          <Button block danger onClick={() => {
+            const id = tableActions?.open_order_id;
+            setTableActions(null);
+            if (id) void getSaleOrder(id).then(confirmCancelOrder).catch((error) =>
+              messageApi.error(error instanceof Error ? error.message : "Không tải được Order."));
+          }}>Hủy order</Button>
+          <Button block type="primary" onClick={() => {
+            const id = tableActions?.open_order_id;
+            setTableActions(null);
+            if (id) void startCheckout(id);
+          }}>Thanh toán</Button>
+        </div>
+      </Modal>
+
+      {view === "CHECKOUT" && checkoutOrder && (
+        <main className="pos-checkout-view">
+          <div className="pos-checkout-card">
+            <header>
+              <div>
+                <h2>Thanh toán · {checkoutOrder.area_name} / {checkoutOrder.table_name}</h2>
+                <span>{checkoutOrder.order_code}</span>
+              </div>
+              <Button onClick={() => { setView("MAP"); setCheckoutOrder(null); }}>← Sơ đồ bàn</Button>
+            </header>
+            <div className="pos-checkout-items">
+              <div className="pos-checkout-heading"><b>Món</b><b>SL</b><b>Thành tiền</b></div>
+              {checkoutOrder.items.map((line) => (
+                <div className="pos-checkout-item" key={line.id}>
+                  <div>
+                    <strong>{line.item_name_snapshot}</strong>
+                    {line.option_name_snapshot && <small>{line.option_name_snapshot}</small>}
+                    {line.note && <small>{line.note}</small>}
+                    {line.surcharges.map((extra) =>
+                      <small key={extra.id}>+ {extra.name}: {money(extra.amount)} đ</small>)}
+                  </div>
+                  <b>{line.quantity}</b>
+                  <strong>{money(line.total_with_surcharges)} đ</strong>
+                </div>
+              ))}
+              {checkoutOrder.surcharges.map((extra) => (
+                <div className="pos-checkout-item" key={`extra-${extra.id}`}>
+                  <div>Phụ thu · {extra.name}</div><b>1</b>
+                  <strong>{money(extra.amount)} đ</strong>
+                </div>
+              ))}
+            </div>
+            <div className="pos-checkout-bottom">
+              <div className="pos-checkout-total"><b>Tổng tiền</b>
+                <strong>{money(checkoutOrder.total_amount)} đ</strong></div>
+              <div className="pos-checkout-actions">
+                <Button danger disabled={busy}
+                  onClick={() => confirmCancelOrder(checkoutOrder)}>Hủy order</Button>
+                <Button disabled={busy} loading={busy} onClick={() => void printEstimate()}>
+                  In tạm tính
+                </Button>
+                <Button type="primary" disabled={busy} onClick={openPayment}>Thanh toán</Button>
+              </div>
+            </div>
           </div>
+        </main>
+      )}
+
+      <Modal
+        open={paymentOpen}
+        title={`Thanh toán · ${checkoutOrder?.order_code ?? ""}`}
+        width={590}
+        onCancel={() => { if (!busy) setPaymentOpen(false); }}
+        footer={[
+          <Button key="back" disabled={busy} onClick={() => {
+            if (paymentStep === "CHOICE") setPaymentOpen(false);
+            else if (requestInvoice && paymentStep === "CONFIRM") setPaymentStep("METHOD");
+            else if (paymentStep === "METHOD") setPaymentStep("CUSTOMER");
+            else setPaymentStep("CHOICE");
+          }}>{paymentStep === "CHOICE" ? "Đóng" : "Quay lại"}</Button>,
+          paymentStep === "CONFIRM" &&
+            <Button key="confirm" type="primary" loading={busy}
+              onClick={() => void confirmPayment()}>Xác nhận {paymentMethod === "DEBT" ? "ghi nợ" : "thanh toán"}</Button>,
+          paymentStep === "CUSTOMER" && customerId && !customerCreating &&
+            <Button key="next" type="primary" onClick={() => {
+              if (requestInvoice) setPaymentStep("METHOD");
+              else setPaymentStep("CONFIRM");
+            }}>Tiếp tục</Button>
+        ]}
+        destroyOnClose
+      >
+        <div className="pos-checkout-payment">
+          <div className="pos-checkout-total"><b>Tổng tiền</b>
+            <strong>{money(checkoutOrder?.total_amount ?? 0)} đ</strong></div>
+          {paymentStep === "CHOICE" && (
+            <div className="pos-payment-method-grid">
+              <button type="button" onClick={() => choosePayment("CASH")}>💵<b>Tiền mặt</b></button>
+              <button type="button" onClick={() => choosePayment("BANK")}>🏦<b>Chuyển khoản</b></button>
+              <button type="button" onClick={() => choosePayment("DEBT")}>📝<b>Ghi nợ</b></button>
+              <button type="button" onClick={() => {
+                setRequestInvoice(true);
+                setPaymentStep("CUSTOMER");
+              }}>🧾<b>HĐĐT</b></button>
+            </div>
+          )}
+          {paymentStep === "CUSTOMER" && (
+            <div className="pos-customer-form">
+              <strong>{requestInvoice ? "Thông tin xuất HĐĐT" : "Khách hàng ghi nợ"}</strong>
+              <Select<number>
+                showSearch allowClear placeholder="Tìm tên, số điện thoại hoặc MST"
+                optionFilterProp="label"
+                value={customerId}
+                onChange={(value) => setCustomerId(value)}
+                onSearch={(value) => void loadCustomers(value)}
+                options={customers.map((customer) => ({
+                  value: customer.id,
+                  label: `${customer.name} · ${customer.phone || customer.tax_code || customer.customer_code}`
+                }))}
+              />
+              <Button onClick={() => setCustomerCreating((open) => !open)}>
+                {customerCreating ? "Đóng form" : "+ Thêm khách hàng"}
+              </Button>
+              {customerCreating && (
+                <div className="pos-customer-fields">
+                  <Select value={customerDraft.customer_type}
+                    onChange={(value: PosCustomerInput["customer_type"]) =>
+                      setCustomerDraft((prev) => ({ ...prev, customer_type: value }))}
+                    options={[{ value: "PERSON", label: "Cá nhân" },
+                      { value: "ORGANIZATION", label: "Doanh nghiệp" }]} />
+                  {([
+                    ["name", "Tên khách hàng / công ty"],
+                    ["phone", "Số điện thoại"],
+                    ["tax_code", "Mã số thuế"],
+                    ["address", "Địa chỉ"],
+                    ["email", "Email"],
+                    ["contact_name", "Người liên hệ"]
+                  ] as const).map(([field, placeholder]) => (
+                    <Input key={field} placeholder={placeholder}
+                      value={customerDraft[field] ?? ""}
+                      onChange={(event) => setCustomerDraft((prev) =>
+                        ({ ...prev, [field]: event.target.value }))} />
+                  ))}
+                  <Button type="primary" loading={busy} onClick={() => void saveCustomer()}>
+                    Lưu khách hàng
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          {paymentStep === "METHOD" && (
+            <div className="pos-payment-method-grid">
+              <button onClick={() => choosePayment("CASH", true)}>💵<b>Tiền mặt</b></button>
+              <button onClick={() => choosePayment("BANK", true)}>🏦<b>Chuyển khoản</b></button>
+              <button onClick={() => choosePayment("DEBT", true)}>📝<b>Ghi nợ</b></button>
+            </div>
+          )}
+          {paymentStep === "CONFIRM" && (
+            <div className="pos-payment-fields">
+              <strong>{paymentMethod === "CASH" ? "Tiền mặt" :
+                paymentMethod === "BANK" ? "Chuyển khoản" : "Ghi nợ"}</strong>
+              {(requestInvoice || paymentMethod === "DEBT") && <div>
+                Khách: {customers.find((customer) => customer.id === customerId)?.name
+                  ?? checkoutOrder?.customer_name ?? "Chưa chọn"}
+              </div>}
+              {requestInvoice && <div className="pos-invoice-draft-notice">
+                Yêu cầu HĐĐT sẽ được lưu chờ phát hành thủ công qua MISA meInvoice.
+              </div>}
+              {paymentMethod !== "DEBT" && (
+                <>
+                  <label>Quỹ / tài khoản nhận tiền</label>
+                  <Select value={paymentFundAccountId}
+                    onChange={setPaymentFundAccountId}
+                    options={accounts.filter((account) => account.is_active &&
+                      account.type === paymentAccountType).map((account) =>
+                      ({ value: account.id, label: account.name }))} />
+                  <label>Tiền thực thu (đ)</label>
+                  <InputNumber<number> min={0} precision={0} value={paymentAmount}
+                    onChange={(value) => setPaymentAmount(Number(value ?? 0))} />
+                  <small>Chênh lệch: {money(paymentAmount - (checkoutOrder?.total_amount ?? 0))} đ</small>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
     </div>

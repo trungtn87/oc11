@@ -480,3 +480,175 @@ def test_same_physical_printer_is_printed_once_even_when_route_is_both(
         # Two DIFFERENT tickets still print on the same physical device.
         assert captured == ["Shared Printer", "Shared Printer"]
         assert len(sent.json()["printer_results"]) == 2
+
+
+def test_pos_debt_checkout_releases_table_and_collects_once(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        area = client.post("/api/pos/areas", json={"name": "Sân"}).json()
+        table = client.post("/api/pos/tables", json={
+            "area_id": area["id"], "name": "Bàn 11",
+            "is_active": True, "seats": 0,
+        }).json()
+        order = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        customer = client.post("/api/pos/customers", json={
+            "name": "Anh khách", "phone": "0911000000",
+        })
+        assert customer.status_code == 201
+        customer_id = customer.json()["id"]
+        assert client.get("/api/pos/customers?q=0911").json()[0]["id"] == customer_id
+        no_customer = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "DEBT",
+        })
+        assert no_customer.status_code == 422
+        debt = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "DEBT", "customer_id": customer_id,
+        })
+        assert debt.status_code == 200, debt.text
+        assert debt.json()["status"] == "PAID"
+        assert debt.json()["settlement_status"] == "DEBT"
+        assert debt.json()["fund_account_id"] is None
+        assert debt.json()["paid_at"] is None
+        assert client.get("/api/pos/tables").json()[0]["open_order_id"] is None
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE'"
+            ).fetchone()[0] == 0
+        duplicate = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "DEBT", "customer_id": customer_id,
+        })
+        assert duplicate.status_code == 409
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        settled = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": funds[0]["id"],
+        })
+        assert settled.status_code == 200, settled.text
+        assert settled.json()["settlement_status"] == "PAID"
+        again = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": funds[0]["id"],
+        })
+        assert again.status_code == 409
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE' AND is_void=0"
+            ).fetchone()[0] == 1
+
+
+def test_pos_invoice_request_is_draft_after_cash_payment(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        order = client.post("/api/sales/orders", json={
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        account = client.get("/api/fund-accounts?type=CASH").json()[0]
+        missing = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": account["id"],
+            "request_einvoice": True,
+        })
+        assert missing.status_code == 422
+        missing_address = client.post("/api/pos/customers", json={
+            "name": "Công ty ABC", "customer_type": "ORGANIZATION",
+            "tax_code": "0123456789",
+        })
+        assert missing_address.status_code == 422
+        customer = client.post("/api/pos/customers", json={
+            "name": "Công ty ABC", "customer_type": "ORGANIZATION",
+            "tax_code": "0123456789", "address": "Cao Bằng",
+            "email": "a@example.com",
+        }).json()
+        paid = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": account["id"],
+            "customer_id": customer["id"], "request_einvoice": True,
+        })
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["einvoice_requested"] is True
+        assert paid.json()["has_einvoice"] is False
+        assert paid.json()["customer_id"] == customer["id"]
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT status, issued_at FROM electronic_invoices WHERE sales_order_id = ?",
+                (order["id"],),
+            ).fetchone() == ("DRAFT", None)
+
+
+def test_pos_estimate_and_kitchen_cancel_are_not_payments(tmp_path, monkeypatch):
+    from backend.app import pos
+
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    printed = []
+    def fake_dispatch(settings, target, content):
+        printed.append((target, content))
+        return "PRINTED", None, []
+    monkeypatch.setattr(pos, "dispatch_print", fake_dispatch)
+
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        area = client.post("/api/pos/areas", json={"name": "Tầng 1"}).json()
+        table = client.post("/api/pos/tables", json={
+            "area_id": area["id"], "name": "Bàn 7",
+            "is_active": True,
+        }).json()
+        order = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        slip = client.post(f"/api/pos/orders/{order['id']}/print-estimate")
+        assert slip.status_code == 200, slip.text
+        assert printed[0][0] == "CASHIER"
+        assert "TẠM TÍNH" in printed[0][1]
+        assert "THỰC THU" not in printed[0][1]
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["status"] == "OPEN"
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE sales_orders SET kitchen_sent_at = ? WHERE id = ?",
+                ("2026-10-08T18:00:00", order["id"]),
+            )
+            connection.commit()
+        canceled = client.post(
+            f"/api/sales/orders/{order['id']}/void?reason=Kh%C3%A1ch%20h%E1%BB%A7y"
+        )
+        assert canceled.status_code == 200, canceled.text
+        assert canceled.json()["status"] == "VOID"
+        slip_cancel = client.post(f"/api/pos/orders/{order['id']}/print-cancel")
+        assert slip_cancel.status_code == 200, slip_cancel.text
+        assert printed[-1][0] == "KITCHEN"
+        assert "HỦY TOÀN BỘ ORDER" in printed[-1][1]
+        assert client.get("/api/pos/tables").json()[0]["open_order_id"] is None
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE'"
+            ).fetchone()[0] == 0
+
+
+def test_pos_checkout_refuses_stale_total_without_receipt(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        order = client.post("/api/sales/orders", json={
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        fund = client.get("/api/fund-accounts?type=CASH").json()[0]
+        refused = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": fund["id"],
+            "expected_total_amount": order["total_amount"] - 1000,
+        })
+        assert refused.status_code == 409
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["status"] == "OPEN"
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE'"
+            ).fetchone()[0] == 0
+        accepted = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": fund["id"],
+            "expected_total_amount": order["total_amount"],
+        })
+        assert accepted.status_code == 200, accepted.text

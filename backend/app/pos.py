@@ -20,6 +20,80 @@ from .settings import load_settings, save_settings
 router = APIRouter(prefix="/api/pos", tags=["pos"])
 
 
+class PosCustomerInput(BaseModel):
+    customer_type: Literal["PERSON", "ORGANIZATION"] = "PERSON"
+    name: str = Field(min_length=1, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    tax_code: str | None = Field(default=None, max_length=40)
+    address: str | None = Field(default=None, max_length=500)
+    email: str | None = Field(default=None, max_length=200)
+    contact_name: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/customers")
+def search_pos_customers(q: str = Query(default="", max_length=120)) -> list[dict]:
+    with connect() as connection:
+        like = "%" + q.strip().replace("%", "\\%").replace("_", "\\_") + "%"
+        rows = connection.execute(
+            """
+            SELECT id, customer_code, customer_type, name, phone, tax_code,
+                   address, email, contact_name
+            FROM customers
+            WHERE is_active = 1
+              AND (name LIKE ? ESCAPE '\\'
+                OR COALESCE(phone, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(tax_code, '') LIKE ? ESCAPE '\\')
+            ORDER BY name, id LIMIT 50
+            """,
+            (like, like, like),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+@router.post("/customers", status_code=status.HTTP_201_CREATED)
+def create_pos_customer(payload: PosCustomerInput) -> dict:
+    name = payload.name.strip()
+    tax_code = (payload.tax_code or "").strip() or None
+    address = (payload.address or "").strip() or None
+    if not name:
+        raise HTTPException(status_code=422, detail="Nhập tên khách hàng.")
+    if tax_code and not address:
+        raise HTTPException(status_code=422, detail="Có mã số thuế cần nhập địa chỉ.")
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if tax_code and connection.execute(
+            "SELECT id FROM customers WHERE tax_code = ?", (tax_code,)
+        ).fetchone():
+            raise HTTPException(status_code=409, detail="Mã số thuế đã có trong danh sách.")
+        next_id = connection.execute(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM customers"
+        ).fetchone()[0]
+        code = f"KH{next_id:06d}"
+        connection.execute(
+            """
+            INSERT INTO customers (
+                customer_code, customer_type, name, phone, tax_code,
+                address, email, contact_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                code, payload.customer_type, name,
+                (payload.phone or "").strip() or None, tax_code, address,
+                (payload.email or "").strip() or None,
+                (payload.contact_name or "").strip() or None,
+            ),
+        )
+        row = connection.execute(
+            """SELECT id, customer_code, customer_type, name, phone, tax_code,
+                      address, email, contact_name FROM customers
+               WHERE customer_code = ?""", (code,)
+        ).fetchone()
+        connection.commit()
+        result = dict(row)
+    backup_database(reason="pos-customer-created")
+    return result
+
+
 class AreaInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     display_order: int = 0
@@ -721,9 +795,9 @@ def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: 
     )
 
 
-def build_cashier_receipt(connection, order) -> str:
+def build_cashier_receipt(connection, order, *, provisional: bool = False) -> str:
     text_lines = [
-        "ỐC 11 - PHIẾU THANH TOÁN",
+        "ỐC 11 - PHIẾU TẠM TÍNH" if provisional else "ỐC 11 - PHIẾU THANH TOÁN",
         "=" * 36,
         f"Mã đơn: {order['order_code']}",
     ]
@@ -747,7 +821,7 @@ def build_cashier_receipt(connection, order) -> str:
     text_lines.extend([
         "-" * 36,
         f"TỔNG TIỀN: {int(order['total_amount']):,} đ",
-        f"THỰC THU: {int(order['actual_received_amount'] or 0):,} đ",
+        *([] if provisional else [f"THỰC THU: {int(order['actual_received_amount'] or 0):,} đ"]),
         "=" * 36,
         "Cảm ơn quý khách!",
         "", "", "",
@@ -950,4 +1024,61 @@ def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
             print_status=print_status,
             error_message=error,
             printer_results=results,
+        )
+
+
+@router.post("/orders/{order_id}/print-estimate", response_model=PrintDispatchOutput)
+def print_sale_estimate(order_id: int) -> PrintDispatchOutput:
+    """Print a provisional 80 mm bill to cashier without closing the order."""
+    settings = pos_settings_output(load_settings())
+    with connect() as connection:
+        order = select_order(connection, order_id)
+        if order is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if order["status"] != "OPEN":
+            raise HTTPException(status_code=409, detail="Chỉ in tạm tính cho Order đang phục vụ.")
+        content = build_cashier_receipt(connection, order, provisional=True)
+        print_status, error, results = dispatch_print(settings, "CASHIER", content)
+        return PrintDispatchOutput(
+            order_id=order_id, order_code=order["order_code"],
+            print_status=print_status, error_message=error, printer_results=results,
+        )
+
+
+@router.post("/orders/{order_id}/print-cancel", response_model=PrintDispatchOutput)
+def print_sale_cancel(order_id: int) -> PrintDispatchOutput:
+    """Print an explicit cancellation; never resend old kitchen item tickets."""
+    settings = pos_settings_output(load_settings())
+    with connect() as connection:
+        order = select_order(connection, order_id)
+        if order is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if order["status"] != "VOID":
+            raise HTTPException(status_code=409, detail="Chỉ in phiếu hủy cho Order đã hủy.")
+        if order["kitchen_sent_at"] is None:
+            raise HTTPException(status_code=409, detail="Order chưa gửi bếp.")
+        lines = [
+            "ỐC 11 - HỦY TOÀN BỘ ORDER", "=" * 36,
+            f"Mã đơn: {order['order_code']}",
+            f"Bàn: {order['area_name'] or ''} / {order['table_name'] or ''}",
+            "-" * 36,
+        ]
+        for item in select_order_items(connection, order_id):
+            lines.append(
+                f"{format_quantity(float(item['quantity']))} x {item['item_name_snapshot']}"
+            )
+            if item["option_name_snapshot"]:
+                lines.append(f"  {item['option_name_snapshot']}")
+        lines.extend([
+            "-" * 36,
+            f"Lý do: {order['void_reason'] or 'Hủy order'}",
+            "KHÔNG CHẾ BIẾN / NGỪNG CHẾ BIẾN",
+            "", "", "",
+        ])
+        print_status, error, results = dispatch_print(
+            settings, "KITCHEN", "\r\n".join(lines)
+        )
+        return PrintDispatchOutput(
+            order_id=order_id, order_code=order["order_code"],
+            print_status=print_status, error_message=error, printer_results=results,
         )

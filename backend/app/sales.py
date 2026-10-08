@@ -45,8 +45,12 @@ class SaleOrderInput(BaseModel):
 
 
 class SalePaymentInput(BaseModel):
-    fund_account_id: int
+    fund_account_id: int | None = None
     actual_received_amount: int | None = Field(default=None, ge=0)
+    payment_method: Literal["CASH", "BANK", "DEBT"] | None = None
+    expected_total_amount: int | None = Field(default=None, ge=0)
+    customer_id: int | None = None
+    request_einvoice: bool = False
 
 
 class SaleSurchargeOutput(BaseModel):
@@ -90,6 +94,8 @@ class SaleOrderOutput(BaseModel):
     fund_account_id: int | None
     fund_account_name: str | None
     fund_account_type: Literal["CASH", "BANK"] | None
+    settlement_status: Literal["DEBT", "PAID"]
+    einvoice_requested: bool
     total_amount: int
     surcharge_total: int
     actual_received_amount: int | None
@@ -461,6 +467,7 @@ def select_order(
             so.customer_id,
             c.name AS customer_name,
             so.fund_account_id,
+            so.settlement_status,
             fa.name AS fund_account_name,
             fa.type AS fund_account_type,
             so.total_amount,
@@ -484,6 +491,10 @@ def select_order(
                 WHERE ei.sales_order_id = so.id
                   AND ei.issued_at IS NOT NULL
             ) AS has_einvoice,
+            EXISTS (
+                SELECT 1 FROM electronic_invoices AS ei
+                WHERE ei.sales_order_id = so.id AND ei.status = 'DRAFT'
+            ) AS einvoice_requested,
             (
                 SELECT MAX(ei.issued_at)
                 FROM electronic_invoices AS ei
@@ -650,6 +661,8 @@ def order_to_output(
         ),
         fund_account_name=row["fund_account_name"],
         fund_account_type=row["fund_account_type"],
+        settlement_status=row["settlement_status"],
+        einvoice_requested=bool(row["einvoice_requested"]),
         total_amount=int(row["total_amount"]),
         surcharge_total=item_surcharge_total + order_surcharge_total,
         actual_received_amount=(
@@ -983,6 +996,7 @@ def apply_payment(
         """
         UPDATE sales_orders
         SET status = 'PAID',
+            settlement_status = 'PAID',
             fund_account_id = ?,
             actual_received_amount = ?,
             payment_reference_code = ?,
@@ -1015,13 +1029,18 @@ def list_orders(
 
     if order_status and order_status.strip():
         normalized = order_status.strip().upper()
-        if normalized not in {"OPEN", "PAID", "VOID"}:
+        if normalized not in {"OPEN", "PAID", "DEBT", "VOID"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Trạng thái đơn bán không hợp lệ.",
             )
-        conditions.append("so.status = ?")
-        params.append(normalized)
+        if normalized == "DEBT":
+            conditions.append("so.status = 'PAID' AND so.settlement_status = 'DEBT'")
+        elif normalized == "PAID":
+            conditions.append("so.status = 'PAID' AND so.settlement_status = 'PAID'")
+        else:
+            conditions.append("so.status = ?")
+            params.append(normalized)
 
     if search and search.strip():
         conditions.append(
@@ -1204,8 +1223,9 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
         )
 
         was_paid = existing["status"] == "PAID"
+        was_debt = was_paid and existing["settlement_status"] == "DEBT"
         should_be_paid = (
-            was_paid
+            was_paid and not was_debt
             if payload.payment_status is None
             else payload.payment_status == "PAID"
         )
@@ -1264,6 +1284,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             UPDATE sales_orders
             SET order_time = ?,
                 status = 'OPEN',
+                settlement_status = 'DEBT',
                 order_type = ?,
                 table_id = ?,
                 guest_count = ?,
@@ -1296,6 +1317,11 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             order_id,
             movement_time=changed_at,
         )
+
+        if was_debt and payload.payment_status != "PAID":
+            connection.execute(
+                "UPDATE sales_orders SET status = 'PAID' WHERE id = ?", (order_id,)
+            )
 
         if should_be_paid:
             fund_account_id = (
@@ -1333,42 +1359,108 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
 
 @router.post("/orders/{order_id}/pay", response_model=SaleOrderOutput)
 def pay_order(order_id: int, payload: SalePaymentInput) -> SaleOrderOutput:
+    """Close a table with cash, bank, or debt; invoice request remains a draft."""
     paid_at = datetime.now().isoformat(timespec="microseconds")
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         order = select_order(connection, order_id)
         if order is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if (payload.expected_total_amount is not None and
+                payload.expected_total_amount != int(order["total_amount"])):
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Không tìm thấy đơn bán.",
+                status_code=409,
+                detail="Tổng tiền Order đã thay đổi. Tải lại đơn trước khi thanh toán.",
             )
-        if order["status"] != "OPEN":
+        existing_debt = order["status"] == "PAID" and order["settlement_status"] == "DEBT"
+        if order["status"] != "OPEN" and not existing_debt:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Đơn bán không còn ở trạng thái chờ thanh toán.",
+                status_code=409,
+                detail="Đơn đã kết thúc thanh toán hoặc đã bị hủy.",
             )
 
-        if not bool(order["stock_deducted"]):
-            record_order_stock(
+        method = payload.payment_method
+        if method is None and payload.fund_account_id is not None:
+            # Backward compatible with the existing Web sales page.
+            account = connection.execute(
+                "SELECT type FROM fund_accounts WHERE id = ?",
+                (payload.fund_account_id,),
+            ).fetchone()
+            method = account["type"] if account else None
+        if method not in ("CASH", "BANK", "DEBT"):
+            raise HTTPException(status_code=422, detail="Chọn hình thức thanh toán.")
+
+        if existing_debt and method == "DEBT":
+            raise HTTPException(status_code=409, detail="Đơn đã ghi nợ.")
+        if existing_debt and (payload.request_einvoice or payload.customer_id is not None):
+            raise HTTPException(
+                status_code=409,
+                detail="Thu nợ không được thay đổi thông tin hóa đơn.",
+            )
+
+        customer_id = payload.customer_id if payload.customer_id is not None else order["customer_id"]
+        if customer_id is not None:
+            ensure_customer(connection, customer_id)
+        if method == "DEBT" and customer_id is None:
+            raise HTTPException(status_code=422, detail="Ghi nợ cần chọn khách hàng.")
+        if payload.request_einvoice and customer_id is None:
+            raise HTTPException(status_code=422, detail="Xuất HĐĐT cần chọn khách hàng.")
+
+        if method != "DEBT":
+            if payload.fund_account_id is None:
+                raise HTTPException(status_code=422, detail="Chọn quỹ hoặc tài khoản nhận tiền.")
+            fund = connection.execute(
+                "SELECT type, is_active FROM fund_accounts WHERE id = ?",
+                (payload.fund_account_id,),
+            ).fetchone()
+            if fund is None or not bool(fund["is_active"]) or fund["type"] != method:
+                raise HTTPException(status_code=422, detail="Quỹ không đúng hình thức thanh toán.")
+        elif payload.fund_account_id is not None or payload.actual_received_amount is not None:
+            raise HTTPException(status_code=422, detail="Ghi nợ không được ghi tiền vào quỹ.")
+
+        if not existing_debt:
+            if not bool(order["stock_deducted"]):
+                record_order_stock(connection, order_id, movement_time=paid_at)
+            if customer_id is not None:
+                connection.execute(
+                    "UPDATE sales_orders SET customer_id = ? WHERE id = ?",
+                    (customer_id, order_id),
+                )
+            if payload.request_einvoice:
+                if bool(order["has_einvoice"]) or bool(order["einvoice_requested"]):
+                    raise HTTPException(status_code=409, detail="Đơn đã có yêu cầu HĐĐT.")
+                connection.execute(
+                    "INSERT INTO electronic_invoices (sales_order_id, status) VALUES (?, 'DRAFT')",
+                    (order_id,),
+                )
+
+        if method == "DEBT":
+            connection.execute(
+                """
+                UPDATE sales_orders
+                SET status = 'PAID', settlement_status = 'DEBT',
+                    fund_account_id = NULL, actual_received_amount = NULL,
+                    payment_reference_code = NULL, paid_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (order_id,),
+            )
+        else:
+            apply_payment(
                 connection,
                 order_id,
-                movement_time=paid_at,
+                fund_account_id=payload.fund_account_id,
+                actual_received_amount=payload.actual_received_amount,
+                paid_at=paid_at,
             )
-
-        apply_payment(
-            connection,
-            order_id,
-            fund_account_id=payload.fund_account_id,
-            actual_received_amount=payload.actual_received_amount,
-            paid_at=paid_at,
-        )
         connection.commit()
-
         row = select_order(connection, order_id)
         assert row is not None
         output = order_to_output(connection, row)
 
-    backup_database(reason="sale-order-paid")
+    backup_database(reason="sale-order-paid" if method != "DEBT" else "sale-order-debt")
     return output
 
 
@@ -1381,6 +1473,7 @@ def void_order(
     reason_clean = clean_text(reason) or "Xóa đơn bán"
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         order = select_order(connection, order_id)
         if order is None:
             raise HTTPException(
