@@ -960,12 +960,27 @@ def init_db() -> None:
                     CHECK (print_status IN ('PRINTED', 'FAILED')),
                 error_message TEXT,
                 payload_json TEXT NOT NULL,
+                kitchen_print_ok INTEGER,
+                check_print_ok INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (sales_order_id)
                     REFERENCES sales_orders(id) ON DELETE CASCADE
             )
             """
         )
+        ticket_columns = {
+            row["name"] for row in connection.execute(
+                "PRAGMA table_info(kitchen_tickets)"
+            ).fetchall()
+        }
+        if "kitchen_print_ok" not in ticket_columns:
+            connection.execute(
+                "ALTER TABLE kitchen_tickets ADD COLUMN kitchen_print_ok INTEGER"
+            )
+        if "check_print_ok" not in ticket_columns:
+            connection.execute(
+                "ALTER TABLE kitchen_tickets ADD COLUMN check_print_ok INTEGER"
+            )
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_kitchen_tickets_order
