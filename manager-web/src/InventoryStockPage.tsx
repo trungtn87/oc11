@@ -339,6 +339,8 @@ export default function InventoryStockPage() {
       key: "stock_quantity",
       width: 145,
       align: "right",
+      sorter: (a, b) => a.stock_quantity - b.stock_quantity,
+      defaultSortOrder: "ascend",
       render: (value: number) => (
         <Text
           strong
@@ -400,6 +402,22 @@ export default function InventoryStockPage() {
         )
     },
     {
+      title: "Theo dõi",
+      key: "is_stock_tracked",
+      width: 120,
+      render: (_, row) => (
+        <Switch
+          size="small"
+          checked={row.is_stock_tracked}
+          loading={trackingSavingId === row.item_id}
+          disabled={trackingSavingId !== null}
+          onChange={(checked) => void toggleTracking(row, checked)}
+          checkedChildren="Bật"
+          unCheckedChildren="Tắt"
+        />
+      )
+    },
+    {
       title: "Thao tác",
       key: "action",
       width: 150,
@@ -409,7 +427,11 @@ export default function InventoryStockPage() {
           <Button type="link" onClick={() => void openHistory(row)}>
             Lịch sử
           </Button>
-          <Button type="link" onClick={() => openAdjustment(row)}>
+          <Button
+            type="link"
+            disabled={Boolean(asOf) || !row.is_stock_tracked}
+            onClick={() => openAdjustment(row)}
+          >
             Đối chiếu
           </Button>
         </Space>
@@ -512,6 +534,9 @@ export default function InventoryStockPage() {
       </div>
 
       <div className="toolbar stock-toolbar">
+        <Button type="primary" onClick={openBulk} disabled={Boolean(asOf)}>
+          + Kiểm kho nhiều mặt hàng
+        </Button>
         <Input.Search
           allowClear
           placeholder="Tìm mặt hàng..."
@@ -534,6 +559,17 @@ export default function InventoryStockPage() {
           ]}
         />
 
+        <Select<TrackingFilter>
+          value={trackingFilter}
+          onChange={setTrackingFilter}
+          style={{ minWidth: 180 }}
+          options={[
+            { value: "TRACKED", label: "Đang theo dõi" },
+            { value: "UNTRACKED", label: "Ngừng theo dõi" },
+            { value: "ALL", label: "Tất cả hàng hóa" }
+          ]}
+        />
+
         <Input
           type="date"
           value={asOf}
@@ -546,16 +582,17 @@ export default function InventoryStockPage() {
           Lấy dữ liệu
         </Button>
 
-        {(search || groupFilter !== "all" || asOf) && (
+        {(search || groupFilter !== "all" || trackingFilter !== "TRACKED" || asOf) && (
           <Button
             onClick={() => {
               setSearch("");
               setGroupFilter("all");
+              setTrackingFilter("TRACKED");
               setAsOf("");
               void (async () => {
                 try {
                   setLoading(true);
-                  setStocks(await getInventoryStock());
+                  setStocks(await getInventoryStock({ tracking: "TRACKED" }));
                 } finally {
                   setLoading(false);
                 }
@@ -582,6 +619,81 @@ export default function InventoryStockPage() {
           locale={{ emptyText: "Chưa có dữ liệu tồn kho." }}
         />
       </div>
+
+      <Modal
+        open={bulkOpen}
+        title="Kiểm kho nhiều mặt hàng"
+        width="min(950px, 96vw)"
+        okText={bulkPending ? "Thử đồng bộ lại" : "Lưu kiểm kho"}
+        cancelText="Đóng"
+        confirmLoading={bulkSaving}
+        onOk={() => void saveBulk()}
+        onCancel={() => {
+          setBulkOpen(false);
+          setBulkDraft({});
+          setBulkPending(null);
+        }}
+      >
+        <Text type="secondary">
+          Nhập số lượng đếm được vào các ô cần kiểm. Để trống những mặt hàng chưa kiểm.
+          Chỉ những dòng đã nhập mới được ghi vào phiếu kiểm kho. Đơn vị là đơn vị nhỏ nhất.
+        </Text>
+        {bulkPending && (
+          <div style={{ marginTop: 12 }}>
+            <Text type="warning">
+              Đã thử gửi phiếu này. Giữ nguyên dữ liệu để gửi lại an toàn nếu mất kết nối.
+              Muốn sửa số đếm, đóng phiếu và tải tồn kho mới trước khi kiểm lại.
+            </Text>
+          </div>
+        )}
+        <div style={{ marginTop: 16 }}>
+          <Table<InventoryStock>
+            rowKey="item_id"
+            size="small"
+            pagination={{ pageSize: 30 }}
+            scroll={{ y: 440 }}
+            dataSource={stocks.filter((row) => row.is_stock_tracked)}
+            columns={[
+              { title: "Hàng hóa", dataIndex: "item_name", key: "item_name" },
+              {
+                title: "Tồn hệ thống",
+                key: "system",
+                width: 150,
+                align: "right",
+                render: (_, row) => `${number(row.stock_quantity)} ${row.smallest_unit_name}`
+              },
+              {
+                title: "Thực tế đếm được",
+                key: "actual",
+                width: 155,
+                render: (_, row) => (
+                  <InputNumber<number>
+                    min={0}
+                    step="any"
+                    placeholder="Chưa kiểm"
+                    style={{ width: "100%" }}
+                    disabled={bulkPending !== null || bulkSaving}
+                    value={bulkDraft[row.item_id]}
+                    onChange={(value) =>
+                      setBulkDraft((previous) => ({ ...previous, [row.item_id]: value ?? undefined }))
+                    }
+                  />
+                )
+              },
+              {
+                title: "Chênh lệch",
+                key: "difference",
+                width: 135,
+                align: "right",
+                render: (_, row) =>
+                  bulkDraft[row.item_id] === undefined
+                    ? "—"
+                    : `${signed((bulkDraft[row.item_id] as number) - row.stock_quantity)} ${row.smallest_unit_name}`
+              }
+            ]}
+          />
+        </div>
+      </Modal>
 
       <Modal
         open={historyOpen}
