@@ -33,6 +33,7 @@ class InventoryStockItem(BaseModel):
     last_purchase_unit_id: int | None
     last_purchase_unit_name: str | None
     last_purchase_unit_price: int | None
+    last_purchase_conversion_factor: float | None
     last_purchase_price_per_smallest_unit: float | None
     last_reconciled_at: str | None
     last_reconciled_quantity: float | None
@@ -399,6 +400,11 @@ def list_inventory_stock(
                     ),
                     last_purchase_unit_price=(
                         purchase["unit_price"] if purchase else None
+                    ),
+                    last_purchase_conversion_factor=(
+                        float(purchase["conversion_factor"])
+                        if purchase is not None and float(purchase["conversion_factor"]) > 0
+                        else None
                     ),
                     last_purchase_price_per_smallest_unit=price_per_smallest,
                     last_reconciled_at=(

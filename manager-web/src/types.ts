@@ -282,6 +282,7 @@ export type InventoryStock = {
   last_purchase_unit_id: number | null;
   last_purchase_unit_name: string | null;
   last_purchase_unit_price: number | null;
+  last_purchase_conversion_factor: number | null;
   last_purchase_price_per_smallest_unit: number | null;
   last_reconciled_at: string | null;
   last_reconciled_quantity: number | null;

@@ -35,8 +35,6 @@ import {
   HomeOutlined,
   ImportOutlined,
   InboxOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
   PlusOutlined,
   SettingOutlined,
   ShoppingCartOutlined,
@@ -82,10 +80,7 @@ import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
 import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
 import SurchargesPage from "./SurchargesPage";
-import {
-  KitchenPrinterSettings,
-  RestaurantTablesSettings
-} from "./RestaurantSettingsPage";
+import { RestaurantTablesSettings } from "./RestaurantSettingsPage";
 import { oc11LogoDataUri } from "./oc11LogoData";
 import type {
   BackupStatus,
@@ -2680,7 +2675,6 @@ const pageTitles: Record<string, string> = {
 
 function App() {
   const [page, setPage] = useState("dashboard");
-  const [collapsed, setCollapsed] = useState(true);
   const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
   const [linkedPurchaseReceiptId, setLinkedPurchaseReceiptId] = useState<number | null>(null);
   const [editingSaleOrder, setEditingSaleOrder] = useState<SaleOrder | null>(null);
@@ -2850,11 +2844,6 @@ function App() {
               children: <RestaurantTablesSettings />
             },
             {
-              key: "printer",
-              label: "Máy in bếp",
-              children: <KitchenPrinterSettings />
-            },
-            {
               key: "backup",
               label: "Sao lưu dữ liệu",
               children: <BackupSettingsPage />
@@ -2871,13 +2860,9 @@ function App() {
     <Layout className="app-shell">
       <Sider
         width={202}
-        collapsedWidth={58}
-        className={`sidebar ${collapsed ? "sidebar-collapsed" : ""}`}
-        collapsible
-        collapsed={collapsed}
-        trigger={null}
+        className="sidebar"
       >
-        <BrandLogo collapsed={collapsed} />
+        <BrandLogo collapsed={false} />
 
         <Menu
           theme="dark"
@@ -2892,13 +2877,6 @@ function App() {
       <Layout>
         <Header className="topbar">
           <div className="topbar-left">
-            <Button
-              type="text"
-              className="sidebar-toggle"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setCollapsed((value) => !value)}
-              aria-label={collapsed ? "Mở thanh menu" : "Thu gọn thanh menu"}
-            />
             <Text strong className="topbar-title">
               {page === "dashboard" ? "Tổng quan" : pageTitles[page] ?? "Ốc 11 Manager"}
             </Text>

@@ -938,3 +938,101 @@
   .pos-checkout-actions { gap: 5px; }
   .pos-checkout-actions .ant-btn { padding: 2px 4px; font-size: 12px; height: 45px; }
 }
+
+
+/* Dashboard POS — same navy, light surfaces and compact statistics as Manager. */
+.pos-dashboard {
+  height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: #f5f8fc;
+  padding: 20px 24px 32px;
+  color: #172033;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+.pos-dashboard-heading, .pos-dashboard-stock-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.pos-dashboard h1 { font-size: 23px; color: #0c2949; margin: 0 0 5px; }
+.pos-dashboard h2 { font-size: 16px; color: #0c2949; margin: 0; }
+.pos-dashboard p { margin: 5px 0 0; color: #7b899c; font-size: 12px; }
+.pos-dashboard-refresh, .pos-dashboard-error button {
+  border: 1px solid #cbd9ed; border-radius: 8px; background: #fff;
+  color: #1668cf; padding: 9px 14px; cursor: pointer; font-weight: 600;
+  white-space: nowrap;
+}
+.pos-dashboard-refresh:disabled { opacity: .6; cursor: wait; }
+.pos-dashboard-error {
+  padding: 12px; margin-bottom: 14px; border-radius: 8px;
+  color: #bd1d29; background: #fff1f0; border: 1px solid #ffa39e;
+}
+.pos-dashboard-error button { margin-left: 12px; }
+.pos-dashboard-metrics {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px; margin-bottom: 14px;
+}
+.pos-dashboard-metric, .pos-dashboard-panel {
+  background: #fff; border: 1px solid #e4ebf4; border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(17, 52, 91, .045);
+}
+.pos-dashboard-metric { padding: 16px; min-width: 0; border-top: 3px solid #327be2; }
+.pos-dashboard-metric > span {
+  display: block; font-size: 12px; font-weight: 600; color: #6b7a91; margin-bottom: 12px;
+}
+.pos-dashboard-metric > strong {
+  display: block; font-size: clamp(19px, 2vw, 27px); color: #0e2f55;
+  margin-bottom: 9px; white-space: nowrap;
+}
+.pos-dashboard-metric > small { color: #6b7a91; font-size: 11px; line-height: 1.65; }
+.pos-dashboard-metric-alert { border-top-color: #cf1322; }
+.pos-dashboard-metric-alert > strong { color: #cf1322; }
+.pos-dashboard-details { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.pos-dashboard-panel { padding: 16px 18px; min-width: 0; }
+.pos-dashboard-panel h2 { margin-bottom: 14px; }
+.pos-dashboard-section-title {
+  font-size: 12px; font-weight: 700; margin: 14px 0 5px; color: #327be2;
+  border-bottom: 1px solid #eaf0f7; padding-bottom: 8px;
+}
+.pos-dashboard-line { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; font-size: 13px; }
+.pos-dashboard-line span { color: #66748b; }
+.pos-dashboard-account {
+  display: flex; gap: 12px; align-items: center; padding: 11px 0;
+  border-bottom: 1px solid #edf2f8; font-size: 13px;
+}
+.pos-dashboard-account:last-child { border-bottom: none; }
+.pos-dashboard-account-icon {
+  display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 9px; background: #e7f0ff; color: #1466d0; font-weight: 700;
+}
+.pos-dashboard-account div { min-width: 0; flex: 1; }
+.pos-dashboard-account strong, .pos-dashboard-account small { display: block; }
+.pos-dashboard-account small { color: #8a98a9; margin-top: 4px; }
+.pos-dashboard-account b { color: #122b4a; white-space: nowrap; }
+.pos-dashboard-stock-title { margin-bottom: 10px; }
+.pos-dashboard-stock-title h2 { margin-bottom: 0; }
+.pos-dashboard-stock-title > span {
+  padding: 6px 10px; color: #bd1d29; background: #fff0ef;
+  border-radius: 8px; white-space: nowrap; font-size: 12px;
+}
+.pos-dashboard-table-wrap { overflow-x: auto; }
+.pos-dashboard-table-wrap table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pos-dashboard-table-wrap th {
+  padding: 11px 10px; background: #f5f8fc; color: #65738a;
+  text-align: left; white-space: nowrap; font-size: 12px;
+}
+.pos-dashboard-table-wrap td { padding: 12px 10px; border-bottom: 1px solid #ebf0f7; }
+.pos-dashboard-negative { color: #cf1322; font-weight: 700; }
+.pos-dashboard-zero { color: #d48806; font-weight: 700; }
+.pos-dashboard-empty { text-align: center; padding: 20px !important; color: #8a98a9; }
+@media (max-width: 1100px) {
+  .pos-dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 730px) {
+  .pos-dashboard { padding: 14px; }
+  .pos-dashboard-details, .pos-dashboard-metrics { grid-template-columns: 1fr; }
+  .pos-dashboard-heading { align-items: flex-start; }
+  .pos-dashboard h1 { font-size: 20px; }
+}
