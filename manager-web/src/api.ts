@@ -571,7 +571,7 @@ export function getConsumptionSummary(params: {
 
 
 export function getSaleOrders(params?: {
-  status?: "OPEN" | "PAID" | "VOID";
+  status?: "OPEN" | "PAID" | "DEBT" | "VOID";
   search?: string;
   from_date?: string;
   to_date?: string;
