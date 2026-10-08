@@ -50,6 +50,18 @@ def test_only_added_quantity_is_sent_and_receives_checklist(tmp_path, monkeypatc
         assert nothing.json()["print_status"] == "NO_NEW_ITEMS"
         assert len(printed) == 2
 
+        # Editing a note does not represent an added serving.
+        note_only = client.put(f"/api/sales/orders/{order_id}", json={
+            **create_payload,
+            "payment_status": "DEBT",
+            "items": [{"menu_item_id": item_id, "quantity": 1, "note": "Khong hanh"}],
+        })
+        assert note_only.status_code == 200, note_only.text
+        assert client.post(f"/api/pos/orders/{order_id}/send-kitchen").json()[
+            "print_status"
+        ] == "NO_NEW_ITEMS"
+        assert len(printed) == 2
+
         changed = client.put(f"/api/sales/orders/{order_id}", json={
             **create_payload,
             "payment_status": "DEBT",
