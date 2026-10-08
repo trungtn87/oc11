@@ -716,11 +716,6 @@ export default function PosApp() {
             await tryPrintCancelSlip(canceled.id);
           }
         } catch (error) {
-              messageApi.error("Đã hủy Order nhưng chưa gửi được phiếu hủy bếp: " +
-                (error instanceof Error ? error.message : "Lỗi máy in."));
-            }
-          }
-        } catch (error) {
           messageApi.error(error instanceof Error ? error.message : "Không hủy được Order.");
           throw error;
         } finally {
