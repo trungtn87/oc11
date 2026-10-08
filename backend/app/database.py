@@ -324,6 +324,20 @@ def init_db() -> None:
             )
             """
         )
+        # Add inventory tracking independently of sales availability.
+        item_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(items)").fetchall()
+        }
+        if "is_stock_tracked" not in item_columns:
+            connection.execute(
+                """
+                ALTER TABLE items
+                ADD COLUMN is_stock_tracked INTEGER NOT NULL DEFAULT 1
+                    CHECK (is_stock_tracked IN (0, 1))
+                """
+            )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS item_unit_conversions (
@@ -1206,6 +1220,29 @@ def init_db() -> None:
             )
             """
         )
+        # Retried Android uploads must not double-apply a stocktake.
+        adjustment_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(stock_adjustments)"
+            ).fetchall()
+        }
+        if "client_sync_id" not in adjustment_columns:
+            connection.execute(
+                "ALTER TABLE stock_adjustments ADD COLUMN client_sync_id TEXT"
+            )
+        if "client_payload_hash" not in adjustment_columns:
+            connection.execute(
+                "ALTER TABLE stock_adjustments ADD COLUMN client_payload_hash TEXT"
+            )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_adjustments_client_sync_id
+            ON stock_adjustments (client_sync_id)
+            WHERE client_sync_id IS NOT NULL
+            """
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS stock_adjustment_items (
