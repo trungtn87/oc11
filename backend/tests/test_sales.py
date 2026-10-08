@@ -157,6 +157,8 @@ def test_paid_sale_records_money_and_deducts_stock_then_void_restores_all(
         assert created.status_code == 201
         order = created.json()
         assert order["status"] == "OPEN"
+        assert order["fund_account_type"] is None
+        assert order["fund_account_name"] is None
         assert order["total_amount"] == 300_000
         assert order["stock_deducted"] is True
 
@@ -186,6 +188,8 @@ def test_paid_sale_records_money_and_deducts_stock_then_void_restores_all(
         assert paid.status_code == 200
         paid_order = paid.json()
         assert paid_order["status"] == "PAID"
+        assert paid_order["fund_account_type"] == "CASH"
+        assert paid_order["fund_account_name"] == "Quỹ bán hàng"
         assert paid_order["actual_received_amount"] == 299_000
         assert paid_order["stock_deducted"] is True
         assert paid_order["payment_reference_code"].startswith("PT-")
@@ -847,3 +851,65 @@ def test_issued_einvoice_locks_sale_edit_and_delete(
         assert unchanged["status"] == "OPEN"
         assert unchanged["total_amount"] == 150_000
 
+
+
+def test_sales_order_list_exposes_bank_fund_type_and_keeps_filter(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+        with sqlite3.connect(db_path) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO fund_accounts (
+                    name, type, current_balance, is_active, is_default
+                ) VALUES ('BIDV', 'BANK', 0, 1, 1)
+                """
+            )
+            bank_id = cursor.lastrowid
+
+        created = client.post(
+            "/api/sales/orders",
+            json={
+                "order_time": "2026-10-06T19:00:00",
+                "items": [
+                    {"menu_item_id": ids["menu_item_id"], "quantity": 1}
+                ],
+            },
+        )
+        assert created.status_code == 201
+        order_id = created.json()["id"]
+        assert created.json()["fund_account_type"] is None
+
+        paid = client.post(
+            f"/api/sales/orders/{order_id}/pay",
+            json={
+                "fund_account_id": bank_id,
+                "actual_received_amount": 150_000,
+            },
+        )
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["fund_account_name"] == "BIDV"
+        assert paid.json()["fund_account_type"] == "BANK"
+
+        listed = client.get("/api/sales/orders")
+        assert listed.status_code == 200
+        order = next(x for x in listed.json() if x["id"] == order_id)
+        assert order["fund_account_type"] == "BANK"
+        assert order["fund_account_name"] == "BIDV"
+
+        bank_filtered = client.get(
+            "/api/sales/orders", params={"fund_account_id": bank_id}
+        )
+        assert bank_filtered.status_code == 200
+        assert [x["id"] for x in bank_filtered.json()] == [order_id]
+
+        cash_filtered = client.get(
+            "/api/sales/orders",
+            params={"fund_account_id": ids["fund_account_id"]},
+        )
+        assert cash_filtered.status_code == 200
+        assert cash_filtered.json() == []
