@@ -116,7 +116,7 @@ export default function PosApp() {
   const [printerSettings, setPrinterSettings] = useState<PosSettings>({
     kitchen_printer_name: "",
     cashier_printer_name: "",
-    send_kitchen_targets: "KITCHEN",
+    send_kitchen_targets: "BOTH",
     print_receipt_targets: "CASHIER"
   });
   const [busy, setBusy] = useState(false);
@@ -130,7 +130,6 @@ export default function PosApp() {
   const [noteDraft, setNoteDraft] = useState("");
   const [kitchenNote, setKitchenNote] = useState("");
   const kitchenNoteDrafts = useRef<Map<number, string>>(new Map());
-  const partialKitchenPrints = useRef<Set<number>>(new Set());
   const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
   const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
   const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
@@ -547,10 +546,11 @@ export default function PosApp() {
     const noteForThisPrint = kitchenNote;
     try {
       const ticket = await sendSaleOrderToKitchen(saved.id, noteForThisPrint);
+      if (ticket.print_status === "NO_NEW_ITEMS") {
+        messageApi.info("Không có món mới cần gửi bếp.");
+        return;
+      }
       if (ticket.print_status !== "PRINTED") {
-        if (ticket.printer_results.some((result) => result.ok) && saved.table_id !== null) {
-          partialKitchenPrints.current.add(saved.table_id);
-        }
         messageApi.error(
           "Order đã lưu nhưng chưa in đủ phiếu: " +
           (ticket.error_message || "Kiểm tra cấu hình máy in.")
@@ -560,7 +560,6 @@ export default function PosApp() {
       setKitchenNote("");
       if (saved.table_id !== null) {
         kitchenNoteDrafts.current.delete(saved.table_id);
-        partialKitchenPrints.current.delete(saved.table_id);
       }
       setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
       messageApi.success("Đã gửi bếp " + saved.order_code + ".");
@@ -572,18 +571,7 @@ export default function PosApp() {
   }
 
   function sendKitchen() {
-    if (busy) return;
-    if (editingOrder?.kitchen_sent_at || (tableId !== null && partialKitchenPrints.current.has(tableId))) {
-      Modal.confirm({
-        title: "Gửi lại toàn bộ Order tới bếp?",
-        content: "Các máy in được chọn sẽ in lại toàn bộ món. Nếu một máy đã in thành công trước đó, máy ấy có thể nhận phiếu trùng.",
-        okText: "Gửi lại",
-        cancelText: "Không",
-        onOk: () => performSendKitchen()
-      });
-    } else {
-      void performSendKitchen();
-    }
+    if (!busy) void performSendKitchen();
   }
 
   async function tryPrintPaidReceipt(orderId: number) {
@@ -644,7 +632,6 @@ export default function PosApp() {
       setPaymentOpen(false);
       if (tableId !== null) {
         kitchenNoteDrafts.current.delete(tableId);
-        partialKitchenPrints.current.delete(tableId);
       }
       setKitchenNote("");
       setEditingOrder(null);
@@ -1201,18 +1188,11 @@ export default function PosApp() {
               In thử
             </Button>
           </div>
-          <label>Chức năng Gửi bếp in tại</label>
-          <Select
-            value={printerSettings.send_kitchen_targets}
-            disabled={printerLoading}
-            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
-              ({ ...current, send_kitchen_targets: value }))}
-            options={[
-              { value: "KITCHEN", label: "Chỉ máy in bếp" },
-              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
-              { value: "BOTH", label: "Cả hai máy" }
-            ]}
-          />
+          <div className="pos-printer-info">
+            Gửi bếp luôn in 2 phiếu 80 mm: chế biến ở máy bếp và kiểm đồ
+            (có ô tick) ở máy thu ngân. Mỗi lần chỉ in món mới.
+            Nếu lỗi sẽ chỉ in bù tại máy chưa in thành công.
+          </div>
           <label>Chức năng In phiếu thanh toán in tại</label>
           <Select
             value={printerSettings.print_receipt_targets}
