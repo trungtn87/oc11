@@ -804,7 +804,8 @@ export type SaleOrderInput = {
   guest_count?: number | null;
   customer_id?: number | null;
   note?: string | null;
-  payment_status?: "PAID" | "DEBT" | null;
+  payment_status?: "PAID" | "DEBT" | null; // legacy callers
+  settlement_target?: "OPEN" | "DEBT" | "PAID" | null;
   items: Array<{
     menu_item_id: number;
     menu_item_option_id?: number | null;

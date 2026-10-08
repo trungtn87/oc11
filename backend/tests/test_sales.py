@@ -913,3 +913,177 @@ def test_sales_order_list_exposes_bank_fund_type_and_keeps_filter(
         )
         assert cash_filtered.status_code == 200
         assert cash_filtered.json() == []
+
+
+
+def test_shared_web_and_pos_debt_closes_sale_without_fund_receipt(tmp_path, monkeypatch):
+    """The Web edit path and POS checkout share the same receivable status."""
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+        customer = client.post("/api/pos/customers", json={
+            "name": "Khách ghi nợ", "phone": "0911888999",
+        })
+        assert customer.status_code == 201, customer.text
+        customer_id = customer.json()["id"]
+        created = client.post("/api/sales/orders", json={
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert created.status_code == 201
+        order = created.json()
+        assert order["status"] == "OPEN"
+        assert client.get("/api/sales/orders?status=DEBT").json() == []
+
+        missing_customer = client.put(f"/api/sales/orders/{order['id']}", json={
+            "settlement_target": "DEBT",
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert missing_customer.status_code == 422
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["status"] == "OPEN"
+
+        closed = client.put(f"/api/sales/orders/{order['id']}", json={
+            "settlement_target": "DEBT",
+            "customer_id": customer_id,
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert closed.status_code == 200, closed.text
+        debt = closed.json()
+        assert debt["status"] == "PAID"
+        assert debt["settlement_status"] == "DEBT"
+        assert debt["customer_id"] == customer_id
+        assert debt["fund_account_id"] is None
+        assert debt["paid_at"] is None
+        assert client.get("/api/sales/orders?status=OPEN").json() == []
+        assert [row["id"] for row in client.get("/api/sales/orders?status=DEBT").json()] == [order["id"]]
+        assert client.get("/api/sales/orders?status=PAID").json() == []
+
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE' AND is_void=0"
+            ).fetchone()[0] == 0
+
+        # The existing POS /pay contract collects this same Web debt exactly once.
+        paid = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH",
+            "fund_account_id": ids["fund_account_id"],
+            "expected_total_amount": 150_000,
+        })
+        assert paid.status_code == 200, paid.text
+        assert paid.json()["settlement_status"] == "PAID"
+        assert len(client.get("/api/sales/orders?status=DEBT").json()) == 0
+        assert [row["id"] for row in client.get("/api/sales/orders?status=PAID").json()] == [order["id"]]
+        assert client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": ids["fund_account_id"]
+        }).status_code == 409
+
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE' AND is_void=0"
+            ).fetchone()[0] == 1
+        stock = client.get("/api/inventory/stock").json()
+        mực = next(row for row in stock if row["item_id"] == ids["item_id"])
+        assert mực["stock_quantity"] == 9.5
+
+
+def test_web_edit_paid_into_debt_reverses_fund_without_restoring_sold_stock(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+        customer_id = client.post("/api/pos/customers", json={
+            "name": "Khách A"
+        }).json()["id"]
+        created = client.post("/api/sales/orders", json={
+            "customer_id": customer_id,
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        }).json()
+        paid = client.post(f"/api/sales/orders/{created['id']}/pay", json={
+            "fund_account_id": ids["fund_account_id"], "actual_received_amount": 150_000
+        })
+        assert paid.status_code == 200
+        switched = client.put(f"/api/sales/orders/{created['id']}", json={
+            "customer_id": customer_id,
+            "settlement_target": "DEBT",
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert switched.status_code == 200, switched.text
+        assert switched.json()["status"] == "PAID"
+        assert switched.json()["settlement_status"] == "DEBT"
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT current_balance FROM fund_accounts WHERE id = ?",
+                (ids["fund_account_id"],)
+            ).fetchone()[0] == 0
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE' AND is_void=0"
+            ).fetchone()[0] == 0
+        stock = client.get("/api/inventory/stock").json()
+        assert next(row for row in stock if row["item_id"] == ids["item_id"])["stock_quantity"] == 9.5
+
+
+def test_edit_closed_debt_when_table_reused_does_not_reopen_or_steal_table(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+        area = client.post("/api/pos/areas", json={"name": "Sân"}).json()
+        table = client.post("/api/pos/tables", json={
+            "area_id": area["id"], "name": "Bàn 1", "is_active": True,
+        }).json()
+        customer_id = client.post("/api/pos/customers", json={
+            "name": "Khách ghi sổ"
+        }).json()["id"]
+        first = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        }).json()
+        debt = client.post(f"/api/sales/orders/{first['id']}/pay", json={
+            "payment_method": "DEBT", "customer_id": customer_id,
+        })
+        assert debt.status_code == 200
+        second = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert second.status_code == 201
+
+        edited = client.put(f"/api/sales/orders/{first['id']}", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "customer_id": customer_id, "settlement_target": "DEBT",
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["status"] == "PAID"
+        assert edited.json()["settlement_status"] == "DEBT"
+        occupied = client.get("/api/pos/tables").json()
+        assert occupied[0]["open_order_id"] == second.json()["id"]
+        refused = client.put(f"/api/sales/orders/{first['id']}", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "customer_id": customer_id, "settlement_target": "OPEN",
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert refused.status_code == 409
+        assert client.get(f"/api/sales/orders/{first['id']}").json()["settlement_status"] == "DEBT"
+
+
+def test_legacy_debt_edit_keeps_open_sales_open(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        ids = seed_sale_data(db_path)
+        order = client.post("/api/sales/orders", json={
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        }).json()
+        # An older installed POS/Web build uses payment_status=DEBT to save OPEN.
+        edited = client.put(f"/api/sales/orders/{order['id']}", json={
+            "payment_status": "DEBT",
+            "items": [{"menu_item_id": ids["menu_item_id"], "quantity": 1}],
+        })
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["status"] == "OPEN"
+        assert client.get("/api/sales/orders?status=DEBT").json() == []

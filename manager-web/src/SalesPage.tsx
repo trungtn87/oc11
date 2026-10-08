@@ -18,6 +18,8 @@ import {
   createSaleOrder,
   createSurchargePreset,
   getFundAccounts,
+  getPosCustomers,
+  createPosCustomer,
   getMenuItems,
   getSaleOrders,
   getSurchargePresets,
@@ -30,6 +32,8 @@ import type {
   FundAccountType,
   MenuItem,
   MenuItemOption,
+  PosCustomer,
+  PosCustomerInput,
   SaleOrder,
   SurchargePreset
 } from "./types";
@@ -165,7 +169,7 @@ export function SalesPosPage({
   const [actualReceived, setActualReceived] = useState<number>(0);
   const [actualTouched, setActualTouched] = useState(false);
   const [editPaymentStatus, setEditPaymentStatus] =
-    useState<"PAID" | "DEBT">("DEBT");
+    useState<"OPEN" | "DEBT" | "PAID">("OPEN");
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [orderSurcharges, setOrderSurcharges] = useState<CartSurcharge[]>([]);
   const [surchargeTarget, setSurchargeTarget] = useState<
@@ -180,6 +184,14 @@ export function SalesPosPage({
   const [orderTimeLocal, setOrderTimeLocal] = useState(() =>
     toLocalDateTimeInput(new Date())
   );
+  const [customers, setCustomers] = useState<PosCustomer[]>([]);
+  const [customerId, setCustomerId] = useState<number | undefined>();
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const [customerDraft, setCustomerDraft] = useState<PosCustomerInput>({
+    customer_type: "PERSON", name: "", phone: null, tax_code: null,
+    address: null, email: null, contact_name: null
+  });
   const [messageApi, messageContext] = message.useMessage();
 
   useEffect(() => {
@@ -187,15 +199,17 @@ export function SalesPosPage({
     async function load() {
       setLoading(true);
       try {
-        const [menu, funds, presets] = await Promise.all([
+        const [menu, funds, presets, customersList] = await Promise.all([
           getMenuItems(),
           getFundAccounts(),
-          getSurchargePresets()
+          getSurchargePresets(),
+          getPosCustomers()
         ]);
         if (cancelled) return;
         setMenuItems(menu.filter((item) => item.is_active));
         setAccounts(funds);
         setSurchargePresets(presets);
+        setCustomers(customersList);
         const preferred =
           funds.find(
             (account) =>
@@ -285,8 +299,10 @@ export function SalesPosPage({
     }
 
     setEditPaymentStatus(
-      editingOrder.status === "PAID" && editingOrder.settlement_status === "PAID" ? "PAID" : "DEBT"
+      editingOrder.status === "OPEN" ? "OPEN" :
+        editingOrder.settlement_status === "DEBT" ? "DEBT" : "PAID"
     );
+    setCustomerId(editingOrder.customer_id ?? undefined);
     setActualReceived(
       editingOrder.actual_received_amount ?? editingOrder.total_amount
     );
@@ -312,7 +328,8 @@ export function SalesPosPage({
     setSurchargeAmount(0);
     setActualTouched(false);
     setActualReceived(0);
-    setEditPaymentStatus("DEBT");
+    setEditPaymentStatus("OPEN");
+    setCustomerId(undefined);
     setOrderTimeLocal(toLocalDateTimeInput(new Date()));
 
     const preferred =
@@ -551,16 +568,54 @@ export function SalesPosPage({
     setFundAccountId(preferred?.id);
   };
 
-  const checkout = async (payNow: boolean) => {
+  const searchCustomers = async (term: string) => {
+    try {
+      setCustomers(await getPosCustomers(term));
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không tìm được khách hàng.");
+    }
+  };
+
+  const saveCustomer = async () => {
+    if (!customerDraft.name.trim()) {
+      messageApi.warning("Nhập tên khách hàng.");
+      return;
+    }
+    if (customerDraft.tax_code?.trim() && !customerDraft.address?.trim()) {
+      messageApi.warning("Nhập địa chỉ khi có mã số thuế.");
+      return;
+    }
+    setCustomerSaving(true);
+    try {
+      const added = await createPosCustomer(customerDraft);
+      setCustomers((current) => [added, ...current.filter((row) => row.id !== added.id)]);
+      setCustomerId(added.id);
+      setCreatingCustomer(false);
+      setCustomerDraft({
+        customer_type: "PERSON", name: "", phone: null, tax_code: null,
+        address: null, email: null, contact_name: null
+      });
+      messageApi.success("Đã thêm khách hàng.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không thêm được khách hàng.");
+    } finally {
+      setCustomerSaving(false);
+    }
+  };
+
+  const checkout = async (mode: "OPEN" | "DEBT" | "PAID") => {
+    if (saving) return;
     if (!cart.length) {
       messageApi.warning("Chưa có món trong đơn.");
       return;
     }
 
-    const needsPaymentAccount =
-      (editingOrder && editPaymentStatus === "PAID") ||
-      (!editingOrder && payNow);
-    if (needsPaymentAccount && !fundAccountId) {
+    const target = editingOrder ? editPaymentStatus : mode;
+    if (target === "DEBT" && !customerId) {
+      messageApi.warning("Ghi nợ phải chọn khách hàng để theo dõi công nợ.");
+      return;
+    }
+    if (target === "PAID" && !fundAccountId) {
       messageApi.warning("Chọn quỹ/tài khoản nhận tiền.");
       return;
     }
@@ -573,7 +628,7 @@ export function SalesPosPage({
 
     const orderPayload = {
       order_time: parsedOrderTime.toISOString(),
-      customer_id: editingOrder?.customer_id ?? null,
+      customer_id: customerId ?? null,
       note: editingOrder?.note ?? null,
       items: cart.map((line) => ({
         menu_item_id: line.menu_item_id,
@@ -588,15 +643,13 @@ export function SalesPosPage({
         name: surcharge.name,
         amount: surcharge.amount
       })),
-      payment_status: editingOrder ? editPaymentStatus : null,
+      // Both Web and POS now use the same canonical settlement states.
+      // Legacy payment_status=DEBT remains OPEN for installed old clients.
+      settlement_target: editingOrder ? target : null,
       fund_account_id:
-        editingOrder && editPaymentStatus === "PAID"
-          ? fundAccountId ?? null
-          : null,
+        editingOrder && target === "PAID" ? fundAccountId ?? null : null,
       actual_received_amount:
-        editingOrder && editPaymentStatus === "PAID"
-          ? Math.round(actualReceived)
-          : null
+        editingOrder && target === "PAID" ? Math.round(actualReceived) : null
     };
 
     setSaving(true);
@@ -605,53 +658,58 @@ export function SalesPosPage({
       if (editingOrder) {
         const updated = await updateSaleOrder(editingOrder.id, orderPayload);
         messageApi.success(
-          updated.status === "PAID"
-            ? `Đã cập nhật ${updated.order_code}. Tiền và kho đã được cân lại tự động.`
-            : `Đã cập nhật ${updated.order_code} thành nợ/chưa thanh toán. Tiền đã được đảo khỏi quỹ nếu trước đó đã thu.`
+          updated.status === "OPEN"
+            ? `Đã lưu ${updated.order_code} chờ thanh toán.`
+            : updated.settlement_status === "DEBT"
+              ? `Đã ghi nợ ${updated.order_code}; chưa thu tiền vào quỹ.`
+              : `Đã cập nhật thanh toán ${updated.order_code}. Quỹ và kho đã cân lại.`
         );
         onEditDone?.();
         return;
       }
 
       created = await createSaleOrder(orderPayload);
-
-      if (payNow) {
+      if (target === "PAID") {
         const paid = await paySaleOrder(created.id, {
+          payment_method: accountType,
           fund_account_id: fundAccountId as number,
+          expected_total_amount: created.total_amount,
           actual_received_amount: Math.round(actualReceived)
         });
-        messageApi.success(
-          `Đã thanh toán ${paid.order_code}. Kho đã được trừ tự động.`
-        );
+        messageApi.success(`Đã thanh toán ${paid.order_code}. Kho chỉ trừ một lần.`);
+      } else if (target === "DEBT") {
+        const debt = await paySaleOrder(created.id, {
+          payment_method: "DEBT",
+          customer_id: customerId,
+          expected_total_amount: created.total_amount
+        });
+        messageApi.success(`Đã ghi nợ ${debt.order_code}. Chưa thu tiền vào quỹ.`);
       } else {
-        messageApi.success(
-          `Đã lưu ${created.order_code}. Kho đã trừ, đơn đang chờ thanh toán.`
-        );
+        messageApi.success(`Đã lưu ${created.order_code} chờ thanh toán; chưa phải công nợ.`);
       }
 
       setCart([]);
       setOrderSurcharges([]);
+      setCustomerId(undefined);
       setActualTouched(false);
       setActualReceived(0);
       setOrderTimeLocal(toLocalDateTimeInput(new Date()));
     } catch (error) {
-      if (created && payNow) {
+      if (created && target !== "OPEN") {
         setCart([]);
         setOrderSurcharges([]);
+        setCustomerId(undefined);
         setActualTouched(false);
         setActualReceived(0);
         messageApi.error(
-          error instanceof Error
-            ? `Đã lưu ${created.order_code} nhưng chưa thanh toán: ${error.message}`
-            : `Đã lưu ${created.order_code} nhưng chưa thanh toán. Có thể thanh toán lại trong danh sách đơn.`
+          `Đã lưu ${created.order_code} ở trạng thái chờ thanh toán; ` +
+          (error instanceof Error ? error.message : "chưa kết thúc giao dịch.") +
+          " Có thể xử lý tiếp trong danh sách đơn."
         );
       } else {
         messageApi.error(
-          error instanceof Error
-            ? error.message
-            : editingOrder
-              ? "Không sửa được đơn bán."
-              : "Không lưu được đơn bán."
+          error instanceof Error ? error.message :
+            editingOrder ? "Không sửa được đơn bán." : "Không lưu được đơn bán."
         );
       }
     } finally {
@@ -670,7 +728,7 @@ export function SalesPosPage({
           <Text type="secondary">
             {editingOrder
               ? "Đơn chưa xuất hóa đơn điện tử: có thể sửa món, số lượng, phụ thu và tiền thực thu."
-              : "Lưu đơn sẽ trừ kho ngay; có thể thanh toán ngay hoặc thanh toán sau trong danh sách đơn."}
+              : "Lưu chờ thanh toán, ghi nợ có khách hàng, hoặc thanh toán ngay. Tất cả cùng hệ thống đơn bán và kho."}
           </Text>
         </div>
         {onOpenOrders && (
@@ -868,20 +926,56 @@ export function SalesPosPage({
               <strong>{money(total)} đ</strong>
             </div>
 
+            <div className="sales-customer-selection">
+              <div className="sales-customer-heading">
+                <Text type="secondary">
+                  Khách hàng {(editingOrder ? editPaymentStatus : "OPEN") === "DEBT"
+                    ? "(bắt buộc khi ghi nợ)" : "(tùy chọn)"}
+                </Text>
+                <Button type="link" size="small" onClick={() => setCreatingCustomer(true)}>
+                  + Thêm khách hàng
+                </Button>
+              </div>
+              <Select<number>
+                showSearch
+                allowClear
+                style={{ width: "100%" }}
+                placeholder="Tìm tên khách, số điện thoại hoặc MST"
+                optionFilterProp="label"
+                value={customerId}
+                onChange={(value) => setCustomerId(value)}
+                onSearch={(query) => void searchCustomers(query)}
+                options={[
+                  ...customers.map((row) => ({
+                    value: row.id,
+                    label: `${row.name} · ${row.phone || row.tax_code || row.customer_code}`
+                  })),
+                  ...(editingOrder?.customer_id &&
+                    !customers.some((row) => row.id === editingOrder.customer_id)
+                      ? [{ value: editingOrder.customer_id,
+                           label: editingOrder.customer_name ?? "Khách đã chọn" }]
+                      : [])
+                ]}
+              />
+              {(!editingOrder || editPaymentStatus === "OPEN") &&
+                <Text type="secondary">Lưu chờ thanh toán không tự tạo công nợ.</Text>}
+            </div>
+
             {editingOrder && (
               <label>
-                <span>Trạng thái thanh toán</span>
+                <span>Trạng thái đơn</span>
                 <Select
                   value={editPaymentStatus}
-                  onChange={(value: "PAID" | "DEBT") => {
+                  onChange={(value: "OPEN" | "DEBT" | "PAID") => {
                     setEditPaymentStatus(value);
                     if (value === "PAID" && actualReceived <= 0) {
                       setActualReceived(Math.round(total));
                     }
                   }}
                   options={[
-                    { value: "PAID", label: "Đã thanh toán" },
-                    { value: "DEBT", label: "Nợ / Chưa thanh toán" }
+                    { value: "OPEN", label: "Chờ thanh toán (đơn còn mở)" },
+                    { value: "DEBT", label: "Ghi nợ (đã kết thúc đơn)" },
+                    { value: "PAID", label: "Đã thanh toán" }
                   ]}
                 />
               </label>
@@ -946,7 +1040,9 @@ export function SalesPosPage({
               </>
             ) : (
               <Text type="secondary">
-                Đơn nợ vẫn giữ nguyên phần kho đã bán, chưa ghi tiền vào quỹ/tài khoản.
+                {editingOrder && editPaymentStatus === "DEBT"
+                  ? "Ghi nợ kết thúc đơn bán, chưa thu tiền và không tăng quỹ."
+                  : "Đơn chờ thanh toán chưa kết thúc, không phải công nợ."}
               </Text>
             )}
 
@@ -957,36 +1053,62 @@ export function SalesPosPage({
                 block
                 loading={saving}
                 disabled={!cart.length}
-                onClick={() => void checkout(false)}
+                onClick={() => void checkout("OPEN")}
               >
                 LƯU THAY ĐỔI
               </Button>
             ) : (
-              <Space.Compact block>
+              <div className="sales-checkout-choices">
                 <Button
-                  size="large"
-                  block
-                  loading={saving}
-                  disabled={!cart.length}
-                  onClick={() => void checkout(false)}
-                >
-                  LƯU ĐƠN
-                </Button>
+                  size="large" loading={saving} disabled={!cart.length}
+                  onClick={() => void checkout("OPEN")}
+                >LƯU CHỜ THANH TOÁN</Button>
                 <Button
-                  type="primary"
-                  size="large"
-                  block
-                  loading={saving}
-                  disabled={!cart.length}
-                  onClick={() => void checkout(true)}
-                >
-                  THANH TOÁN
-                </Button>
-              </Space.Compact>
+                  size="large" loading={saving} disabled={!cart.length}
+                  onClick={() => void checkout("DEBT")}
+                >GHI NỢ</Button>
+                <Button
+                  type="primary" size="large" loading={saving}
+                  disabled={!cart.length} onClick={() => void checkout("PAID")}
+                >THANH TOÁN</Button>
+              </div>
             )}
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={creatingCustomer}
+        title="Thêm khách hàng"
+        onCancel={() => { if (!customerSaving) setCreatingCustomer(false); }}
+        onOk={() => void saveCustomer()}
+        okText="Lưu và chọn khách"
+        okButtonProps={{ loading: customerSaving }}
+        destroyOnClose
+      >
+        <div className="sales-customer-create">
+          <Select value={customerDraft.customer_type}
+            onChange={(value: PosCustomerInput["customer_type"]) =>
+              setCustomerDraft((prev) => ({ ...prev, customer_type: value }))}
+            options={[{ value: "PERSON", label: "Cá nhân" },
+                      { value: "ORGANIZATION", label: "Doanh nghiệp" }]} />
+          {([
+            ["name", "Tên khách hàng / công ty"],
+            ["phone", "Số điện thoại"],
+            ["tax_code", "Mã số thuế"],
+            ["address", "Địa chỉ"],
+            ["email", "Email"],
+            ["contact_name", "Người liên hệ"]
+          ] as const).map(([key, label]) => (
+            <label key={key}>{label}
+              <Input value={customerDraft[key] ?? ""}
+                onChange={(event) => setCustomerDraft((prev) =>
+                  ({ ...prev, [key]: event.target.value }))}
+                placeholder={label} />
+            </label>
+          ))}
+        </div>
+      </Modal>
 
       <Modal
         open={optionItem !== null}

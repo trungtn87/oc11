@@ -477,7 +477,8 @@ export default function PosApp() {
       guest_count: editingOrder?.guest_count ?? 0,
       customer_id: editingOrder?.customer_id ?? null,
       note: editingOrder?.note ?? null,
-      payment_status: "DEBT",
+      payment_status: "DEBT", // compatibility with old installed POS
+      settlement_target: "OPEN", // saving an order never creates a debt
       items: cart.map((line) => ({
         menu_item_id: line.menuItemId,
         menu_item_option_id: line.optionId,

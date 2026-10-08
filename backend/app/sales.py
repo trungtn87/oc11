@@ -40,6 +40,9 @@ class SaleOrderInput(BaseModel):
     items: list[SaleOrderItemInput] = Field(min_length=1)
     surcharges: list[SaleSurchargeInput] = Field(default_factory=list)
     payment_status: Literal["PAID", "DEBT"] | None = None
+    # Canonical tri-state choice. The legacy payment_status=DEBT still means OPEN
+    # for old installed clients; do not silently close their active tables.
+    settlement_target: Literal["OPEN", "DEBT", "PAID"] | None = None
     fund_account_id: int | None = None
     actual_received_amount: int | None = Field(default=None, ge=0)
 
@@ -161,6 +164,7 @@ def ensure_table_for_order(
     order_type: str,
     table_id: int | None,
     excluding_order_id: int | None = None,
+    require_available: bool = True,
 ) -> int | None:
     if order_type == "TAKEAWAY":
         return None
@@ -186,6 +190,11 @@ def ensure_table_for_order(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy bàn đang hoạt động.",
         )
+
+    if not require_available:
+        # Editing a completed order must not be blocked by a newer live order
+        # at its former table.
+        return table_id
 
     params: list[object] = [table_id]
     exclude_sql = ""
@@ -1185,6 +1194,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
     changed_at = datetime.now().isoformat(timespec="microseconds")
 
     with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
         existing = select_order(connection, order_id)
         if existing is None:
             raise HTTPException(
@@ -1199,6 +1209,25 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
 
         ensure_not_invoiced(existing)
         ensure_customer(connection, payload.customer_id)
+
+        was_closed = existing["status"] == "PAID"
+        was_debt = was_closed and existing["settlement_status"] == "DEBT"
+        # Explicit new contract wins; preserve the deployed Web/POS legacy
+        # payment_status='DEBT' meaning an OPEN, unpaid order.
+        if payload.settlement_target is not None:
+            target = payload.settlement_target
+        elif payload.payment_status == "PAID":
+            target = "PAID"
+        elif payload.payment_status == "DEBT":
+            target = "DEBT" if was_debt else "OPEN"
+        else:
+            target = "DEBT" if was_debt else ("PAID" if was_closed else "OPEN")
+
+        if target == "DEBT" and payload.customer_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Ghi nợ phải chọn khách hàng để theo dõi công nợ.",
+            )
 
         order_type = payload.order_type or existing["order_type"]
         candidate_table_id = (
@@ -1215,6 +1244,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             order_type=order_type,
             table_id=candidate_table_id,
             excluding_order_id=order_id,
+            require_available=target == "OPEN",
         )
         guest_count = (
             int(existing["guest_count"] or 0)
@@ -1222,13 +1252,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             else int(payload.guest_count)
         )
 
-        was_paid = existing["status"] == "PAID"
-        was_debt = was_paid and existing["settlement_status"] == "DEBT"
-        should_be_paid = (
-            was_paid and not was_debt
-            if payload.payment_status is None
-            else payload.payment_status == "PAID"
-        )
+        should_be_paid = target == "PAID"
         old_fund_account_id = (
             int(existing["fund_account_id"])
             if existing["fund_account_id"] is not None
@@ -1240,7 +1264,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             else None
         )
 
-        if was_paid:
+        if was_closed:
             reverse_payment_effects(connection, existing)
         if bool(existing["stock_deducted"]):
             reverse_stock_effects(
@@ -1283,8 +1307,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             """
             UPDATE sales_orders
             SET order_time = ?,
-                status = 'OPEN',
-                settlement_status = 'DEBT',
+                status = ?,
+                settlement_status = ?,
                 order_type = ?,
                 table_id = ?,
                 guest_count = ?,
@@ -1302,6 +1326,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             """,
             (
                 order_time,
+                "OPEN" if target == "OPEN" else "PAID",
+                "PAID" if target == "PAID" else "DEBT",
                 order_type,
                 table_id,
                 guest_count,
@@ -1318,10 +1344,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             movement_time=changed_at,
         )
 
-        if was_debt and payload.payment_status != "PAID":
-            connection.execute(
-                "UPDATE sales_orders SET status = 'PAID' WHERE id = ?", (order_id,)
-            )
+        # The order stage was written atomically above. No transient OPEN state
+        # is ever written when an old table has already been reused.
 
         if should_be_paid:
             fund_account_id = (
