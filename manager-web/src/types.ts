@@ -288,6 +288,8 @@ export type InventoryStock = {
   item_group_name: string;
   smallest_unit_id: number;
   smallest_unit_name: string;
+  default_unit_name: string;
+  default_unit_conversion_factor: number;
   stock_quantity: number;
   stock_revision: number;
   is_active: boolean;
