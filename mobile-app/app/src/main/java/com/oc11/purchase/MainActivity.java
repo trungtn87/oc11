@@ -765,21 +765,56 @@ public class MainActivity extends Activity {
                     android.R.layout.simple_spinner_dropdown_item,
                     unitNames));
 
+            int preferredUnitId = item.optInt("default_unit_id", -1);
+            int idx = unitIds.indexOf(preferredUnitId);
+            if (idx < 0) idx = unitIds.indexOf(item.optInt("smallest_unit_id", -1));
+            if (idx < 0 && !unitIds.isEmpty()) idx = 0;
+            if (idx >= 0) unitSpinner.setSelection(idx);
+
             JSONObject stock = findInventory(inventory, item.optInt("id"));
             if (stock != null) {
                 String msg = "Tồn trước: " + trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
                         stock.optString("smallest_unit_name");
-                long last = stock.optLong("last_purchase_unit_price", -1);
-                if (last >= 0) msg += " • Giá gần nhất: " + MONEY.format(last) + " đ";
+                Long suggested = idx < 0 ? null : suggestedPurchasePrice(item, stock, unitIds.get(idx));
+                if (suggested != null) {
+                    msg += " • Giá gợi ý: " + MONEY.format(suggested) + " đ / " + unitNames.get(idx);
+                    price.setText(String.valueOf(suggested));
+                } else {
+                    msg += " • Chưa có giá nhập gần nhất";
+                    price.setText("");
+                }
                 info.setText(msg);
-                int lastUnitId = stock.optInt("last_purchase_unit_id", -1);
-                int idx = unitIds.indexOf(lastUnitId);
-                if (idx >= 0) unitSpinner.setSelection(idx);
-                if (last >= 0) price.setText(String.valueOf(last));
             } else {
                 info.setText("Chưa có dữ liệu tồn / giá gần nhất.");
+                price.setText("");
             }
         };
+
+        // Selecting another unit must update the suggested price to match it.
+        // Never copy a price for a case/carton into a gram/piece price field.
+        unitSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                JSONObject item = selectedItem[0];
+                if (item == null || position < 0 || position >= unitIds.size()) return;
+                JSONObject stock = findInventory(inventory, item.optInt("id"));
+                Long suggested = suggestedPurchasePrice(item, stock, unitIds.get(position));
+                price.setText(suggested == null ? "" : String.valueOf(suggested));
+                if (stock != null) {
+                    String msg = "Tồn trước: " +
+                            trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
+                            stock.optString("smallest_unit_name");
+                    msg += suggested == null
+                            ? " • Chưa có giá nhập gần nhất"
+                            : " • Giá gợi ý: " + MONEY.format(suggested) + " đ / " +
+                              String.valueOf(parent.getItemAtPosition(position));
+                    info.setText(msg);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         itemInput.setOnItemClickListener((parent, view, position, id) -> {
             String chosenName = String.valueOf(parent.getItemAtPosition(position));
@@ -821,6 +856,9 @@ public class MainActivity extends Activity {
                 if (unitIds.isEmpty() || unitSpinner.getSelectedItemPosition() < 0) throw new Exception("Hàng hóa chưa có đơn vị nhập.");
                 double q = Double.parseDouble(qty.getText().toString().trim().replace(",", "."));
                 if (q <= 0) throw new Exception("Số lượng phải lớn hơn 0.");
+                if (price.getText().toString().trim().isEmpty()) {
+                    throw new Exception("Hãy nhập giá cho mặt hàng chưa có lịch sử nhập.");
+                }
                 long p = parseLong(price.getText().toString());
                 JSONObject line = new JSONObject();
                 line.put("item_id", item.optInt("id"));
@@ -836,6 +874,35 @@ public class MainActivity extends Activity {
             }
         }));
         dialog.show();
+    }
+
+    private Long suggestedPurchasePrice(JSONObject item, JSONObject stock, int unitId) {
+        if (stock == null || stock.isNull("last_purchase_unit_price")
+                || !stock.has("last_purchase_unit_price")) return null;
+
+        if (stock.optInt("last_purchase_unit_id", -1) == unitId) {
+            return stock.optLong("last_purchase_unit_price");
+        }
+
+        // Normalize from the saved conversion of the previous purchase and
+        // convert to the CURRENT conversion of the selected item/unit.
+        if (stock.isNull("last_purchase_price_per_smallest_unit")
+                || !stock.has("last_purchase_price_per_smallest_unit")) return null;
+        double smallestUnitPrice = stock.optDouble("last_purchase_price_per_smallest_unit", Double.NaN);
+        JSONArray conversions = item.optJSONArray("conversions");
+        if (conversions == null) return null;
+        for (int i = 0; i < conversions.length(); i++) {
+            JSONObject conversion = conversions.optJSONObject(i);
+            if (conversion == null || !conversion.optBoolean("is_active", true)
+                    || conversion.optInt("unit_id") != unitId) continue;
+            double factor = conversion.optDouble("quantity_in_smallest_unit", 0);
+            double suggested = smallestUnitPrice * factor;
+            if (!Double.isFinite(suggested) || suggested < 0 || suggested > Long.MAX_VALUE) {
+                return null;
+            }
+            return Math.round(suggested);
+        }
+        return null;
     }
 
     private JSONObject findFixedMarketFund(JSONArray funds, String type) {
