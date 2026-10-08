@@ -1,4 +1,5 @@
 import sqlite3
+from typing import Literal
 from datetime import date, datetime, time
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -24,6 +25,9 @@ class InventoryStockItem(BaseModel):
     smallest_unit_id: int
     smallest_unit_name: str
     stock_quantity: float
+    stock_revision: int
+    is_active: bool
+    is_stock_tracked: bool
     last_purchase_time: str | None
     last_purchase_receipt_code: str | None
     last_purchase_unit_id: int | None
@@ -173,6 +177,27 @@ def current_quantity(
     return float(row["quantity"])
 
 
+def current_revision(
+    connection: sqlite3.Connection,
+    item_id: int,
+    *,
+    as_of: str | None = None,
+) -> int:
+    if as_of is None:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(id), 0) AS revision "
+            "FROM inventory_movements WHERE item_id = ?",
+            (item_id,),
+        ).fetchone()
+    else:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(id), 0) AS revision "
+            "FROM inventory_movements WHERE item_id = ? AND movement_time <= ?",
+            (item_id, as_of),
+        ).fetchone()
+    return int(row["revision"])
+
+
 def last_purchase(
     connection: sqlite3.Connection,
     item_id: int,
@@ -277,6 +302,7 @@ def list_inventory_stock(
     search: str | None = Query(default=None),
     group_id: int | None = Query(default=None),
     as_of: str | None = Query(default=None),
+    tracking: Literal["ALL", "TRACKED", "UNTRACKED"] = Query(default="ALL"),
 ) -> list[InventoryStockItem]:
     as_of_time = (
         normalize_datetime(as_of, end_of_day=True)
@@ -286,6 +312,10 @@ def list_inventory_stock(
 
     conditions: list[str] = []
     params: list[object] = []
+
+    if tracking != "ALL":
+        conditions.append("i.is_stock_tracked = ?")
+        params.append(1 if tracking == "TRACKED" else 0)
 
     if group_id is not None:
         conditions.append("i.item_group_id = ?")
@@ -306,6 +336,8 @@ def list_inventory_stock(
                 i.item_group_id,
                 g.name AS item_group_name,
                 i.smallest_unit_id,
+                i.is_active,
+                i.is_stock_tracked,
                 u.name AS smallest_unit_name
             FROM items AS i
             JOIN item_groups AS g ON g.id = i.item_group_id
@@ -348,6 +380,11 @@ def list_inventory_stock(
                         row["id"],
                         as_of=as_of_time,
                     ),
+                    stock_revision=current_revision(
+                        connection, row["id"], as_of=as_of_time
+                    ),
+                    is_active=bool(row["is_active"]),
+                    is_stock_tracked=bool(row["is_stock_tracked"]),
                     last_purchase_time=(
                         purchase["receipt_time"] if purchase else None
                     ),
@@ -377,6 +414,7 @@ def list_inventory_stock(
                 )
             )
 
+        result.sort(key=lambda x: (x.stock_quantity, x.item_name.casefold(), x.item_id))
         return result
 
 
