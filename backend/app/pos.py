@@ -30,11 +30,16 @@ class AreaOutput(AreaInput):
 class RestaurantTableInput(BaseModel):
     area_id: int
     name: str = Field(min_length=1, max_length=80)
-    seats: int = Field(default=4, ge=0, le=100)
+    seats: int = Field(default=0, ge=0, le=100)
     display_order: int = 0
     pos_x: float = 0
     pos_y: float = 0
     is_active: bool = True
+
+
+class BulkTableCreateInput(BaseModel):
+    area_id: int
+    quantity: int = Field(ge=1, le=30)
 
 
 class RestaurantTableOutput(RestaurantTableInput):
@@ -315,6 +320,83 @@ def create_table(payload: RestaurantTableInput) -> RestaurantTableOutput:
         result = table_row_to_output(row)
     backup_database(reason="pos-table-created")
     return result
+
+
+@router.post(
+    "/tables/bulk",
+    response_model=list[RestaurantTableOutput],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_tables_bulk(payload: BulkTableCreateInput) -> list[RestaurantTableOutput]:
+    with connect() as connection:
+        area = connection.execute(
+            "SELECT id, is_active FROM restaurant_areas WHERE id = ?",
+            (payload.area_id,),
+        ).fetchone()
+        if area is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy khu vực.")
+        if not bool(area["is_active"]):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Khu vực đang ngừng sử dụng.",
+            )
+
+        existing_rows = connection.execute(
+            """
+            SELECT name, display_order
+            FROM restaurant_tables
+            WHERE area_id = ?
+            ORDER BY display_order ASC, id ASC
+            """,
+            (payload.area_id,),
+        ).fetchall()
+        used_names = {str(row["name"]).strip().casefold() for row in existing_rows}
+        next_order = (
+            max((int(row["display_order"]) for row in existing_rows), default=-1) + 1
+        )
+
+        created_ids: list[int] = []
+        name_number = 1
+        for offset in range(payload.quantity):
+            while f"Bàn {name_number}".casefold() in used_names:
+                name_number += 1
+
+            name = f"Bàn {name_number}"
+            used_names.add(name.casefold())
+            index = next_order + offset
+            column = index % 5
+            row = index // 5
+            pos_x = min(82.0, 4.0 + column * 19.0)
+            pos_y = min(84.0, 6.0 + row * 19.0)
+
+            cursor = connection.execute(
+                """
+                INSERT INTO restaurant_tables (
+                    area_id, name, seats, display_order,
+                    pos_x, pos_y, is_active, created_at, updated_at
+                )
+                VALUES (?, ?, 0, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                (
+                    payload.area_id,
+                    name,
+                    index,
+                    pos_x,
+                    pos_y,
+                ),
+            )
+            created_ids.append(int(cursor.lastrowid))
+            name_number += 1
+
+        connection.commit()
+        results: list[RestaurantTableOutput] = []
+        for table_id in created_ids:
+            row = select_table(connection, table_id)
+            assert row is not None
+            results.append(table_row_to_output(row))
+
+    backup_database(reason="pos-tables-bulk-created")
+    return results
 
 
 @router.put("/tables/{table_id}", response_model=RestaurantTableOutput)
