@@ -64,6 +64,7 @@ import {
   getUnits,
   runBackup,
   selectBackupFolder,
+  setItemStockTracking,
   updateInventoryItem,
   updateItemGroup,
   updateSupplier,
@@ -141,6 +142,7 @@ type InventoryItemForm = {
   smallest_unit_id: number;
   note?: string;
   is_active: boolean;
+  is_stock_tracked: boolean;
 };
 
 type ConversionDraft = {
@@ -805,6 +807,7 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
 
 function InventoryItemsPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [trackingSavingId, setTrackingSavingId] = useState<number | null>(null);
   const [groups, setGroups] = useState<ItemGroup[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -990,6 +993,19 @@ function InventoryItemsPage() {
     }
   };
 
+  const toggleStockTracking = async (item: InventoryItem, enabled: boolean) => {
+    try {
+      setTrackingSavingId(item.id);
+      const updated = await setItemStockTracking(item.id, enabled);
+      setItems((rows) => rows.map((row) => row.id === item.id ? updated : row));
+      messageApi.success(enabled ? "Đã bật theo dõi kho." : "Đã ngừng theo dõi kho.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không đổi được trạng thái theo dõi.");
+    } finally {
+      setTrackingSavingId(null);
+    }
+  };
+
   const openCreate = () => {
     const firstGroup = activeGroups[0]?.id;
     const firstUnit = activeUnits[0]?.id;
@@ -1000,7 +1016,8 @@ function InventoryItemsPage() {
       item_group_id: firstGroup,
       default_unit_id: firstUnit,
       smallest_unit_id: firstUnit,
-      is_active: true
+      is_active: true,
+      is_stock_tracked: true
     });
     setConversions(
       firstUnit
@@ -1022,7 +1039,8 @@ function InventoryItemsPage() {
       default_unit_id: item.default_unit_id,
       smallest_unit_id: item.smallest_unit_id,
       note: item.note ?? "",
-      is_active: item.is_active
+      is_active: item.is_active,
+      is_stock_tracked: item.is_stock_tracked
     });
     setConversions(
       item.conversions.map((conversion) => ({
@@ -1154,6 +1172,7 @@ function InventoryItemsPage() {
         smallest_unit_id: values.smallest_unit_id,
         note: values.note?.trim() || null,
         is_active: values.is_active,
+        is_stock_tracked: values.is_stock_tracked,
         conversions: normalized.map((row) => ({
           unit_id: row.unit_id,
           quantity_in_smallest_unit: row.quantity_in_smallest_unit as number,
@@ -1222,6 +1241,23 @@ function InventoryItemsPage() {
         ) : (
           <Tag>Ngừng sử dụng</Tag>
         )
+    },
+    {
+      title: "Theo dõi kho",
+      dataIndex: "is_stock_tracked",
+      key: "is_stock_tracked",
+      width: 145,
+      render: (_: boolean, item) => (
+        <Switch
+          size="small"
+          checked={item.is_stock_tracked}
+          loading={trackingSavingId === item.id}
+          disabled={trackingSavingId !== null}
+          onChange={(checked) => void toggleStockTracking(item, checked)}
+          checkedChildren="Theo dõi"
+          unCheckedChildren="Ngừng"
+        />
+      )
     },
     {
       title: "Thao tác",
@@ -1371,6 +1407,14 @@ function InventoryItemsPage() {
 
             <Form.Item label="Trạng thái" name="is_active" valuePropName="checked">
               <Switch checkedChildren="Đang sử dụng" unCheckedChildren="Ngừng" />
+            </Form.Item>
+            <Form.Item
+              label="Theo dõi tồn kho"
+              name="is_stock_tracked"
+              valuePropName="checked"
+              tooltip="Ngừng theo dõi không xóa tồn hoặc lịch sử nhập xuất kho."
+            >
+              <Switch checkedChildren="Theo dõi" unCheckedChildren="Ngừng" />
             </Form.Item>
 
             <Form.Item
