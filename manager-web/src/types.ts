@@ -702,6 +702,20 @@ export type KitchenSendResult = Omit<PosPrintResult, "print_status"> & {
   printer_name: string | null;
 };
 
+export type PosCustomer = {
+  id: number;
+  customer_code: string;
+  customer_type: "PERSON" | "ORGANIZATION";
+  name: string;
+  phone: string | null;
+  tax_code: string | null;
+  address: string | null;
+  email: string | null;
+  contact_name: string | null;
+};
+
+export type PosCustomerInput = Omit<PosCustomer, "id" | "customer_code">;
+
 export type SaleOrderStatus = "OPEN" | "PAID" | "VOID";
 export type SaleOrderType = "DINE_IN" | "TAKEAWAY";
 
@@ -762,6 +776,8 @@ export type SaleOrder = {
   fund_account_id: number | null;
   fund_account_name: string | null;
   fund_account_type: FundAccountType | null;
+  settlement_status: "PAID" | "DEBT";
+  einvoice_requested: boolean;
   total_amount: number;
   surcharge_total: number;
   actual_received_amount: number | null;
@@ -802,6 +818,9 @@ export type SaleOrderInput = {
 };
 
 export type SalePaymentInput = {
-  fund_account_id: number;
+  fund_account_id?: number | null;
   actual_received_amount?: number | null;
+  payment_method?: "CASH" | "BANK" | "DEBT";
+  customer_id?: number | null;
+  request_einvoice?: boolean;
 };
