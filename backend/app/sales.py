@@ -1028,13 +1028,18 @@ def list_orders(
 
     if order_status and order_status.strip():
         normalized = order_status.strip().upper()
-        if normalized not in {"OPEN", "PAID", "VOID"}:
+        if normalized not in {"OPEN", "PAID", "DEBT", "VOID"}:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Trạng thái đơn bán không hợp lệ.",
             )
-        conditions.append("so.status = ?")
-        params.append(normalized)
+        if normalized == "DEBT":
+            conditions.append("so.status = 'PAID' AND so.settlement_status = 'DEBT'")
+        elif normalized == "PAID":
+            conditions.append("so.status = 'PAID' AND so.settlement_status = 'PAID'")
+        else:
+            conditions.append("so.status = ?")
+            params.append(normalized)
 
     if search and search.strip():
         conditions.append(
@@ -1312,7 +1317,7 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             movement_time=changed_at,
         )
 
-        if was_debt and payload.payment_status is None:
+        if was_debt and payload.payment_status != "PAID":
             connection.execute(
                 "UPDATE sales_orders SET status = 'PAID' WHERE id = ?", (order_id,)
             )
