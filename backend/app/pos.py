@@ -1076,7 +1076,7 @@ def print_sale_cancel(order_id: int) -> PrintDispatchOutput:
             "", "", "",
         ])
         print_status, error, results = dispatch_print(
-            settings, "KITCHEN", "\\r\\n".join(lines)
+            settings, "KITCHEN", "\r\n".join(lines)
         )
         return PrintDispatchOutput(
             order_id=order_id, order_code=order["order_code"],
