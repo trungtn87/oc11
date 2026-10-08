@@ -380,6 +380,7 @@ export default function CostRecipesPage() {
       dataIndex: "name",
       key: "name",
       width: 230,
+      fixed: "left",
       render: (value: string) => <Text strong>{value}</Text>
     },
     {
@@ -449,6 +450,7 @@ export default function CostRecipesPage() {
       title: "Thao tác",
       key: "action",
       width: 90,
+      fixed: "right",
       render: (_, row) => (
         <Button type="link" onClick={() => openEdit(row)}>
           Sửa
@@ -463,6 +465,7 @@ export default function CostRecipesPage() {
       dataIndex: "service_option_name",
       key: "service_option_name",
       width: 240,
+      fixed: "left",
       render: (value: string) => <Text strong>{value}</Text>
     },
     {
@@ -499,6 +502,7 @@ export default function CostRecipesPage() {
       title: "Xử lý",
       key: "action",
       width: 190,
+      fixed: "right",
       render: (_, row) => (
         <Button
           type="primary"
