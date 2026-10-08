@@ -8,7 +8,6 @@ import {
   InputNumber,
   message,
   Modal,
-  Select,
   Space,
   Switch,
   Typography
@@ -17,12 +16,8 @@ import {
 import {
   createRestaurantArea,
   createRestaurantTablesBulk,
-  getInstalledPrinters,
-  getPosSettings,
   getRestaurantAreas,
   getRestaurantTables,
-  testPosPrinter,
-  updatePosSettings,
   updateRestaurantArea,
   updateRestaurantTable
 } from "./api";
@@ -568,118 +563,3 @@ export function RestaurantTablesSettings() {
   );
 }
 
-export function KitchenPrinterSettings() {
-  const [printers, setPrinters] = useState<string[]>([]);
-  const [printerName, setPrinterName] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [testing, setTesting] = useState(false);
-  const [messageApi, contextHolder] = message.useMessage();
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      try {
-        const [settings, printerRows] = await Promise.all([
-          getPosSettings(),
-          getInstalledPrinters()
-        ]);
-        if (cancelled) return;
-        setPrinterName(settings.kitchen_printer_name);
-        setPrinters(printerRows);
-      } catch (error) {
-        if (!cancelled) {
-          messageApi.error(
-            error instanceof Error ? error.message : "Không tải được cài đặt máy in."
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const printerOptions = useMemo(() => {
-    const names = [...printers];
-    if (printerName && !names.includes(printerName)) names.unshift(printerName);
-    return names.map((name) => ({ value: name, label: name }));
-  }, [printers, printerName]);
-
-  async function save() {
-    try {
-      await updatePosSettings({
-        ...(await getPosSettings()),
-        kitchen_printer_name: printerName.trim()
-      });
-      messageApi.success("Đã lưu máy in bếp.");
-    } catch (error) {
-      messageApi.error(
-        error instanceof Error ? error.message : "Không lưu được máy in."
-      );
-    }
-  }
-
-  async function test() {
-    setTesting(true);
-    try {
-      await updatePosSettings({
-        ...(await getPosSettings()),
-        kitchen_printer_name: printerName.trim()
-      });
-      const result = await testPosPrinter("KITCHEN");
-      if (result.ok) {
-        messageApi.success("Đã gửi phiếu test tới máy in bếp.");
-      } else {
-        messageApi.error(result.error || "Không in được phiếu test.");
-      }
-    } catch (error) {
-      messageApi.error(
-        error instanceof Error ? error.message : "Không test được máy in."
-      );
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  return (
-    <>
-      {contextHolder}
-      <Card loading={loading} title="Máy in bếp">
-        <div style={{ maxWidth: 560 }}>
-          <Text type="secondary">
-            Cấu hình máy in bếp và máy thu ngân nằm ở menu ☰ của POS. Thay đổi tên máy in bếp tại đây vẫn giữ nguyên các lựa chọn nơi in.
-          </Text>
-          <div style={{ marginTop: 14 }}>
-            <Select
-              showSearch
-              allowClear
-              value={printerName || undefined}
-              onChange={(value) => setPrinterName(value ?? "")}
-              placeholder="Chọn máy in bếp"
-              options={printerOptions}
-              style={{ width: "100%" }}
-            />
-            <Input
-              value={printerName}
-              onChange={(event) => setPrinterName(event.target.value)}
-              placeholder="Hoặc nhập chính xác tên máy in Windows"
-              style={{ marginTop: 8 }}
-            />
-          </div>
-          <Space style={{ marginTop: 14 }}>
-            <Button type="primary" onClick={() => void save()}>
-              Lưu
-            </Button>
-            <Button loading={testing} onClick={() => void test()}>
-              In thử
-            </Button>
-          </Space>
-        </div>
-      </Card>
-    </>
-  );
-}
