@@ -626,3 +626,29 @@ def test_pos_estimate_and_kitchen_cancel_are_not_payments(tmp_path, monkeypatch)
             assert connection.execute(
                 "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE'"
             ).fetchone()[0] == 0
+
+
+def test_pos_checkout_refuses_stale_total_without_receipt(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        order = client.post("/api/sales/orders", json={
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        fund = client.get("/api/fund-accounts?type=CASH").json()[0]
+        refused = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": fund["id"],
+            "expected_total_amount": order["total_amount"] - 1000,
+        })
+        assert refused.status_code == 409
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["status"] == "OPEN"
+        with sqlite3.connect(db_path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM fund_transactions WHERE source_type='SALE'"
+            ).fetchone()[0] == 0
+        accepted = client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "payment_method": "CASH", "fund_account_id": fund["id"],
+            "expected_total_amount": order["total_amount"],
+        })
+        assert accepted.status_code == 200, accepted.text
