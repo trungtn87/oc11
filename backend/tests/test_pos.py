@@ -194,3 +194,90 @@ def test_bulk_table_creation_generates_names_and_layout(tmp_path, monkeypatch):
         assert moved.json()["name"] == "Bàn VIP"
         assert moved.json()["pos_x"] == 41.5
         assert moved.json()["pos_y"] == 52.25
+
+
+def test_order_from_table_can_be_reopened_and_edited_without_payment(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        menu_item_id = seed_menu(db_path)
+        area = client.post(
+            "/api/pos/areas",
+            json={"name": "Tầng 1", "display_order": 0, "is_active": True},
+        )
+        assert area.status_code == 201
+        table = client.post(
+            "/api/pos/tables",
+            json={
+                "area_id": area.json()["id"],
+                "name": "Bàn 11",
+                "seats": 0,
+                "display_order": 0,
+                "pos_x": 20.0,
+                "pos_y": 30.0,
+                "is_active": True,
+            },
+        )
+        assert table.status_code == 201
+        table_id = table.json()["id"]
+
+        first = client.post(
+            "/api/sales/orders",
+            json={
+                "order_type": "DINE_IN",
+                "table_id": table_id,
+                "items": [
+                    {"menu_item_id": menu_item_id, "quantity": 1, "note": "Ít cay"}
+                ],
+            },
+        )
+        assert first.status_code == 201, first.text
+        order_id = first.json()["id"]
+        assert first.json()["status"] == "OPEN"
+        assert first.json()["total_amount"] == 80000
+
+        area_tables = client.get("/api/pos/tables?active_only=true")
+        assert area_tables.status_code == 200
+        assert area_tables.json()[0]["open_order_id"] == order_id
+        assert area_tables.json()[0]["open_order_total"] == 80000
+
+        reopened = client.get(f"/api/sales/orders/{order_id}")
+        assert reopened.status_code == 200
+        assert reopened.json()["items"][0]["note"] == "Ít cay"
+
+        changed = client.put(
+            f"/api/sales/orders/{order_id}",
+            json={
+                "order_type": "DINE_IN",
+                "table_id": table_id,
+                "payment_status": "DEBT",
+                "items": [
+                    {"menu_item_id": menu_item_id, "quantity": 2, "note": "Ít cay"}
+                ],
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["id"] == order_id
+        assert changed.json()["status"] == "OPEN"
+        assert changed.json()["table_id"] == table_id
+        assert changed.json()["total_amount"] == 160000
+        assert changed.json()["paid_at"] is None
+        assert changed.json()["payment_reference_code"] is None
+
+        active = client.get("/api/sales/orders?status=OPEN")
+        assert active.status_code == 200
+        assert len(
+            [row for row in active.json() if row["table_id"] == table_id]
+        ) == 1
+
+        refreshed_tables = client.get("/api/pos/tables?active_only=true")
+        assert refreshed_tables.json()[0]["open_order_total"] == 160000
+
+    with sqlite3.connect(db_path) as connection:
+        payments = connection.execute(
+            "SELECT COUNT(*) FROM fund_transactions WHERE source_type = 'SALE'"
+        ).fetchone()[0]
+        assert payments == 0
