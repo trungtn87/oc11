@@ -56,7 +56,24 @@ public final class ApiClient {
             String detail = text;
             try {
                 JSONObject error = new JSONObject(text);
-                detail = error.optString("detail", text);
+                Object raw = error.opt("detail");
+                if (raw instanceof JSONObject) {
+                    JSONObject problem = (JSONObject) raw;
+                    detail = problem.optString("message", text);
+                    JSONArray items = problem.optJSONArray("items");
+                    if (items != null && items.length() > 0) {
+                        StringBuilder names = new StringBuilder();
+                        for (int i = 0; i < items.length(); i++) {
+                            JSONObject item = items.optJSONObject(i);
+                            if (item == null) continue;
+                            if (names.length() > 0) names.append(", ");
+                            names.append(item.optString("item_name", "Hàng #" + item.optInt("item_id")));
+                        }
+                        detail += " Mặt hàng: " + names;
+                    }
+                } else {
+                    detail = error.optString("detail", text);
+                }
             } catch (Exception ignored) {}
             throw new Exception("HTTP " + code + ": " + detail);
         }
