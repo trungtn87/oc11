@@ -1052,6 +1052,7 @@ export default function PosApp() {
       <Modal
         open={optionItem !== null}
         title={optionItem ? `Chọn kiểu chế biến · ${optionItem.name}` : ""}
+        width={740}
         footer={null}
         onCancel={() => setOptionItem(null)}
         destroyOnClose
@@ -1060,13 +1061,15 @@ export default function PosApp() {
           {optionItem?.options
             .filter((option) => option.is_active)
             .map((option) => (
-              <Button
+              <button
+                type="button"
+                className="pos-option-button"
                 key={option.id}
                 onClick={() => addItem(optionItem, option)}
               >
-                <span>{option.service_option_name}</span>
-                <strong>{money(option.sale_price)} đ</strong>
-              </Button>
+                <span className="pos-option-name">{option.service_option_name}</span>
+                <strong className="pos-option-price">{money(option.sale_price)} đ</strong>
+              </button>
             ))}
         </div>
       </Modal>
