@@ -707,6 +707,9 @@ export default function PosApp() {
           </button>
           {menuOpen && (
             <div className="pos-menu-popup">
+              <button type="button" onClick={() => void openPrinterConfig()}>
+                ⚙ Cài đặt máy in
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -995,6 +998,17 @@ export default function PosApp() {
               )}
             </div>
             <div className="pos-cart-bottom">
+              <div className="pos-kitchen-note">
+                <label htmlFor="pos-kitchen-note">Ghi chú gửi bếp (không lưu vào đơn)</label>
+                <Input.TextArea
+                  id="pos-kitchen-note"
+                  value={kitchenNote}
+                  maxLength={500}
+                  autoSize={{ minRows: 1, maxRows: 2 }}
+                  onChange={(event) => setKitchenNote(event.target.value)}
+                  placeholder="Ví dụ: bàn cần ra đồ cùng lúc..."
+                />
+              </div>
               <div className="pos-total">
                 <span>Tổng tiền</span>
                 <strong>{money(total)} đ</strong>
@@ -1109,6 +1123,85 @@ export default function PosApp() {
             onChange={(value) => setSurchargeAmount(Number(value ?? 0))}
             style={{ width: "100%" }}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        open={printerModalOpen}
+        title="Cài đặt máy in POS"
+        width={550}
+        onCancel={() => { if (!printerSaving) setPrinterModalOpen(false); }}
+        footer={[
+          <Button key="close" onClick={() => setPrinterModalOpen(false)} disabled={printerSaving}>
+            Đóng
+          </Button>,
+          <Button key="save" type="primary" loading={printerSaving}
+            disabled={printerLoading} onClick={() => void savePrinterConfig()}>
+            Lưu cấu hình
+          </Button>
+        ]}
+      >
+        <div className="pos-printer-settings">
+          <div className="pos-printer-info">Chọn máy in đã cài trên Windows hoặc gõ tên máy in.
+            Lưu cấu hình trước khi in thử.</div>
+          <label>Máy in bếp</label>
+          <div className="pos-printer-picker">
+            <AutoComplete
+              value={printerSettings.kitchen_printer_name}
+              disabled={printerLoading}
+              onChange={(name) => setPrinterSettings((current) =>
+                ({ ...current, kitchen_printer_name: name }))}
+              options={installedPrinters.map((name) => ({ value: name }))}
+              placeholder="Chọn hoặc nhập tên máy in bếp"
+              allowClear
+            />
+            <Button onClick={() => void testPrinter("KITCHEN")}
+              loading={printerTesting === "KITCHEN"} disabled={printerLoading || printerSaving}>
+              In thử
+            </Button>
+          </div>
+          <label>Máy in thu ngân</label>
+          <div className="pos-printer-picker">
+            <AutoComplete
+              value={printerSettings.cashier_printer_name}
+              disabled={printerLoading}
+              onChange={(name) => setPrinterSettings((current) =>
+                ({ ...current, cashier_printer_name: name }))}
+              options={installedPrinters.map((name) => ({ value: name }))}
+              placeholder="Chọn hoặc nhập tên máy in thu ngân"
+              allowClear
+            />
+            <Button onClick={() => void testPrinter("CASHIER")}
+              loading={printerTesting === "CASHIER"} disabled={printerLoading || printerSaving}>
+              In thử
+            </Button>
+          </div>
+          <label>Chức năng Gửi bếp in tại</label>
+          <Select
+            value={printerSettings.send_kitchen_targets}
+            disabled={printerLoading}
+            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
+              ({ ...current, send_kitchen_targets: value }))}
+            options={[
+              { value: "KITCHEN", label: "Chỉ máy in bếp" },
+              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
+              { value: "BOTH", label: "Cả hai máy" }
+            ]}
+          />
+          <label>Chức năng In phiếu thanh toán in tại</label>
+          <Select
+            value={printerSettings.print_receipt_targets}
+            disabled={printerLoading}
+            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
+              ({ ...current, print_receipt_targets: value }))}
+            options={[
+              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
+              { value: "KITCHEN", label: "Chỉ máy in bếp" },
+              { value: "BOTH", label: "Cả hai máy" }
+            ]}
+          />
+          <div className="pos-printer-info">Phiếu thanh toán tự in khi xác nhận Tính tiền.
+            Nếu in lỗi, đơn vẫn được thanh toán và có thể chọn in lại.</div>
         </div>
       </Modal>
 
