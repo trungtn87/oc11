@@ -149,6 +149,10 @@ export default function PosApp() {
   const [surchargeAmount, setSurchargeAmount] = useState(0);
   const [surchargeSaving, setSurchargeSaving] = useState(false);
   const [tableActions, setTableActions] = useState<RestaurantTable | null>(null);
+  const [cancelOrder, setCancelOrder] = useState<SaleOrder | null>(null);
+  const [cancelReason, setCancelReason] = useState("Khách hủy Order");
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelSaving, setCancelSaving] = useState(false);
   const [checkoutOrder, setCheckoutOrder] = useState<SaleOrder | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentStep, setPaymentStep] = useState<"CHOICE" | "CUSTOMER" | "METHOD" | "CONFIRM">("CHOICE");
@@ -682,53 +686,72 @@ export default function PosApp() {
     }
   }
 
+  // Controlled confirmation works from both the map and checkout. Unlike a
+  // static Modal.confirm, it cannot be lost while the table popup closes.
   function confirmCancelOrder(order: SaleOrder | null | undefined) {
-    if (!order || busy) return;
-    let reason = "Khách hủy Order";
-    Modal.confirm({
-      title: `Hủy toàn bộ ${order.order_code}?`,
-      content: (
-        <div className="pos-cancel-form">
-          <p>Order {order.table_name ?? ""} sẽ được lưu lịch sử hủy; bàn trở về trạng thái trống.</p>
-          <label>Lý do hủy</label>
-          <Input.TextArea defaultValue={reason} maxLength={200}
-            onChange={(event) => { reason = event.target.value; }} />
-          {order.kitchen_sent_at && <p className="pos-warning">
-            Đơn đã gửi bếp. Hệ thống sẽ in phiếu hủy ở máy bếp.
-          </p>}
-        </div>
-      ),
-      okText: "Xác nhận hủy",
-      okButtonProps: { danger: true },
-      cancelText: "Không hủy",
-      onOk: async () => {
-        if (!reason.trim()) { messageApi.warning("Nhập lý do hủy."); throw new Error("Missing reason"); }
-        setBusy(true);
-        try {
-          const canceled = await voidSaleOrder(order.id, reason.trim());
-          setTableActions(null);
-          setCheckoutOrder(null);
-          setEditingOrder(null);
-          setTableId(null);
-          setCart([]);
-          setDirty(false);
-          setView("MAP");
-          if (canceled.table_id !== null) kitchenNoteDrafts.current.delete(canceled.table_id);
-          setKitchenNote("");
-          await refresh().catch(() =>
-            messageApi.warning("Đã hủy Order nhưng chưa cập nhật được sơ đồ."));
-          messageApi.success(`Đã hủy ${canceled.order_code} và giải phóng bàn.`);
-          if (canceled.kitchen_sent_at) {
-            await tryPrintCancelSlip(canceled.id);
-          }
-        } catch (error) {
-          messageApi.error(error instanceof Error ? error.message : "Không hủy được Order.");
-          throw error;
-        } finally {
-          setBusy(false);
-        }
+    if (!order || busy || cancelSaving) return;
+    if (order.status !== "OPEN") {
+      messageApi.warning("Order không còn đang phục vụ.");
+      void refresh();
+      return;
+    }
+    setCancelReason("Khách hủy Order");
+    setTableActions(null);
+    setCancelOrder(order);
+  }
+
+  async function openCancelFromTable() {
+    const orderId = tableActions?.open_order_id;
+    if (!orderId || busy || cancelLoading) return;
+    setCancelLoading(true);
+    try {
+      const order = await getSaleOrder(orderId);
+      if (order.status !== "OPEN") {
+        setTableActions(null);
+        messageApi.warning("Order đã thay đổi. Đang làm mới sơ đồ bàn.");
+        await refresh();
+        return;
       }
-    });
+      confirmCancelOrder(order);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không tải được Order cần hủy.");
+    } finally {
+      setCancelLoading(false);
+    }
+  }
+
+  async function submitCancelOrder() {
+    const order = cancelOrder;
+    if (!order || busy || cancelSaving) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      messageApi.warning("Nhập lý do hủy.");
+      return;
+    }
+    setCancelSaving(true);
+    setBusy(true);
+    try {
+      const canceled = await voidSaleOrder(order.id, reason);
+      setCancelOrder(null);
+      setTableActions(null);
+      setCheckoutOrder(null);
+      setEditingOrder(null);
+      setTableId(null);
+      setCart([]);
+      setDirty(false);
+      setView("MAP");
+      if (canceled.table_id !== null) kitchenNoteDrafts.current.delete(canceled.table_id);
+      setKitchenNote("");
+      await refresh().catch(() =>
+        messageApi.warning("Đã hủy Order nhưng chưa cập nhật được sơ đồ."));
+      messageApi.success(`Đã hủy ${canceled.order_code} và giải phóng bàn.`);
+      if (canceled.kitchen_sent_at) await tryPrintCancelSlip(canceled.id);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không hủy được Order.");
+    } finally {
+      setBusy(false);
+      setCancelSaving(false);
+    }
   }
 
   async function loadCustomers(query = "") {
@@ -1449,17 +1472,46 @@ export default function PosApp() {
             setTableActions(null);
             if (id) void openExisting(id);
           }}>Tiếp tục order</Button>
-          <Button block danger className="pos-table-actions-cancel" onClick={() => {
-            const id = tableActions?.open_order_id;
-            setTableActions(null);
-            if (id) void getSaleOrder(id).then(confirmCancelOrder).catch((error) =>
-              messageApi.error(error instanceof Error ? error.message : "Không tải được Order."));
-          }}>Hủy order</Button>
+          <Button block danger className="pos-table-actions-cancel"
+            disabled={busy || cancelLoading} loading={cancelLoading}
+            onClick={() => void openCancelFromTable()}>
+            Hủy order
+          </Button>
           <Button block type="primary" className="pos-table-actions-payment" onClick={() => {
             const id = tableActions?.open_order_id;
             setTableActions(null);
             if (id) void startCheckout(id);
           }}>Thanh toán</Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={cancelOrder !== null}
+        title={`Hủy toàn bộ ${cancelOrder?.order_code ?? "Order"}?`}
+        width={520}
+        destroyOnClose
+        maskClosable={!cancelSaving}
+        closable={!cancelSaving}
+        onCancel={() => { if (!cancelSaving) setCancelOrder(null); }}
+        footer={[
+          <Button key="back" disabled={cancelSaving} onClick={() => setCancelOrder(null)}>
+            Không hủy
+          </Button>,
+          <Button key="confirm" type="primary" danger loading={cancelSaving}
+            disabled={!cancelReason.trim()} onClick={() => void submitCancelOrder()}>
+            Xác nhận hủy
+          </Button>
+        ]}
+      >
+        <div className="pos-cancel-form">
+          <p>Order {cancelOrder?.table_name ?? ""} sẽ được lưu lịch sử hủy; bàn trở về trạng thái trống.</p>
+          <label htmlFor="pos-cancel-reason">Lý do hủy</label>
+          <Input.TextArea id="pos-cancel-reason" value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            disabled={cancelSaving} maxLength={200} rows={3} />
+          {cancelOrder?.kitchen_sent_at && <p className="pos-warning">
+            Đơn đã gửi bếp. Hệ thống sẽ in phiếu hủy ở máy bếp.
+          </p>}
         </div>
       </Modal>
 
