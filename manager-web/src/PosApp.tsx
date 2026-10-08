@@ -484,20 +484,69 @@ export default function PosApp() {
     }
   }
 
+  async function openPrinterConfig() {
+    setMenuOpen(false);
+    setPrinterModalOpen(true);
+    setPrinterLoading(true);
+    try {
+      const [settings, printers] = await Promise.all([
+        getPosSettings(), getInstalledPrinters()
+      ]);
+      setPrinterSettings(settings);
+      setInstalledPrinters(printers);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không đọc được cấu hình máy in.");
+    } finally {
+      setPrinterLoading(false);
+    }
+  }
+
+  async function savePrinterConfig() {
+    setPrinterSaving(true);
+    try {
+      const saved = await updatePosSettings(printerSettings);
+      setPrinterSettings(saved);
+      messageApi.success("Đã lưu cấu hình máy in cho cả hai chức năng.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được máy in.");
+    } finally {
+      setPrinterSaving(false);
+    }
+  }
+
+  async function testPrinter(role: PrinterRole) {
+    setPrinterTesting(role);
+    try {
+      const result = await testPosPrinter(role);
+      if (result.ok) {
+        messageApi.success("Đã gửi phiếu in thử đến " + (result.printer_name ?? "máy in") + ".");
+      } else {
+        messageApi.error(result.error ?? "Máy in thử không thành công.");
+      }
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không in thử được.");
+    } finally {
+      setPrinterTesting(null);
+    }
+  }
+
   async function performSendKitchen() {
     const saved = await saveOrder(false);
     if (!saved) return;
     setBusy(true);
+    const noteForThisPrint = kitchenNote;
     try {
-      const ticket = await sendSaleOrderToKitchen(saved.id);
+      const ticket = await sendSaleOrderToKitchen(saved.id, noteForThisPrint);
       if (ticket.print_status !== "PRINTED") {
         messageApi.error(
-          `Order đã lưu nhưng gửi bếp thất bại: ${ticket.error_message || "Kiểm tra máy in bếp."}`
+          "Order đã lưu nhưng chưa in đủ phiếu: " +
+          (ticket.error_message || "Kiểm tra cấu hình máy in.")
         );
         return;
       }
+      setKitchenNote("");
       setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
-      messageApi.success(`Đã gửi bếp ${saved.order_code}.`);
+      messageApi.success("Đã gửi bếp " + saved.order_code + ".");
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
     } finally {
@@ -518,6 +567,28 @@ export default function PosApp() {
     } else {
       void performSendKitchen();
     }
+  }
+
+  async function tryPrintPaidReceipt(orderId: number) {
+    let failure: string | null = null;
+    try {
+      const result = await printSaleOrderReceipt(orderId);
+      if (result.print_status === "PRINTED") {
+        messageApi.success("Đã in phiếu thanh toán.");
+        return;
+      }
+      failure = result.error_message ?? "Một số máy in không nhận được phiếu.";
+    } catch (error) {
+      failure = error instanceof Error ? error.message : "Lỗi in phiếu thanh toán.";
+    }
+    // Never attempt payment again when only the printer failed.
+    Modal.confirm({
+      title: "Đơn đã thanh toán, nhưng in phiếu chưa thành công",
+      content: failure,
+      okText: "Thử in lại",
+      cancelText: "Để sau",
+      onOk: () => tryPrintPaidReceipt(orderId)
+    });
   }
 
   function openPayment() {
@@ -564,6 +635,7 @@ export default function PosApp() {
       await refresh().catch(() => messageApi.warning(
         "Đã thanh toán nhưng chưa cập nhật sơ đồ."
       ));
+      await tryPrintPaidReceipt(paid.id);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Thanh toán thất bại.");
     } finally {
