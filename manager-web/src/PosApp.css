@@ -901,9 +901,49 @@
 .pos-checkout-total strong { font-size: 30px; color: #086ca6; }
 .pos-checkout-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }
 .pos-checkout-actions .ant-btn { height: 54px; font-size: 18px; }
-.pos-table-actions { display: flex; flex-direction: column; gap: 12px; }
-.pos-table-actions > strong { text-align: center; font-size: 30px; color: #086ca6; }
-.pos-table-actions .ant-btn { height: 48px; font-size: 17px; }
+/* Table action dialog: two distinct actions above a full-width payment CTA. */
+.pos-table-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.pos-table-actions > strong {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 30px;
+  color: #086ca6;
+  margin-bottom: 4px;
+}
+.pos-table-actions .ant-btn {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 60px;
+  min-height: 60px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: normal;
+}
+.pos-table-actions .pos-table-actions-continue {
+  color: #086ca6;
+  background: #eaf5fc;
+  border-color: #9bc8e2;
+}
+.pos-table-actions .pos-table-actions-cancel {
+  color: #c9212d;
+  background: #fff2f0;
+  border-color: #ee9794;
+}
+.pos-table-actions .pos-table-actions-payment {
+  grid-column: 1 / -1;
+}
+@media (max-width: 420px) {
+  .pos-table-actions { gap: 10px; }
+  .pos-table-actions .ant-btn { font-size: 16px; padding: 0 6px; }
+}
 .pos-checkout-payment { display: flex; flex-direction: column; gap: 20px; }
 .pos-payment-method-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .pos-payment-method-grid button {
