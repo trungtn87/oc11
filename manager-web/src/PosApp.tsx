@@ -129,6 +129,8 @@ export default function PosApp() {
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [kitchenNote, setKitchenNote] = useState("");
+  const kitchenNoteDrafts = useRef<Map<number, string>>(new Map());
+  const partialKitchenPrints = useRef<Set<number>>(new Set());
   const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
   const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
   const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
@@ -220,11 +222,19 @@ export default function PosApp() {
 
   const selectedTable = tables.find((table) => table.id === tableId);
 
+  function changeKitchenNote(value: string) {
+    setKitchenNote(value);
+    if (tableId !== null) {
+      if (value.trim()) kitchenNoteDrafts.current.set(tableId, value);
+      else kitchenNoteDrafts.current.delete(tableId);
+    }
+  }
+
   function newOrder(table: RestaurantTable) {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
-    setKitchenNote("");
+    setKitchenNote(kitchenNoteDrafts.current.get(table.id) ?? "");
     setSelectedLineKey(null);
     setDirty(false);
     setSearch("");
@@ -265,7 +275,7 @@ export default function PosApp() {
           }))
         }))
       );
-      setKitchenNote("");
+      setKitchenNote(order.table_id === null ? "" : kitchenNoteDrafts.current.get(order.table_id) ?? "");
       setSelectedLineKey(null);
       setDirty(false);
       setSearch("");
@@ -538,6 +548,9 @@ export default function PosApp() {
     try {
       const ticket = await sendSaleOrderToKitchen(saved.id, noteForThisPrint);
       if (ticket.print_status !== "PRINTED") {
+        if (ticket.printer_results.some((result) => result.ok) && saved.table_id !== null) {
+          partialKitchenPrints.current.add(saved.table_id);
+        }
         messageApi.error(
           "Order đã lưu nhưng chưa in đủ phiếu: " +
           (ticket.error_message || "Kiểm tra cấu hình máy in.")
@@ -545,6 +558,10 @@ export default function PosApp() {
         return;
       }
       setKitchenNote("");
+      if (saved.table_id !== null) {
+        kitchenNoteDrafts.current.delete(saved.table_id);
+        partialKitchenPrints.current.delete(saved.table_id);
+      }
       setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
       messageApi.success("Đã gửi bếp " + saved.order_code + ".");
     } catch (error) {
@@ -556,10 +573,10 @@ export default function PosApp() {
 
   function sendKitchen() {
     if (busy) return;
-    if (editingOrder?.kitchen_sent_at) {
+    if (editingOrder?.kitchen_sent_at || (tableId !== null && partialKitchenPrints.current.has(tableId))) {
       Modal.confirm({
         title: "Gửi lại toàn bộ Order tới bếp?",
-        content: "Phiếu bếp sẽ in lại TẤT CẢ món, kể cả món đã gửi trước đó.",
+        content: "Các máy in được chọn sẽ in lại toàn bộ món. Nếu một máy đã in thành công trước đó, máy ấy có thể nhận phiếu trùng.",
         okText: "Gửi lại",
         cancelText: "Không",
         onOk: () => performSendKitchen()
@@ -625,6 +642,11 @@ export default function PosApp() {
         actual_received_amount: Math.round(paymentAmount)
       });
       setPaymentOpen(false);
+      if (tableId !== null) {
+        kitchenNoteDrafts.current.delete(tableId);
+        partialKitchenPrints.current.delete(tableId);
+      }
+      setKitchenNote("");
       setEditingOrder(null);
       setCart([]);
       setTableId(null);
@@ -1005,7 +1027,7 @@ export default function PosApp() {
                   value={kitchenNote}
                   maxLength={500}
                   autoSize={{ minRows: 1, maxRows: 2 }}
-                  onChange={(event) => setKitchenNote(event.target.value)}
+                  onChange={(event) => changeKitchenNote(event.target.value)}
                   placeholder="Ví dụ: bàn cần ra đồ cùng lúc..."
                 />
               </div>
