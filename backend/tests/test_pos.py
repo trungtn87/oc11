@@ -139,3 +139,58 @@ def test_kitchen_send_is_logged_when_printer_is_not_configured(tmp_path, monkeyp
         assert row is not None
         assert row[0] == "FAILED"
         assert "Ốc luộc" in row[1]
+
+
+
+def test_bulk_table_creation_generates_names_and_layout(tmp_path, monkeypatch):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        area = client.post(
+            "/api/pos/areas",
+            json={"name": "Sân", "display_order": 0, "is_active": True},
+        )
+        assert area.status_code == 201
+        area_id = area.json()["id"]
+
+        first = client.post(
+            "/api/pos/tables",
+            json={
+                "area_id": area_id,
+                "name": "Bàn 1",
+                "seats": 0,
+                "display_order": 0,
+                "pos_x": 4,
+                "pos_y": 6,
+                "is_active": True,
+            },
+        )
+        assert first.status_code == 201
+
+        created = client.post(
+            "/api/pos/tables/bulk",
+            json={"area_id": area_id, "quantity": 3},
+        )
+        assert created.status_code == 201
+        rows = created.json()
+        assert [row["name"] for row in rows] == ["Bàn 2", "Bàn 3", "Bàn 4"]
+        assert all(row["seats"] == 0 for row in rows)
+        assert len({(row["pos_x"], row["pos_y"]) for row in rows}) == 3
+
+        moved = client.put(
+            f"/api/pos/tables/{rows[0]['id']}",
+            json={
+                "area_id": area_id,
+                "name": "Bàn VIP",
+                "seats": 0,
+                "display_order": rows[0]["display_order"],
+                "pos_x": 41.5,
+                "pos_y": 52.25,
+                "is_active": True,
+            },
+        )
+        assert moved.status_code == 200
+        assert moved.json()["name"] == "Bàn VIP"
+        assert moved.json()["pos_x"] == 41.5
+        assert moved.json()["pos_y"] == 52.25
