@@ -966,6 +966,113 @@ export default function PosApp() {
           placeholder="Ví dụ: ít cay, không hành..."
         />
       </Modal>
+
+      <Modal
+        open={surchargeLineKey !== null}
+        title="Phụ thu theo món"
+        okText="Thêm phụ thu"
+        okButtonProps={{ loading: surchargeSaving }}
+        cancelText="Đóng"
+        onCancel={() => { if (!surchargeSaving) setSurchargeLineKey(null); }}
+        onOk={() => void addLineSurcharge()}
+        destroyOnClose
+      >
+        <div className="pos-surcharge-form">
+          <label>Phụ thu đã sử dụng</label>
+          <Select
+            allowClear
+            placeholder="Chọn phụ thu cũ hoặc nhập mới"
+            value={surchargePresetId}
+            onChange={(value: number | undefined) => {
+              setSurchargePresetId(value);
+              const preset = surchargePresets.find((item) => item.id === value);
+              if (preset) {
+                setSurchargeName(preset.name);
+                setSurchargeAmount(preset.amount);
+              }
+            }}
+            options={surchargePresets.map((preset) => ({
+              value: preset.id, label: `${preset.name} – ${money(preset.amount)} đ`
+            }))}
+          />
+          <label>Tên phụ thu</label>
+          <Input
+            value={surchargeName}
+            maxLength={120}
+            placeholder="Ví dụ: Thêm sốt, thêm phô mai..."
+            onChange={(event) => {
+              setSurchargePresetId(undefined);
+              setSurchargeName(event.target.value);
+            }}
+          />
+          <label>Số tiền (đ)</label>
+          <InputNumber<number>
+            min={1}
+            step={1000}
+            precision={0}
+            value={surchargeAmount}
+            onChange={(value) => setSurchargeAmount(Number(value ?? 0))}
+            style={{ width: "100%" }}
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        open={paymentOpen}
+        title="Tính tiền · Thanh toán Order"
+        okText="Xác nhận thanh toán"
+        okButtonProps={{ loading: busy }}
+        cancelText="Để sau"
+        onCancel={() => { if (!busy) setPaymentOpen(false); }}
+        onOk={() => void confirmPayment()}
+        destroyOnClose
+      >
+        <div className="pos-payment-modal">
+          <div><span>Tổng tiền</span><strong>{money(total)} đ</strong></div>
+          <label>Loại tài khoản
+            <Select
+              value={paymentAccountType}
+              onChange={(type: FundAccountType) => {
+                setPaymentAccountType(type);
+                const available = accounts.filter((account) =>
+                  account.is_active && account.type === type
+                );
+                setPaymentFundAccountId(
+                  (available.find((account) => account.is_default) ?? available[0])?.id
+                );
+              }}
+              options={[
+                { value: "CASH", label: "Tiền mặt" },
+                { value: "BANK", label: "Ngân hàng" }
+              ]}
+            />
+          </label>
+          <label>Quỹ / tài khoản nhận tiền
+            <Select
+              placeholder="Chọn quỹ nhận tiền"
+              value={paymentFundAccountId}
+              onChange={setPaymentFundAccountId}
+              options={accounts.filter((account) =>
+                account.is_active && account.type === paymentAccountType
+              ).map((account) => ({
+                value: account.id, label: account.name
+              }))}
+            />
+          </label>
+          <label>Tiền thực thu (đ)
+            <InputNumber<number>
+              min={0}
+              precision={0}
+              value={paymentAmount}
+              onChange={(value) => setPaymentAmount(Number(value ?? 0))}
+            />
+          </label>
+          <div className="pos-payment-difference">
+            <span>Chênh lệch làm tròn</span>
+            <strong>{money(paymentAmount - total)} đ</strong>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
