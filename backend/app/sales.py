@@ -1307,8 +1307,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             """
             UPDATE sales_orders
             SET order_time = ?,
-                status = 'OPEN',
-                settlement_status = 'DEBT',
+                status = ?,
+                settlement_status = ?,
                 order_type = ?,
                 table_id = ?,
                 guest_count = ?,
@@ -1326,6 +1326,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             """,
             (
                 order_time,
+                "OPEN" if target == "OPEN" else "PAID",
+                "PAID" if target == "PAID" else "DEBT",
                 order_type,
                 table_id,
                 guest_count,
@@ -1342,13 +1344,8 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             movement_time=changed_at,
         )
 
-        if target == "DEBT":
-            # A finished sale with outstanding receivable: keep stock deduction,
-            # release the table, and never write a fund transaction.
-            connection.execute(
-                "UPDATE sales_orders SET status = 'PAID', settlement_status = 'DEBT' WHERE id = ?",
-                (order_id,),
-            )
+        # The order stage was written atomically above. No transient OPEN state
+        # is ever written when an old table has already been reused.
 
         if should_be_paid:
             fund_account_id = (
