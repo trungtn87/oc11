@@ -66,6 +66,7 @@ export type InventoryItem = {
   smallest_unit_name: string;
   note: string | null;
   is_active: boolean;
+  is_stock_tracked: boolean;
   conversions: ItemUnitConversion[];
 };
 
@@ -76,6 +77,7 @@ export type InventoryItemInput = {
   smallest_unit_id: number;
   note: string | null;
   is_active: boolean;
+  is_stock_tracked: boolean;
   conversions: ItemUnitConversionInput[];
 };
 
@@ -272,6 +274,9 @@ export type InventoryStock = {
   smallest_unit_id: number;
   smallest_unit_name: string;
   stock_quantity: number;
+  stock_revision: number;
+  is_active: boolean;
+  is_stock_tracked: boolean;
   last_purchase_time: string | null;
   last_purchase_receipt_code: string | null;
   last_purchase_unit_id: number | null;
@@ -280,6 +285,36 @@ export type InventoryStock = {
   last_purchase_price_per_smallest_unit: number | null;
   last_reconciled_at: string | null;
   last_reconciled_quantity: number | null;
+};
+
+export type StocktakeLineInput = {
+  item_id: number;
+  expected_quantity: number;
+  expected_revision: number;
+  actual_quantity: number;
+};
+
+export type StocktakeBatchInput = {
+  client_sync_id: string;
+  reason?: string;
+  note?: string;
+  items: StocktakeLineInput[];
+};
+
+export type StocktakeBatchOutput = {
+  id: number;
+  adjustment_code: string;
+  adjustment_time: string;
+  client_sync_id: string;
+  already_synced: boolean;
+  items: Array<{
+    item_id: number;
+    item_name: string;
+    smallest_unit_name: string;
+    system_quantity: number;
+    actual_quantity: number;
+    quantity_delta: number;
+  }>;
 };
 
 export type InventoryMovement = {
