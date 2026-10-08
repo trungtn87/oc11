@@ -628,6 +628,48 @@ def test_pos_estimate_and_kitchen_cancel_are_not_payments(tmp_path, monkeypatch)
             ).fetchone()[0] == 0
 
 
+def test_cancel_open_order_from_table_map_releases_table_for_new_order(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        menu_item_id = seed_menu(db_path)
+        area = client.post("/api/pos/areas", json={"name": "Tầng 1"}).json()
+        table = client.post("/api/pos/tables", json={
+            "area_id": area["id"], "name": "Bàn 1", "is_active": True,
+        }).json()
+        order = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": menu_item_id, "quantity": 2}],
+        })
+        assert order.status_code == 201, order.text
+        order_id = order.json()["id"]
+
+        # UI starts with open_order_id from the map, fetches it, and POSTs void.
+        map_before = client.get("/api/pos/tables?active_only=true").json()
+        assert map_before[0]["open_order_id"] == order_id
+        loaded = client.get(f"/api/sales/orders/{map_before[0]['open_order_id']}")
+        assert loaded.status_code == 200
+        assert loaded.json()["status"] == "OPEN"
+
+        result = client.post(f"/api/sales/orders/{order_id}/void", params={
+            "reason": "Khách đổi kế hoạch",
+        })
+        assert result.status_code == 200, result.text
+        assert result.json()["status"] == "VOID"
+        assert result.json()["void_reason"] == "Khách đổi kế hoạch"
+        assert client.get("/api/pos/tables?active_only=true").json()[0]["open_order_id"] is None
+
+        new_order = client.post("/api/sales/orders", json={
+            "order_type": "DINE_IN", "table_id": table["id"],
+            "items": [{"menu_item_id": menu_item_id, "quantity": 1}],
+        })
+        assert new_order.status_code == 201, new_order.text
+        assert new_order.json()["id"] != order_id
+        assert client.get("/api/pos/tables?active_only=true").json()[0]["open_order_id"] == new_order.json()["id"]
+
+
 def test_pos_checkout_refuses_stale_total_without_receipt(tmp_path, monkeypatch):
     db_path = tmp_path / "oc11.db"
     monkeypatch.setenv("OC11_DB_PATH", str(db_path))
