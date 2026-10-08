@@ -52,6 +52,8 @@ import type {
 } from "./types";
 import "./PosApp.css";
 import PosDashboard from "./PosDashboard";
+import PosQuickActions from "./PosQuickActions";
+import type { PosQuickAction } from "./PosQuickActions";
 
 type PosView = "DASHBOARD" | "MAP" | "ORDERS" | "SALE" | "CHECKOUT";
 
@@ -116,6 +118,8 @@ export default function PosApp() {
   const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [quickAction, setQuickAction] = useState<PosQuickAction>(null);
+  const [dashboardRevision, setDashboardRevision] = useState(0);
   const [printerModalOpen, setPrinterModalOpen] = useState(false);
   const [printerLoading, setPrinterLoading] = useState(false);
   const [printerSaving, setPrinterSaving] = useState(false);
@@ -913,6 +917,18 @@ export default function PosApp() {
           </button>
           {menuOpen && (
             <div className="pos-menu-popup">
+              <button type="button" onClick={() => {
+                setMenuOpen(false);
+                setQuickAction("TRANSFER");
+              }}>
+                ↗ Chuyển tiền đi chợ
+              </button>
+              <button type="button" onClick={() => {
+                setMenuOpen(false);
+                setQuickAction("PURCHASE");
+              }}>
+                ＋ Nhập hàng nhanh
+              </button>
               <button type="button" onClick={() => void openPrinterConfig()}>
                 ⚙ Cài đặt máy in
               </button>
@@ -930,7 +946,7 @@ export default function PosApp() {
         </div>
       </header>
 
-      {view === "DASHBOARD" && <PosDashboard />}
+      {view === "DASHBOARD" && <PosDashboard key={dashboardRevision} />}
 
       {view === "MAP" && (
         <main className="pos-map-view">
@@ -1336,6 +1352,16 @@ export default function PosApp() {
           />
         </div>
       </Modal>
+
+      <PosQuickActions
+        action={quickAction}
+        onClose={() => setQuickAction(null)}
+        onSaved={async () => {
+          const funds = await getFundAccounts();
+          setAccounts(funds);
+          setDashboardRevision((current) => current + 1);
+        }}
+      />
 
       <Modal
         open={printerModalOpen}
