@@ -695,9 +695,10 @@ export type PosPrintResult = {
   printer_results: PrintDestinationResult[];
 };
 
-export type KitchenSendResult = PosPrintResult & {
-  ticket_id: number;
-  sent_at: string;
+export type KitchenSendResult = Omit<PosPrintResult, "print_status"> & {
+  print_status: "PRINTED" | "FAILED" | "NO_NEW_ITEMS";
+  ticket_id: number | null;
+  sent_at: string | null;
   printer_name: string | null;
 };
 
