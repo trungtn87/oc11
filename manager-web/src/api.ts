@@ -669,6 +669,19 @@ export function createRestaurantTable(
   });
 }
 
+export function createRestaurantTablesBulk(
+  areaId: number,
+  quantity: number
+): Promise<RestaurantTable[]> {
+  return request<RestaurantTable[]>("/api/pos/tables/bulk", {
+    method: "POST",
+    body: JSON.stringify({
+      area_id: areaId,
+      quantity
+    })
+  });
+}
+
 export function updateRestaurantTable(
   id: number,
   payload: RestaurantTableInput
