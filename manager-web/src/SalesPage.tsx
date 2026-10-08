@@ -728,7 +728,7 @@ export function SalesPosPage({
           <Text type="secondary">
             {editingOrder
               ? "Đơn chưa xuất hóa đơn điện tử: có thể sửa món, số lượng, phụ thu và tiền thực thu."
-              : "Lưu đơn sẽ trừ kho ngay; có thể thanh toán ngay hoặc thanh toán sau trong danh sách đơn."}
+              : "Lưu chờ thanh toán, ghi nợ có khách hàng, hoặc thanh toán ngay. Tất cả cùng hệ thống đơn bán và kho."}
           </Text>
         </div>
         {onOpenOrders && (
@@ -926,20 +926,56 @@ export function SalesPosPage({
               <strong>{money(total)} đ</strong>
             </div>
 
+            <div className="sales-customer-selection">
+              <div className="sales-customer-heading">
+                <Text type="secondary">
+                  Khách hàng {(editingOrder ? editPaymentStatus : "OPEN") === "DEBT"
+                    ? "(bắt buộc khi ghi nợ)" : "(tùy chọn)"}
+                </Text>
+                <Button type="link" size="small" onClick={() => setCreatingCustomer(true)}>
+                  + Thêm khách hàng
+                </Button>
+              </div>
+              <Select<number>
+                showSearch
+                allowClear
+                style={{ width: "100%" }}
+                placeholder="Tìm tên khách, số điện thoại hoặc MST"
+                optionFilterProp="label"
+                value={customerId}
+                onChange={(value) => setCustomerId(value)}
+                onSearch={(query) => void searchCustomers(query)}
+                options={[
+                  ...customers.map((row) => ({
+                    value: row.id,
+                    label: `${row.name} · ${row.phone || row.tax_code || row.customer_code}`
+                  })),
+                  ...(editingOrder?.customer_id &&
+                    !customers.some((row) => row.id === editingOrder.customer_id)
+                      ? [{ value: editingOrder.customer_id,
+                           label: editingOrder.customer_name ?? "Khách đã chọn" }]
+                      : [])
+                ]}
+              />
+              {(!editingOrder || editPaymentStatus === "OPEN") &&
+                <Text type="secondary">Lưu chờ thanh toán không tự tạo công nợ.</Text>}
+            </div>
+
             {editingOrder && (
               <label>
-                <span>Trạng thái thanh toán</span>
+                <span>Trạng thái đơn</span>
                 <Select
                   value={editPaymentStatus}
-                  onChange={(value: "PAID" | "DEBT") => {
+                  onChange={(value: "OPEN" | "DEBT" | "PAID") => {
                     setEditPaymentStatus(value);
                     if (value === "PAID" && actualReceived <= 0) {
                       setActualReceived(Math.round(total));
                     }
                   }}
                   options={[
-                    { value: "PAID", label: "Đã thanh toán" },
-                    { value: "DEBT", label: "Nợ / Chưa thanh toán" }
+                    { value: "OPEN", label: "Chờ thanh toán (đơn còn mở)" },
+                    { value: "DEBT", label: "Ghi nợ (đã kết thúc đơn)" },
+                    { value: "PAID", label: "Đã thanh toán" }
                   ]}
                 />
               </label>
@@ -1004,7 +1040,9 @@ export function SalesPosPage({
               </>
             ) : (
               <Text type="secondary">
-                Đơn nợ vẫn giữ nguyên phần kho đã bán, chưa ghi tiền vào quỹ/tài khoản.
+                {editingOrder && editPaymentStatus === "DEBT"
+                  ? "Ghi nợ kết thúc đơn bán, chưa thu tiền và không tăng quỹ."
+                  : "Đơn chờ thanh toán chưa kết thúc, không phải công nợ."}
               </Text>
             )}
 
@@ -1015,36 +1053,62 @@ export function SalesPosPage({
                 block
                 loading={saving}
                 disabled={!cart.length}
-                onClick={() => void checkout(false)}
+                onClick={() => void checkout("OPEN")}
               >
                 LƯU THAY ĐỔI
               </Button>
             ) : (
-              <Space.Compact block>
+              <div className="sales-checkout-choices">
                 <Button
-                  size="large"
-                  block
-                  loading={saving}
-                  disabled={!cart.length}
-                  onClick={() => void checkout(false)}
-                >
-                  LƯU ĐƠN
-                </Button>
+                  size="large" loading={saving} disabled={!cart.length}
+                  onClick={() => void checkout("OPEN")}
+                >LƯU CHỜ THANH TOÁN</Button>
                 <Button
-                  type="primary"
-                  size="large"
-                  block
-                  loading={saving}
-                  disabled={!cart.length}
-                  onClick={() => void checkout(true)}
-                >
-                  THANH TOÁN
-                </Button>
-              </Space.Compact>
+                  size="large" loading={saving} disabled={!cart.length}
+                  onClick={() => void checkout("DEBT")}
+                >GHI NỢ</Button>
+                <Button
+                  type="primary" size="large" loading={saving}
+                  disabled={!cart.length} onClick={() => void checkout("PAID")}
+                >THANH TOÁN</Button>
+              </div>
             )}
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={creatingCustomer}
+        title="Thêm khách hàng"
+        onCancel={() => { if (!customerSaving) setCreatingCustomer(false); }}
+        onOk={() => void saveCustomer()}
+        okText="Lưu và chọn khách"
+        okButtonProps={{ loading: customerSaving }}
+        destroyOnClose
+      >
+        <div className="sales-customer-create">
+          <Select value={customerDraft.customer_type}
+            onChange={(value: PosCustomerInput["customer_type"]) =>
+              setCustomerDraft((prev) => ({ ...prev, customer_type: value }))}
+            options={[{ value: "PERSON", label: "Cá nhân" },
+                      { value: "ORGANIZATION", label: "Doanh nghiệp" }]} />
+          {([
+            ["name", "Tên khách hàng / công ty"],
+            ["phone", "Số điện thoại"],
+            ["tax_code", "Mã số thuế"],
+            ["address", "Địa chỉ"],
+            ["email", "Email"],
+            ["contact_name", "Người liên hệ"]
+          ] as const).map(([key, label]) => (
+            <label key={key}>{label}
+              <Input value={customerDraft[key] ?? ""}
+                onChange={(event) => setCustomerDraft((prev) =>
+                  ({ ...prev, [key]: event.target.value }))}
+                placeholder={label} />
+            </label>
+          ))}
+        </div>
+      </Modal>
 
       <Modal
         open={optionItem !== null}
