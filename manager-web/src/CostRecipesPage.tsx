@@ -379,19 +379,21 @@ export default function CostRecipesPage() {
       title: "Kiểu chế biến",
       dataIndex: "name",
       key: "name",
+      width: 230,
+      fixed: "left",
       render: (value: string) => <Text strong>{value}</Text>
     },
     {
       title: "Công thức",
       key: "recipe",
-      width: 140,
+      width: 130,
       render: (_, row) =>
         row.recipe ? <Tag color="blue">Có công thức</Tag> : <Tag>Không</Tag>
     },
     {
       title: "Cost hiện tại",
       key: "current_cost",
-      width: 190,
+      width: 170,
       render: (_, row) =>
         row.recipe ? (
           row.recipe.cost_complete ? (
@@ -409,14 +411,14 @@ export default function CostRecipesPage() {
     {
       title: "Mốc Cost",
       key: "reference",
-      width: 170,
+      width: 145,
       render: (_, row) =>
         row.recipe ? formatCost(row.recipe.reference_unit_cost) : "—"
     },
     {
       title: "Thay đổi",
       key: "change",
-      width: 120,
+      width: 105,
       render: (_, row) => {
         const value = row.recipe?.change_percent;
         if (value === null || value === undefined) {
@@ -447,7 +449,8 @@ export default function CostRecipesPage() {
     {
       title: "Thao tác",
       key: "action",
-      width: 100,
+      width: 90,
+      fixed: "right",
       render: (_, row) => (
         <Button type="link" onClick={() => openEdit(row)}>
           Sửa
@@ -461,27 +464,29 @@ export default function CostRecipesPage() {
       title: "Kiểu chế biến / Sốt",
       dataIndex: "service_option_name",
       key: "service_option_name",
+      width: 240,
+      fixed: "left",
       render: (value: string) => <Text strong>{value}</Text>
     },
     {
       title: "Cost mốc",
       dataIndex: "reference_unit_cost",
       key: "reference_unit_cost",
-      width: 160,
+      width: 145,
       render: formatCost
     },
     {
       title: "Cost hiện tại",
       dataIndex: "current_unit_cost",
       key: "current_unit_cost",
-      width: 160,
+      width: 155,
       render: (value: number) => <Text strong>{formatCost(value)}</Text>
     },
     {
       title: "Tăng",
       dataIndex: "change_percent",
       key: "change_percent",
-      width: 110,
+      width: 105,
       render: (value: number) => (
         <Tag color="error">+{formatPercent(value)}</Tag>
       )
@@ -497,6 +502,7 @@ export default function CostRecipesPage() {
       title: "Xử lý",
       key: "action",
       width: 190,
+      fixed: "right",
       render: (_, row) => (
         <Button
           type="primary"
@@ -669,8 +675,10 @@ export default function CostRecipesPage() {
                   <Table<ServiceOptionCost>
                     rowKey="id"
                     loading={loading}
+                    className="cost-options-table"
                     columns={optionColumns}
                     dataSource={filteredOptions}
+                    scroll={{ x: 1040 }}
                     pagination={false}
                     locale={{ emptyText: "Chưa có kiểu chế biến." }}
                   />
@@ -686,8 +694,10 @@ export default function CostRecipesPage() {
                 <Table<CostAlert>
                   rowKey="id"
                   loading={loading}
+                  className="cost-alerts-table"
                   columns={alertColumns}
                   dataSource={alerts}
+                  scroll={{ x: 1040 }}
                   pagination={false}
                   locale={{ emptyText: "Không có cảnh báo Cost đang mở." }}
                 />
