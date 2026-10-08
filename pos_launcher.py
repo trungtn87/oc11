@@ -27,12 +27,36 @@ def windows_creation_flags() -> int:
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def runtime_is_oc11(timeout: float = 0.5) -> bool:
+def probe_runtime(timeout: float = 0.5) -> dict | None:
+    """Read the identity of the *running* backend, not merely its health."""
     try:
         with urllib.request.urlopen(APP_URL + "/api/runtime", timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return payload.get("app") == "OC11"
+        return payload if payload.get("app") == "OC11" else None
     except (OSError, ValueError, urllib.error.URLError):
+        return None
+
+
+def running_backend_is_paired(server_exe: Path, runtime: dict | None = None) -> bool:
+    """Never attach POS to an old backend just because it answers /api/runtime.
+
+    OC11.exe uses its own mtime_ns as build_version. Both executable path
+    AND fingerprint must match: updating an EXE in place keeps its path.
+    """
+    if runtime is None:
+        runtime = probe_runtime()
+    if not runtime:
+        return False
+    try:
+        executable = str(runtime.get("executable") or "")
+        current = os.path.normcase(os.path.abspath(str(server_exe)))
+        running = os.path.normcase(os.path.abspath(executable)) if executable else ""
+        return (
+            bool(executable)
+            and running == current
+            and str(runtime.get("build_version") or "") == str(server_exe.stat().st_mtime_ns)
+        )
+    except OSError:
         return False
 
 
@@ -49,16 +73,20 @@ def notify_error(message: str) -> None:
 
 
 def ensure_server() -> bool:
-    if runtime_is_oc11():
-        return True
-
     server_exe = root_dir() / "OC11.exe"
-    if not server_exe.exists():
+    if not server_exe.is_file():
         notify_error(
-            "Không tìm thấy OC11.exe. Hãy để OC11-POS.exe cùng thư mục với OC11.exe."
+            "Không tìm thấy OC11.exe cùng phiên bản. "
+            "Hãy giải nén cả OC11.exe và OC11-POS.exe vào cùng một thư mục."
         )
         return False
 
+    if running_backend_is_paired(server_exe):
+        return True
+
+    # Always invoke the *paired* OC11.exe when the running backend is stale.
+    # The main launcher safely stops an older OC11 on port 8000 and starts
+    # this version, without touching data/oc11.db.
     try:
         subprocess.Popen(
             [str(server_exe), "--startup"],
@@ -69,12 +97,15 @@ def ensure_server() -> bool:
         notify_error(f"Không khởi động được OC11.exe: {exc}")
         return False
 
-    for _ in range(60):
-        if runtime_is_oc11():
+    for _ in range(100):
+        if running_backend_is_paired(server_exe):
             return True
         time.sleep(0.25)
 
-    notify_error("OC11 chưa khởi động được backend. Hãy chạy OC11.exe rồi thử lại POS.")
+    notify_error(
+        "POS không kết nối được với backend đúng phiên bản. "
+        "Hãy kiểm tra OC11.exe đang chạy và thử khởi động lại."
+    )
     return False
 
 
