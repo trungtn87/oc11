@@ -705,6 +705,7 @@ public class MainActivity extends Activity {
 
     private void showLineDialog(JSONArray items, JSONArray lines, Runnable afterAdd) {
         JSONArray inventory = LocalStore.asArray(store.getCache("inventory"));
+        JSONArray purchaseDefaults = LocalStore.asArray(store.getCache("purchase_defaults"));
 
         LinearLayout form = vertical();
         form.setPadding(dp(16), dp(4), dp(16), dp(8));
@@ -748,6 +749,10 @@ public class MainActivity extends Activity {
 
         final List<Integer> unitIds = new ArrayList<>();
         final JSONObject[] selectedItem = new JSONObject[]{null};
+        // Spinner emits delayed selection callbacks when the adapter changes.
+        // Suppress duplicate callbacks so a user-edited price is not overwritten.
+        final int[] appliedItemId = new int[]{-1};
+        final int[] appliedUnitId = new int[]{-1};
 
         Runnable refreshItem = () -> {
             JSONObject item = selectedItem[0];
@@ -758,6 +763,8 @@ public class MainActivity extends Activity {
                         android.R.layout.simple_spinner_dropdown_item,
                         new ArrayList<String>()));
                 info.setText("Gõ tên hàng hóa rồi chọn trong danh sách.");
+                appliedItemId[0] = -1;
+                appliedUnitId[0] = -1;
                 price.setText("");
                 return;
             }
@@ -783,22 +790,22 @@ public class MainActivity extends Activity {
             if (idx < 0 && !unitIds.isEmpty()) idx = 0;
             if (idx >= 0) unitSpinner.setSelection(idx);
 
-            JSONObject stock = findInventory(inventory, item.optInt("id"));
-            if (stock != null) {
-                String msg = "Tồn trước: " + trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
-                        stock.optString("smallest_unit_name");
-                Long suggested = idx < 0 ? null : suggestedPurchasePrice(item, stock, unitIds.get(idx));
-                if (suggested != null) {
-                    msg += " • Giá gợi ý: " + MONEY.format(suggested) + " đ / " + unitNames.get(idx);
-                    price.setText(String.valueOf(suggested));
-                } else {
-                    msg += " • Chưa có giá nhập gần nhất";
-                    price.setText("");
-                }
-                info.setText(msg);
+            int itemId = item.optInt("id");
+            JSONObject stock = findInventory(inventory, itemId);
+            JSONObject purchaseDefault = findInventory(purchaseDefaults, itemId);
+            if (idx >= 0) {
+                int unitId = unitIds.get(idx);
+                Long suggested = suggestedPurchasePrice(item, purchaseDefault, stock, unitId);
+                price.setText(suggested == null ? "" : String.valueOf(suggested));
+                info.setText(purchasePriceHint(
+                        stock, purchaseDefault, suggested, unitNames.get(idx)));
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = unitId;
             } else {
-                info.setText("Chưa có dữ liệu tồn / giá gần nhất.");
                 price.setText("");
+                info.setText("Mặt hàng chưa có đơn vị nhập hợp lệ.");
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = -1;
             }
         };
 
@@ -809,19 +816,20 @@ public class MainActivity extends Activity {
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 JSONObject item = selectedItem[0];
                 if (item == null || position < 0 || position >= unitIds.size()) return;
-                JSONObject stock = findInventory(inventory, item.optInt("id"));
-                Long suggested = suggestedPurchasePrice(item, stock, unitIds.get(position));
-                price.setText(suggested == null ? "" : String.valueOf(suggested));
-                if (stock != null) {
-                    String msg = "Tồn trước: " +
-                            trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
-                            stock.optString("smallest_unit_name");
-                    msg += suggested == null
-                            ? " • Chưa có giá nhập gần nhất"
-                            : " • Giá gợi ý: " + MONEY.format(suggested) + " đ / " +
-                              String.valueOf(parent.getItemAtPosition(position));
-                    info.setText(msg);
+                int itemId = item.optInt("id");
+                int unitId = unitIds.get(position);
+                if (appliedItemId[0] == itemId && appliedUnitId[0] == unitId) {
+                    return; // already filled for this item/unit; preserve manual edits
                 }
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = unitId;
+                JSONObject stock = findInventory(inventory, itemId);
+                JSONObject purchaseDefault = findInventory(purchaseDefaults, itemId);
+                Long suggested = suggestedPurchasePrice(item, purchaseDefault, stock, unitId);
+                price.setText(suggested == null ? "" : String.valueOf(suggested));
+                info.setText(purchasePriceHint(
+                        stock, purchaseDefault, suggested,
+                        String.valueOf(parent.getItemAtPosition(position))));
             }
 
             @Override
@@ -837,9 +845,15 @@ public class MainActivity extends Activity {
         itemInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                JSONObject exact = findItemByName(activeItems, s.toString().trim());
                 JSONObject chosen = selectedItem[0];
-                if (chosen != null && !chosen.optString("name").equalsIgnoreCase(s.toString().trim())) {
+                if (exact == null && chosen != null) {
                     selectedItem[0] = null;
+                    refreshItem.run();
+                } else if (exact != null
+                        && (chosen == null || chosen.optInt("id") != exact.optInt("id"))) {
+                    // Typing the complete item name also triggers default unit/price.
+                    selectedItem[0] = exact;
                     refreshItem.run();
                 }
             }
