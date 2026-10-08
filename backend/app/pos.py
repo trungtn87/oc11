@@ -634,6 +634,78 @@ def build_kitchen_ticket(connection, order, temporary_note: str = "") -> tuple[s
     return "\r\n".join(text_lines), payload
 
 
+def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: str):
+    roles = ["KITCHEN", "CASHIER"] if target == "BOTH" else [target]
+    results: list[PrintDestinationResult] = []
+    attempted: dict[str, PrintDestinationResult] = {}
+    for role in roles:
+        name = (
+            settings.kitchen_printer_name
+            if role == "KITCHEN" else settings.cashier_printer_name
+        ).strip()
+        if name and name.casefold() in attempted:
+            previous = attempted[name.casefold()]
+            results.append(PrintDestinationResult(
+                role=role, printer_name=name, ok=previous.ok, error=previous.error
+            ))
+            continue
+        if not name:
+            outcome = PrintDestinationResult(
+                role=role, printer_name=None, ok=False,
+                error=f"Chưa cấu hình máy in {'bếp' if role == 'KITCHEN' else 'thu ngân'}.",
+            )
+        else:
+            ok, error = print_text(name, content)
+            outcome = PrintDestinationResult(
+                role=role, printer_name=name, ok=ok, error=error
+            )
+            attempted[name.casefold()] = outcome
+        results.append(outcome)
+    failures = [
+        f"{'Bếp' if result.role == 'KITCHEN' else 'Thu ngân'}: {result.error or 'In lỗi'}"
+        for result in results if not result.ok
+    ]
+    return (
+        "FAILED" if failures else "PRINTED",
+        "; ".join(failures) if failures else None,
+        results,
+    )
+
+
+def build_cashier_receipt(connection, order) -> str:
+    text_lines = [
+        "ỐC 11 - PHIẾU THANH TOÁN",
+        "=" * 36,
+        f"Mã đơn: {order['order_code']}",
+    ]
+    if order["order_type"] == "DINE_IN":
+        text_lines.append(f"Bàn: {order['area_name'] or ''} / {order['table_name'] or ''}")
+    text_lines.extend([
+        f"Thời gian: {order['paid_at'] or order['order_time']}",
+        "-" * 36,
+    ])
+    for line in select_order_items(connection, int(order["id"])):
+        text_lines.append(
+            f"{format_quantity(float(line['quantity']))} x {line['item_name_snapshot']}"
+        )
+        if line["option_name_snapshot"]:
+            text_lines.append(f"  + {line['option_name_snapshot']}")
+        text_lines.append(f"  Thành tiền: {int(line['line_total']):,} đ")
+        for extra in select_item_surcharges(connection, int(line["id"])):
+            text_lines.append(f"  + {extra['name']}: {int(extra['amount']):,} đ")
+    for extra in select_order_surcharges(connection, int(order["id"])):
+        text_lines.append(f"Phụ thu {extra['name']}: {int(extra['amount']):,} đ")
+    text_lines.extend([
+        "-" * 36,
+        f"TỔNG TIỀN: {int(order['total_amount']):,} đ",
+        f"THỰC THU: {int(order['actual_received_amount'] or 0):,} đ",
+        "=" * 36,
+        "Cảm ơn quý khách!",
+        "", "", "",
+    ])
+    return "\r\n".join(text_lines)
+
+
 @router.post("/printer/test")
 def test_kitchen_printer() -> dict[str, str | bool | None]:
     printer_name = str(load_settings().get("kitchen_printer_name") or "").strip()
