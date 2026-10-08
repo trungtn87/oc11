@@ -77,7 +77,7 @@ export type InventoryItemInput = {
   smallest_unit_id: number;
   note: string | null;
   is_active: boolean;
-  is_stock_tracked: boolean;
+  is_stock_tracked?: boolean;
   conversions: ItemUnitConversionInput[];
 };
 
