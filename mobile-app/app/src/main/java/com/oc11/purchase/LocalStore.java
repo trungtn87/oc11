@@ -14,7 +14,7 @@ import java.util.List;
 
 public final class LocalStore extends SQLiteOpenHelper {
     private static final String DB_NAME = "oc11_mobile.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     public static final class PendingReceipt {
         public final long id;
@@ -25,6 +25,24 @@ public final class LocalStore extends SQLiteOpenHelper {
         public final String error;
 
         PendingReceipt(long id, String payload, String createdAt, int synced, String serverCode, String error) {
+            this.id = id;
+            this.payload = payload;
+            this.createdAt = createdAt;
+            this.synced = synced;
+            this.serverCode = serverCode;
+            this.error = error;
+        }
+    }
+
+    public static final class PendingStocktake {
+        public final long id;
+        public final String payload;
+        public final String createdAt;
+        public final int synced;
+        public final String serverCode;
+        public final String error;
+
+        PendingStocktake(long id, String payload, String createdAt, int synced, String serverCode, String error) {
             this.id = id;
             this.payload = payload;
             this.createdAt = createdAt;
@@ -48,10 +66,24 @@ public final class LocalStore extends SQLiteOpenHelper {
                 "synced INTEGER NOT NULL DEFAULT 0," +
                 "server_code TEXT," +
                 "error TEXT)");
+        createStocktakeTable(db);
+    }
+
+    private void createStocktakeTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS stocktakes (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                "payload TEXT NOT NULL," +
+                "created_at TEXT NOT NULL," +
+                "synced INTEGER NOT NULL DEFAULT 0," +
+                "server_code TEXT," +
+                "error TEXT)");
     }
 
     @Override
-    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {}
+    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // Existing receipts and cache must survive an APK upgrade.
+        if (oldVersion < 2) createStocktakeTable(db);
+    }
 
     public void putCache(String key, String json, String updatedAt) {
         ContentValues values = new ContentValues();
@@ -148,6 +180,77 @@ public final class LocalStore extends SQLiteOpenHelper {
         try (Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM receipts WHERE synced=0", null)) {
             return c.moveToFirst() ? c.getInt(0) : 0;
         }
+    }
+
+    public long saveStocktake(JSONObject payload, String createdAt) {
+        ContentValues values = new ContentValues();
+        values.put("payload", payload.toString());
+        values.put("created_at", createdAt);
+        return getWritableDatabase().insertOrThrow("stocktakes", null, values);
+    }
+
+    public void updateStocktake(long id, JSONObject payload) {
+        ContentValues values = new ContentValues();
+        values.put("payload", payload.toString());
+        values.putNull("error");
+        // Editing always uses a new client_sync_id supplied by the screen.
+        getWritableDatabase().update(
+                "stocktakes", values, "id=? AND synced=0",
+                new String[]{String.valueOf(id)});
+    }
+
+    public void deleteUnsyncedStocktake(long id) {
+        getWritableDatabase().delete(
+                "stocktakes", "id=? AND synced=0", new String[]{String.valueOf(id)});
+    }
+
+    private List<PendingStocktake> readStocktakes(boolean pendingOnly) {
+        List<PendingStocktake> rows = new ArrayList<>();
+        try (Cursor c = getReadableDatabase().query(
+                "stocktakes",
+                new String[]{"id", "payload", "created_at", "synced", "server_code", "error"},
+                pendingOnly ? "synced=0" : null,
+                null, null, null, pendingOnly ? "id ASC" : "id DESC")) {
+            while (c.moveToNext()) {
+                rows.add(new PendingStocktake(
+                        c.getLong(0), c.getString(1), c.getString(2), c.getInt(3),
+                        c.isNull(4) ? null : c.getString(4),
+                        c.isNull(5) ? null : c.getString(5)
+                ));
+            }
+        }
+        return rows;
+    }
+
+    public List<PendingStocktake> listStocktakes() {
+        return readStocktakes(false);
+    }
+
+    public List<PendingStocktake> listUnsyncedStocktakes() {
+        return readStocktakes(true);
+    }
+
+    public int pendingStocktakeCount() {
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT COUNT(*) FROM stocktakes WHERE synced=0", null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    public void markStocktakeSynced(long id, String serverCode) {
+        ContentValues values = new ContentValues();
+        values.put("synced", 1);
+        values.put("server_code", serverCode);
+        values.putNull("error");
+        getWritableDatabase().update(
+                "stocktakes", values, "id=?", new String[]{String.valueOf(id)});
+    }
+
+    public void markStocktakeError(long id, String error) {
+        ContentValues values = new ContentValues();
+        values.put("error", error);
+        getWritableDatabase().update(
+                "stocktakes", values, "id=?", new String[]{String.valueOf(id)});
     }
 
     public static JSONArray asArray(String json) {
