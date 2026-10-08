@@ -383,12 +383,24 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                // Fetch the whole snapshot before changing any offline cache.
+                // Most importantly, latest purchase prices do NOT depend on
+                // availability of stock movement snapshots.
+                JSONArray latestSuppliers = ApiClient.getArray(baseUrl, "/api/suppliers");
+                JSONArray latestItems = ApiClient.getArray(baseUrl, "/api/items");
+                JSONArray latestFunds = ApiClient.getArray(baseUrl, "/api/fund-accounts");
+                JSONArray latestGroups = ApiClient.getArray(baseUrl, "/api/item-groups");
+                JSONArray latestStock = ApiClient.getArray(baseUrl, "/api/inventory/stock");
+                JSONArray latestPurchaseDefaults = ApiClient.getArray(
+                        baseUrl, "/api/items/purchase-defaults");
+
                 String stamp = nowDisplay();
-                store.putCache("suppliers", ApiClient.getArray(baseUrl, "/api/suppliers").toString(), stamp);
-                store.putCache("items", ApiClient.getArray(baseUrl, "/api/items").toString(), stamp);
-                store.putCache("fund_accounts", ApiClient.getArray(baseUrl, "/api/fund-accounts").toString(), stamp);
-                store.putCache("item_groups", ApiClient.getArray(baseUrl, "/api/item-groups").toString(), stamp);
-                store.putCache("inventory", ApiClient.getArray(baseUrl, "/api/inventory/stock").toString(), stamp);
+                store.putCache("suppliers", latestSuppliers.toString(), stamp);
+                store.putCache("items", latestItems.toString(), stamp);
+                store.putCache("fund_accounts", latestFunds.toString(), stamp);
+                store.putCache("item_groups", latestGroups.toString(), stamp);
+                store.putCache("inventory", latestStock.toString(), stamp);
+                store.putCache("purchase_defaults", latestPurchaseDefaults.toString(), stamp);
             } catch (Exception ex) {
                 fatal = ex.getMessage();
             }
