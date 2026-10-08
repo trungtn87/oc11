@@ -1267,7 +1267,6 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
                 order_type = ?,
                 table_id = ?,
                 guest_count = ?,
-                kitchen_sent_at = NULL,
                 customer_id = ?,
                 fund_account_id = NULL,
                 total_amount = ?,

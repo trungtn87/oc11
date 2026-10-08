@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .backup import backup_database
 from .database import connect
+from .pos_printing import render_80mm_ticket, unsent_items
 from .sales import select_item_surcharges, select_order, select_order_items, select_order_surcharges
 from .settings import load_settings, save_settings
 
@@ -59,7 +61,7 @@ PrinterTarget = Literal["KITCHEN", "CASHIER", "BOTH"]
 class PosSettingsInput(BaseModel):
     kitchen_printer_name: str | None = Field(default="", max_length=300)
     cashier_printer_name: str | None = Field(default="", max_length=300)
-    send_kitchen_targets: PrinterTarget = "KITCHEN"
+    send_kitchen_targets: PrinterTarget = "BOTH"
     print_receipt_targets: PrinterTarget = "CASHIER"
 
 
@@ -91,8 +93,9 @@ class PrintDispatchOutput(BaseModel):
 
 
 class KitchenSendOutput(PrintDispatchOutput):
-    ticket_id: int
-    sent_at: str
+    print_status: Literal["PRINTED", "FAILED", "NO_NEW_ITEMS"]
+    ticket_id: int | None
+    sent_at: str | None
     printer_name: str | None
 
 
@@ -507,7 +510,7 @@ def pos_settings_output(settings: dict) -> PosSettingsOutput:
     return PosSettingsOutput(
         kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
         cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
-        send_kitchen_targets=target("send_kitchen_targets", "KITCHEN"),
+        send_kitchen_targets="BOTH",
         print_receipt_targets=target("print_receipt_targets", "CASHIER"),
     )
 
@@ -522,7 +525,7 @@ def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings = load_settings()
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
     settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
-    settings["send_kitchen_targets"] = payload.send_kitchen_targets
+    settings["send_kitchen_targets"] = "BOTH"
     settings["print_receipt_targets"] = payload.print_receipt_targets
     save_settings(settings)
     return pos_settings_output(settings)
@@ -533,40 +536,97 @@ def powershell_quote(value: str) -> str:
 
 
 def print_text(printer_name: str, content: str) -> tuple[bool, str | None]:
-    if not printer_name.strip():
-        return False, "Chưa cấu hình máy in bếp."
-    if os.name != "nt":
-        return False, "In bếp trực tiếp chỉ hỗ trợ khi chạy trên Windows."
+    """Print a Unicode receipt on a real 80 mm Windows paper size.
 
-    path: Path | None = None
+    Windows PrintDocument/GDI avoids Out-Printer's default A4 pagination
+    and allows Vietnamese text via the installed Consolas font.
+    """
+    if not printer_name.strip():
+        return False, "Chưa cấu hình máy in."
+    if os.name != "nt":
+        return False, "In trực tiếp chỉ hỗ trợ khi chạy trên Windows."
+
+    text_path: Path | None = None
+    script_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8-sig", suffix=".txt", delete=False
         ) as handle:
             handle.write(content)
-            path = Path(handle.name)
+            text_path = Path(handle.name)
 
-        command = (
-            f"Get-Content -LiteralPath {powershell_quote(str(path))} "
-            f"-Raw -Encoding UTF8 | Out-Printer -Name {powershell_quote(printer_name)}"
-        )
+        # PaperSize uses hundredths of an inch: 315 = ~80 mm.
+        # The PrintPage canvas uses millimetres, independent of printer DPI.
+        script = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Printing;
+
+public static class Oc11Thermal80 {
+    public static void Print(string printer, string content) {
+        string[] lines = content.Replace("\r\n", "\n").Split('\n');
+        using (PrintDocument doc = new PrintDocument()) {
+            doc.PrinterSettings.PrinterName = printer;
+            if (!doc.PrinterSettings.IsValid)
+                throw new Exception("Máy in không tồn tại trên Windows: " + printer);
+            int height = Math.Min(12000, Math.Max(200, (lines.Length + 4) * 20));
+            doc.DefaultPageSettings.PaperSize = new PaperSize("80mm", 315, height);
+            doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+            doc.OriginAtMargins = false;
+            doc.PrintController = new StandardPrintController();
+            using (Font body = new Font("Consolas", 9.0f, FontStyle.Regular))
+            using (Font heading = new Font("Consolas", 11.0f, FontStyle.Bold)) {
+                doc.PrintPage += (sender, e) => {
+                    e.Graphics.PageUnit = GraphicsUnit.Millimeter;
+                    float y = 2.0f;
+                    foreach (string line in lines) {
+                        bool isHeading = line.Trim() == "CHẾ BIẾN" ||
+                                         line.Trim() == "KIỂM ĐỒ";
+                        e.Graphics.DrawString(
+                            line, isHeading ? heading : body,
+                            Brushes.Black, 2.0f, y
+                        );
+                        y += 5.0f;
+                    }
+                    e.HasMorePages = false;
+                };
+                doc.Print();
+            }
+        }
+    }
+}
+'@
+$text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
+[Oc11Thermal80]::Print($args[0], $text)
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8-sig", suffix=".ps1", delete=False
+        ) as handle:
+            handle.write(script)
+            script_path = Path(handle.name)
+
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            check=False, capture_output=True, text=True, timeout=20,
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-File", str(script_path),
+             printer_name, str(text_path)],
+            check=False, capture_output=True, text=True, timeout=25,
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
         )
         if result.returncode == 0:
             return True, None
-        error = (result.stderr or result.stdout or "Không in được phiếu bếp.").strip()
-        return False, error[-600:]
+        return False, (result.stderr or result.stdout or "Không in được phiếu.")[-600:].strip()
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     finally:
-        if path is not None:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        for path in (text_path, script_path):
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def format_quantity(value: float) -> str:
@@ -575,53 +635,38 @@ def format_quantity(value: float) -> str:
     return f"{value:g}"
 
 
-def build_kitchen_ticket(connection, order, temporary_note: str = "") -> tuple[str, dict]:
-    lines = select_order_items(connection, int(order["id"]))
-    payload_items = []
-    text_lines = [
-        "ỐC 11 - PHIẾU BẾP",
-        "=" * 36,
-        f"Mã đơn: {order['order_code']}",
-    ]
-    if order["order_type"] == "DINE_IN":
-        area = order["area_name"] or ""
-        table = order["table_name"] or ""
-        text_lines.append(f"Bàn: {area} / {table}".strip(" /"))
-        if int(order["guest_count"] or 0) > 0:
-            text_lines.append(f"Số khách: {int(order['guest_count'])}")
-    else:
-        text_lines.append("Loại: MANG VỀ")
-    text_lines.extend(
-        [f"Giờ gửi: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", "-" * 36]
-    )
+def current_kitchen_items(connection, order_id: int) -> list[dict]:
+    """Create snapshot independent of volatile sales_order_items ids."""
+    items = []
+    for line in select_order_items(connection, order_id):
+        extras = select_item_surcharges(connection, int(line["id"]))
+        items.append({
+            "sales_order_item_id": int(line["id"]),
+            "name": line["item_name_snapshot"],
+            "option": line["option_name_snapshot"],
+            "unit": line["unit_name_snapshot"],
+            "quantity": float(line["quantity"]),
+            "note": line["note"],
+            "surcharges": [extra["name"] for extra in extras],
+        })
+    return items
 
-    for line in lines:
-        quantity = float(line["quantity"])
-        text_lines.append(f"{format_quantity(quantity)} x {line['item_name_snapshot']}")
-        if line["option_name_snapshot"]:
-            text_lines.append(f"  + {line['option_name_snapshot']}")
-        surcharges = select_item_surcharges(connection, int(line["id"]))
-        for surcharge in surcharges:
-            text_lines.append(f"  + {surcharge['name']}")
-        if line["note"]:
-            text_lines.append(f"  * {line['note']}")
-        payload_items.append(
-            {
-                "sales_order_item_id": int(line["id"]),
-                "name": line["item_name_snapshot"],
-                "option": line["option_name_snapshot"],
-                "quantity": quantity,
-                "note": line["note"],
-                "surcharges": [row["name"] for row in surcharges],
-            }
-        )
 
-    if order["note"]:
-        text_lines.extend(["-" * 36, f"Ghi chú đơn: {order['note']}"])
-    if temporary_note.strip():
-        text_lines.extend(["-" * 36, "GHI CHÚ GỬI BẾP:", temporary_note.strip()])
-    text_lines.extend(["=" * 36, "", "", ""])
-    payload = {
+def printed_kitchen_snapshots(connection, order_id: int) -> list[dict]:
+    rows = connection.execute(
+        """
+        SELECT payload_json FROM kitchen_tickets
+        WHERE sales_order_id = ?
+          AND (kitchen_print_ok = 1
+               OR (kitchen_print_ok IS NULL AND print_status = 'PRINTED'))
+        ORDER BY id
+        """, (order_id,),
+    ).fetchall()
+    return [json.loads(row["payload_json"]) for row in rows]
+
+
+def kitchen_payload(order, items: list[dict]) -> dict:
+    return {
         "order_id": int(order["id"]),
         "order_code": order["order_code"],
         "order_type": order["order_type"],
@@ -629,9 +674,13 @@ def build_kitchen_ticket(connection, order, temporary_note: str = "") -> tuple[s
         "table_name": order["table_name"],
         "area_name": order["area_name"],
         "guest_count": int(order["guest_count"] or 0),
-        "items": payload_items,
+        "items": items,
     }
-    return "\r\n".join(text_lines), payload
+
+
+# Local POS normally runs one API process. Guard the reserve/print/update
+# sequence against two simultaneous button presses in that process.
+kitchen_send_lock = Lock()
 
 
 def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: str):
@@ -732,65 +781,151 @@ def test_kitchen_printer(
 def send_order_to_kitchen(
     order_id: int, payload: KitchenSendInput | None = None,
 ) -> KitchenSendOutput:
-    sent_at = datetime.now().isoformat(timespec="microseconds")
     settings = pos_settings_output(load_settings())
     temporary_note = payload.temporary_note if payload else ""
 
-    with connect() as connection:
-        order = select_order(connection, order_id)
-        if order is None:
-            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
-        if order["status"] != "OPEN":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Chỉ gửi bếp với Order đang phục vụ.",
-            )
+    with kitchen_send_lock:
+        with connect() as connection:
+            order = select_order(connection, order_id)
+            if order is None:
+                raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+            if order["status"] != "OPEN":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Chỉ gửi bếp với Order đang phục vụ.",
+                )
 
-        content, persistent_payload = build_kitchen_ticket(
-            connection, order, temporary_note=temporary_note
-        )
-        print_status, error, results = dispatch_print(
-            settings, settings.send_kitchen_targets, content
-        )
-        printer_names = list(dict.fromkeys(
-            result.printer_name for result in results if result.printer_name
-        ))
-        cursor = connection.execute(
-            """
-            INSERT INTO kitchen_tickets (
-                sales_order_id, sent_at, printer_name,
-                print_status, error_message, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                order_id, sent_at, ", ".join(printer_names) or None,
-                print_status, error,
-                json.dumps(persistent_payload, ensure_ascii=False),
-            ),
-        )
-        if print_status == "PRINTED":
+            # Retry only a partially printed batch. If neither printer succeeded,
+            # make a fresh snapshot from the current order instead, so an edit
+            # cannot accidentally send a stale failed ticket to the kitchen.
+            retry = connection.execute(
+                """
+                SELECT * FROM kitchen_tickets
+                WHERE sales_order_id = ? AND print_status = 'FAILED'
+                  AND kitchen_print_ok IS NOT NULL
+                  AND check_print_ok IS NOT NULL
+                  AND (kitchen_print_ok = 1 OR check_print_ok = 1)
+                ORDER BY id LIMIT 1
+                """, (order_id,),
+            ).fetchone()
+            if retry is not None:
+                ticket_id = int(retry["id"])
+                sent_at = retry["sent_at"]
+                ticket_items = json.loads(retry["payload_json"])["items"]
+                kitchen_ok = bool(retry["kitchen_print_ok"])
+                check_ok = bool(retry["check_print_ok"])
+            else:
+                current = current_kitchen_items(connection, order_id)
+                prior = printed_kitchen_snapshots(connection, order_id)
+                ticket_items = unsent_items(current, prior)
+                if not ticket_items:
+                    return KitchenSendOutput(
+                        ticket_id=None, order_id=order_id,
+                        order_code=order["order_code"], sent_at=None,
+                        printer_name=None, print_status="NO_NEW_ITEMS",
+                        error_message=None, printer_results=[],
+                    )
+                sent_at = datetime.now().isoformat(timespec="microseconds")
+                snapshot = kitchen_payload(order, ticket_items)
+                cursor = connection.execute(
+                    """
+                    INSERT INTO kitchen_tickets (
+                        sales_order_id, sent_at, printer_name,
+                        print_status, error_message, payload_json,
+                        kitchen_print_ok, check_print_ok
+                    ) VALUES (?, ?, NULL, 'FAILED', NULL, ?, 0, 0)
+                    """,
+                    (order_id, sent_at, json.dumps(snapshot, ensure_ascii=False)),
+                )
+                ticket_id = int(cursor.lastrowid)
+                connection.commit()
+                kitchen_ok = False
+                check_ok = False
+
+            # Both slips are mandatory for Gửi bếp, regardless of the legacy
+            # send_kitchen_targets setting. They are different documents even
+            # when both configured printer names refer to one physical printer.
+            batch_number = int(connection.execute(
+                "SELECT COUNT(*) FROM kitchen_tickets "
+                "WHERE sales_order_id = ? AND id <= ?",
+                (order_id, ticket_id),
+            ).fetchone()[0])
+            results: list[PrintDestinationResult] = []
+            for role, already_ok in (
+                ("KITCHEN", kitchen_ok), ("CASHIER", check_ok)
+            ):
+                printer_name = (
+                    settings.kitchen_printer_name if role == "KITCHEN"
+                    else settings.cashier_printer_name
+                ).strip()
+                if already_ok:
+                    result = PrintDestinationResult(
+                        role=role, printer_name=printer_name or None, ok=True,
+                    )
+                elif not printer_name:
+                    result = PrintDestinationResult(
+                        role=role, printer_name=None, ok=False,
+                        error="Chưa cấu hình máy in "
+                              + ("bếp." if role == "KITCHEN" else "thu ngân."),
+                    )
+                else:
+                    text = render_80mm_ticket(
+                        order, ticket_items, checking=role == "CASHIER",
+                        sent_at=sent_at, batch_number=batch_number,
+                        temporary_note=temporary_note,
+                    )
+                    ok, error = print_text(printer_name, text)
+                    result = PrintDestinationResult(
+                        role=role, printer_name=printer_name, ok=ok, error=error,
+                    )
+                results.append(result)
+                # Persist each destination immediately, so retry never
+                # knowingly reprints a successfully dispatched slip.
+                if result.ok and not already_ok:
+                    col = "kitchen_print_ok" if role == "KITCHEN" else "check_print_ok"
+                    connection.execute(
+                        f"UPDATE kitchen_tickets SET {col} = 1 WHERE id = ?",
+                        (ticket_id,),
+                    )
+                    if role == "KITCHEN":
+                        connection.execute(
+                            """
+                            UPDATE sales_orders
+                            SET kitchen_sent_at = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """, (sent_at, order_id),
+                        )
+                    connection.commit()
+
+            failures = [
+                ("Bếp" if r.role == "KITCHEN" else "Thu ngân")
+                + ": " + (r.error or "In lỗi")
+                for r in results if not r.ok
+            ]
+            print_status = "FAILED" if failures else "PRINTED"
+            error_message = "; ".join(failures) if failures else None
+            printer_names = list(dict.fromkeys(
+                r.printer_name for r in results if r.printer_name
+            ))
             connection.execute(
                 """
-                UPDATE sales_orders
-                SET kitchen_sent_at = ?, updated_at = CURRENT_TIMESTAMP
+                UPDATE kitchen_tickets
+                SET print_status = ?, error_message = ?, printer_name = ?
                 WHERE id = ?
                 """,
-                (sent_at, order_id),
+                (print_status, error_message,
+                 ", ".join(printer_names) or None, ticket_id),
             )
-        connection.commit()
-        result = KitchenSendOutput(
-            ticket_id=int(cursor.lastrowid),
-            order_id=order_id,
-            order_code=order["order_code"],
-            sent_at=sent_at,
-            printer_name=", ".join(printer_names) or None,
-            print_status=print_status,
-            error_message=error,
-            printer_results=results,
-        )
+            connection.commit()
+            output = KitchenSendOutput(
+                ticket_id=ticket_id, order_id=order_id,
+                order_code=order["order_code"], sent_at=sent_at,
+                printer_name=", ".join(printer_names) or None,
+                print_status=print_status, error_message=error_message,
+                printer_results=results,
+            )
     backup_database(reason="kitchen-ticket")
-    return result
+    return output
 
 
 @router.post("/orders/{order_id}/print-receipt", response_model=PrintDispatchOutput)

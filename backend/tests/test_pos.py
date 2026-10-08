@@ -384,22 +384,24 @@ def test_partial_printer_failure_can_retry_without_persisting_note(
         assert len(sent.json()["printer_results"]) == 2
         assert [r["ok"] for r in sent.json()["printer_results"]] == [True, False]
         assert "Thu ngân" in sent.json()["error_message"]
-        assert client.get(f"/api/sales/orders/{order['id']}").json()["kitchen_sent_at"] is None
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["kitchen_sent_at"] is not None
 
-        # A later retry prints both again, but never stores the temporary note.
+        # Retry only the failed cashier; kitchen has already received its slip.
         monkeypatch.setattr("backend.app.pos.print_text", lambda name, content: (True, None))
         retry = client.post(
             f"/api/pos/orders/{order['id']}/send-kitchen",
             json={"temporary_note": "Chỉ in tạm"},
         )
         assert retry.json()["print_status"] == "PRINTED"
+        assert retry.json()["ticket_id"] == sent.json()["ticket_id"]
+        assert captured == ["Kitchen", "Cashier"]
 
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(
             "SELECT payload_json FROM kitchen_tickets WHERE sales_order_id = ?",
             (order["id"],),
         ).fetchall()
-        assert len(rows) == 2
+        assert len(rows) == 1
         assert all("Chỉ in tạm" not in row[0] for row in rows)
 
 
@@ -475,5 +477,6 @@ def test_same_physical_printer_is_printed_once_even_when_route_is_both(
         }).json()
         sent = client.post(f"/api/pos/orders/{order['id']}/send-kitchen")
         assert sent.json()["print_status"] == "PRINTED"
-        assert captured == ["Shared Printer"]
+        # Two DIFFERENT tickets still print on the same physical device.
+        assert captured == ["Shared Printer", "Shared Printer"]
         assert len(sent.json()["printer_results"]) == 2
