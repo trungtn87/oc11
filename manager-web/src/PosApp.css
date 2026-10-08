@@ -472,3 +472,152 @@
   .pos-cart-line { grid-template-columns: 1fr 130px 110px 30px; }
   .pos-actions { grid-template-columns: repeat(5, 1fr); }
 }
+
+/* PC POS - table order creation */
+.pos-refresh {
+  border: 1px solid #d0d8e0;
+  background: #fff;
+  color: #1679b1;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pos-table:disabled {
+  cursor: wait;
+}
+
+.pos-order-toolbar {
+  background: #fff;
+  border-bottom: 1px solid #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  height: 56px;
+}
+
+.pos-order-toolbar b {
+  color: #087bbb;
+  font-size: 16px;
+}
+
+.pos-active-orders {
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(225px, 250px));
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  height: calc(100% - 56px);
+}
+
+.pos-active-order-card {
+  padding: 0;
+  border: 1px solid #b9c8d3;
+  background: white;
+  text-align: left;
+  cursor: pointer;
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pos-active-order-card > div:first-child {
+  padding: 12px;
+  background: #087bbb;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.pos-active-order-card > div:first-child span {
+  font-size: 11px;
+}
+
+.pos-active-order-total {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  justify-content: center;
+  flex: 1;
+  padding: 12px;
+}
+
+.pos-active-order-total b {
+  font-size: 24px;
+  color: #222;
+}
+
+.pos-active-order-total span {
+  color: #707070;
+  font-size: 13px;
+}
+
+.pos-cart-head {
+  justify-content: space-between;
+}
+
+.pos-cart-head > div:first-child {
+  gap: 5px;
+}
+
+.pos-cart-head small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.pos-cart-status {
+  background: #edf7fd;
+  border: 1px solid #b7d9ec;
+  color: #087bbb;
+  font-size: 12px;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.pos-line-note {
+  color: #8a5b15 !important;
+}
+
+.pos-order-hint {
+  padding: 9px 14px;
+  color: #64748b;
+  font-size: 12px;
+  border-top: 1px solid #e6edf2;
+}
+
+.pos-create-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #f1f3f5;
+}
+
+.pos-create-actions button {
+  min-width: 128px;
+}
+
+.pos-save-order {
+  min-width: 168px !important;
+  background: #168845 !important;
+  border-color: #168845 !important;
+}
+
+@media (max-width: 1050px) {
+  .pos-active-orders {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 225px));
+  }
+  .pos-map-summary {
+    font-size: 12px;
+  }
+  .pos-refresh {
+    padding: 4px;
+  }
+}
