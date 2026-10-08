@@ -285,12 +285,12 @@ export function SalesPosPage({
     }
 
     setEditPaymentStatus(
-      editingOrder.status === "PAID" ? "PAID" : "DEBT"
+      editingOrder.status === "PAID" && editingOrder.settlement_status === "PAID" ? "PAID" : "DEBT"
     );
     setActualReceived(
       editingOrder.actual_received_amount ?? editingOrder.total_amount
     );
-    setActualTouched(editingOrder.status === "PAID");
+    setActualTouched(editingOrder.status === "PAID" && editingOrder.settlement_status === "PAID");
     setOrderTimeLocal(toLocalDateTimeInput(editingOrder.order_time));
     setLoadedEditOrderId(editingOrder.id);
   }, [
@@ -1122,7 +1122,7 @@ export function SalesOrdersPage({
           status:
             statusFilter === "ALL"
               ? undefined
-              : (statusFilter as "OPEN" | "PAID" | "VOID"),
+              : (statusFilter as "OPEN" | "PAID" | "DEBT" | "VOID"),
           from_date: range.from || undefined,
           to_date: range.to || undefined,
           fund_account_id:
@@ -1146,10 +1146,11 @@ export function SalesOrdersPage({
     void load();
   }, [statusFilter, fundAccountFilter, period, customFrom, customTo]);
 
-  const statusTag = (status: SaleOrder["status"]) => {
-    if (status === "PAID") return <Tag color="success">Đã thanh toán</Tag>;
-    if (status === "VOID") return <Tag>Đã hủy</Tag>;
-    return <Tag color="warning">Nợ / Chưa thanh toán</Tag>;
+  const statusTag = (order: SaleOrder) => {
+    if (order.status === "VOID") return <Tag>Đã hủy</Tag>;
+    if (order.status === "OPEN") return <Tag color="warning">Chưa thanh toán</Tag>;
+    if (order.settlement_status === "DEBT") return <Tag color="orange">Ghi nợ</Tag>;
+    return <Tag color="success">Đã thanh toán</Tag>;
   };
 
   const activePaymentAccounts = useMemo(
@@ -1235,7 +1236,9 @@ export function SalesOrdersPage({
       title: `Xóa ${order.order_code}?`,
       content:
         order.status === "PAID"
-          ? "Đơn sẽ được xóa mềm; tiền thu được đảo lại và nguyên liệu được hoàn kho."
+          ? (order.settlement_status === "DEBT"
+            ? "Đơn ghi nợ sẽ bị hủy và hoàn kho, không có khoản thu để hoàn."
+            : "Đơn sẽ được xóa mềm; tiền thu được đảo lại và nguyên liệu được hoàn kho.")
           : "Đơn chưa thanh toán sẽ được xóa mềm và nguyên liệu đã trừ sẽ được hoàn về kho.",
       okText: "Xóa đơn",
       cancelText: "Không",
@@ -1247,7 +1250,7 @@ export function SalesOrdersPage({
           setSelected(updated);
           await load();
           messageApi.success(
-            order.status === "PAID"
+            order.status === "PAID" && order.settlement_status === "PAID"
               ? "Đã xóa đơn, hoàn tiền và hoàn kho."
               : "Đã xóa đơn và hoàn kho."
           );
@@ -1323,6 +1326,7 @@ export function SalesOrdersPage({
       render: (value: FundAccountType | null, row) => {
         if (row.status === "VOID") return <Tag>Đã hủy</Tag>;
         if (row.status === "OPEN") return <Tag>Chưa thanh toán</Tag>;
+        if (row.settlement_status === "DEBT") return <Tag color="orange">Ghi nợ</Tag>;
         if (value === "CASH") return <Tag color="green">Tiền mặt</Tag>;
         if (value === "BANK") return <Tag color="blue">Chuyển khoản</Tag>;
         return <Tag>Chưa xác định</Tag>;
@@ -1352,9 +1356,11 @@ export function SalesOrdersPage({
       title: "HĐĐT",
       dataIndex: "has_einvoice",
       width: 110,
-      render: (value: boolean) =>
+      render: (value: boolean, row) =>
         value ? (
           <Tag color="blue">Đã xuất</Tag>
+        ) : row.einvoice_requested ? (
+          <Tag color="processing">Chờ phát hành</Tag>
         ) : (
           <Tag>Chưa xuất</Tag>
         )
@@ -1364,13 +1370,14 @@ export function SalesOrdersPage({
       width: 210,
       render: (_, row) => (
         <Space size={2}>
-          {row.status === "OPEN" && (
+          {(row.status === "OPEN" ||
+            (row.status === "PAID" && row.settlement_status === "DEBT")) && (
             <Button
               type="link"
               size="small"
               onClick={() => openPayment(row)}
             >
-              Thanh toán
+              {row.settlement_status === "DEBT" && row.status === "PAID" ? "Thu nợ" : "Thanh toán"}
             </Button>
           )}
           <Button
@@ -1397,7 +1404,7 @@ export function SalesOrdersPage({
       title: "Trạng thái",
       dataIndex: "status",
       width: 130,
-      render: statusTag
+      render: (_, row) => statusTag(row)
     }
   ];
 
@@ -1460,7 +1467,8 @@ export function SalesOrdersPage({
           options={[
             { value: "ALL", label: "Tất cả trạng thái" },
             { value: "PAID", label: "Đã thanh toán" },
-            { value: "OPEN", label: "Nợ / Chưa thanh toán" },
+            { value: "DEBT", label: "Ghi nợ" },
+            { value: "OPEN", label: "Chưa thanh toán" },
             { value: "VOID", label: "Đã hủy" }
           ]}
         />
@@ -1519,12 +1527,14 @@ export function SalesOrdersPage({
               <Button onClick={() => setSelected(null)}>Đóng</Button>
               {selected.status !== "VOID" && (
                 <>
-                  {selected.status === "OPEN" && (
+                  {(selected.status === "OPEN" ||
+                    (selected.status === "PAID" && selected.settlement_status === "DEBT")) && (
                     <Button
                       type="primary"
                       onClick={() => openPayment(selected)}
                     >
-                      Thanh toán
+                      {selected.settlement_status === "DEBT" && selected.status === "PAID"
+                        ? "Thu nợ" : "Thanh toán"}
                     </Button>
                   )}
                   <Button
@@ -1569,7 +1579,8 @@ export function SalesOrdersPage({
               <div>
                 <Text type="secondary">Hóa đơn điện tử</Text>
                 <strong>
-                  {selected.has_einvoice ? "Đã phát hành" : "Chưa phát hành"}
+                  {selected.has_einvoice ? "Đã phát hành" :
+                    selected.einvoice_requested ? "Chờ phát hành" : "Chưa phát hành"}
                 </strong>
               </div>
               <div>
