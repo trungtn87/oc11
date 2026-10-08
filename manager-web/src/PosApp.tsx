@@ -51,8 +51,9 @@ import type {
   SurchargePreset
 } from "./types";
 import "./PosApp.css";
+import PosDashboard from "./PosDashboard";
 
-type PosView = "MAP" | "ORDERS" | "SALE" | "CHECKOUT";
+type PosView = "DASHBOARD" | "MAP" | "ORDERS" | "SALE" | "CHECKOUT";
 
 type CartLine = {
   key: string;
@@ -103,7 +104,7 @@ function timeSince(value: string) {
 let newLineSequence = 0;
 
 export default function PosApp() {
-  const [view, setView] = useState<PosView>("MAP");
+  const [view, setView] = useState<PosView>("DASHBOARD");
   const [areas, setAreas] = useState<RestaurantArea[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [orders, setOrders] = useState<SaleOrder[]>([]);
@@ -841,7 +842,7 @@ export default function PosApp() {
     }
   }
 
-  function setViewSafely(next: "MAP" | "ORDERS") {
+  function setViewSafely(next: "DASHBOARD" | "MAP" | "ORDERS") {
     if (view === "SALE" && dirty) {
       Modal.confirm({
         title: "Order chưa được lưu",
@@ -871,10 +872,17 @@ export default function PosApp() {
         <button
           className="pos-home"
           type="button"
-          onClick={() => setViewSafely("MAP")}
-          aria-label="Trang sơ đồ"
+          onClick={() => setViewSafely("DASHBOARD")}
+          aria-label="Trang chủ"
         >
           ⌂
+        </button>
+        <button
+          type="button"
+          className={view === "DASHBOARD" ? "active" : ""}
+          onClick={() => setViewSafely("DASHBOARD")}
+        >
+          ◫ Tổng quan
         </button>
         <button
           type="button"
@@ -921,6 +929,8 @@ export default function PosApp() {
           )}
         </div>
       </header>
+
+      {view === "DASHBOARD" && <PosDashboard />}
 
       {view === "MAP" && (
         <main className="pos-map-view">
