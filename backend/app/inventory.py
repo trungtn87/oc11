@@ -24,6 +24,8 @@ class InventoryStockItem(BaseModel):
     item_group_name: str
     smallest_unit_id: int
     smallest_unit_name: str
+    default_unit_name: str
+    default_unit_conversion_factor: float
     stock_quantity: float
     stock_revision: int
     is_active: bool
@@ -337,12 +339,20 @@ def list_inventory_stock(
                 i.item_group_id,
                 g.name AS item_group_name,
                 i.smallest_unit_id,
+                CASE WHEN dc.quantity_in_smallest_unit > 0
+                     THEN du.name ELSE u.name END AS default_unit_name,
+                CASE WHEN dc.quantity_in_smallest_unit > 0
+                     THEN dc.quantity_in_smallest_unit ELSE 1 END
+                     AS default_unit_conversion_factor,
                 i.is_active,
                 i.is_stock_tracked,
                 u.name AS smallest_unit_name
             FROM items AS i
             JOIN item_groups AS g ON g.id = i.item_group_id
             JOIN units AS u ON u.id = i.smallest_unit_id
+            JOIN units AS du ON du.id = i.default_unit_id
+            LEFT JOIN item_unit_conversions AS dc
+              ON dc.item_id = i.id AND dc.unit_id = i.default_unit_id
             {where}
             ORDER BY i.is_active DESC, i.name COLLATE NOCASE ASC, i.id ASC
             """,
@@ -376,6 +386,8 @@ def list_inventory_stock(
                     item_group_name=row["item_group_name"],
                     smallest_unit_id=row["smallest_unit_id"],
                     smallest_unit_name=row["smallest_unit_name"],
+                    default_unit_name=row["default_unit_name"],
+                    default_unit_conversion_factor=float(row["default_unit_conversion_factor"]),
                     stock_quantity=current_quantity(
                         connection,
                         row["id"],

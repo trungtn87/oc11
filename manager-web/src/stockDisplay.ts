@@ -1,14 +1,33 @@
 import type { InventoryStock } from "./types";
 
-// The ledger and stocktake requests always use the smallest unit.
-// Only presentation converts stock to the latest purchased unit.
+// Ledger and stocktake quantities always remain in the smallest unit.
+// The display uses the latest valid purchase unit, otherwise the configured
+// default purchase unit; both name and factor come from the same source.
+function preferredStockUnit(stock: InventoryStock): { name: string; factor: number } {
+  if (stock.last_purchase_unit_name && stock.last_purchase_conversion_factor !== null &&
+      Number.isFinite(stock.last_purchase_conversion_factor) &&
+      stock.last_purchase_conversion_factor > 0) {
+    return {
+      name: stock.last_purchase_unit_name,
+      factor: stock.last_purchase_conversion_factor
+    };
+  }
+  if (stock.default_unit_name && Number.isFinite(stock.default_unit_conversion_factor) &&
+      stock.default_unit_conversion_factor > 0) {
+    return {
+      name: stock.default_unit_name,
+      factor: stock.default_unit_conversion_factor
+    };
+  }
+  return { name: stock.smallest_unit_name, factor: 1 };
+}
+
 export function displayStockQuantity(stock: InventoryStock): number {
-  const factor = stock.last_purchase_conversion_factor;
-  return stock.stock_quantity / (factor !== null && factor > 0 ? factor : 1);
+  return stock.stock_quantity / preferredStockUnit(stock).factor;
 }
 
 export function displayStockUnit(stock: InventoryStock): string {
-  return stock.last_purchase_unit_name || stock.smallest_unit_name;
+  return preferredStockUnit(stock).name;
 }
 
 // Negative and zero stock have no inventory value. Unknown prices remain unknown,
