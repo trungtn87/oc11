@@ -807,6 +807,7 @@ export default function PosApp() {
     try {
       const paid = await paySaleOrder(checkoutOrder.id, {
         payment_method: paymentMethod,
+        expected_total_amount: checkoutOrder.total_amount,
         fund_account_id: paymentMethod === "DEBT" ? null : paymentFundAccountId,
         actual_received_amount: paymentMethod === "DEBT" ? null : Math.round(paymentAmount),
         customer_id: customerId ?? null,
