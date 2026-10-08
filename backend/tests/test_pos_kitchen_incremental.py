@@ -40,7 +40,7 @@ def test_only_added_quantity_is_sent_and_receives_checklist(tmp_path, monkeypatc
         assert first.status_code == 200, first.text
         assert first.json()["print_status"] == "PRINTED"
         assert len(printed) == 2
-        assert printed[0][0] == "Bep" and "CHE BIEN" in printed[0][1]
+        assert printed[0][0] == "Bep" and "CHẾ BIẾN" in printed[0][1]
         assert printed[1][0] == "Thu ngan" and "[ ]" in printed[1][1]
         assert "Ra cung luc" in printed[0][1]
         assert "Ra cung luc" in printed[1][1]
