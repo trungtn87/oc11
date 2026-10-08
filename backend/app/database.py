@@ -764,6 +764,8 @@ def init_db() -> None:
                 kitchen_sent_at TEXT,
                 customer_id INTEGER,
                 fund_account_id INTEGER,
+                settlement_status TEXT NOT NULL DEFAULT 'DEBT'
+                    CHECK (settlement_status IN ('DEBT', 'PAID')),
                 total_amount INTEGER NOT NULL DEFAULT 0
                     CHECK (total_amount >= 0),
                 actual_received_amount INTEGER
@@ -791,6 +793,15 @@ def init_db() -> None:
                 "PRAGMA table_info(sales_orders)"
             ).fetchall()
         }
+        if "settlement_status" not in sales_order_columns:
+            connection.execute(
+                "ALTER TABLE sales_orders ADD COLUMN settlement_status TEXT NOT NULL DEFAULT 'DEBT' "
+                "CHECK (settlement_status IN ('DEBT', 'PAID'))"
+            )
+            connection.execute(
+                "UPDATE sales_orders SET settlement_status = 'PAID' WHERE status = 'PAID' "
+                "AND fund_account_id IS NOT NULL"
+            )
         if "customer_id" not in sales_order_columns:
             connection.execute(
                 """
