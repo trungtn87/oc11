@@ -1,76 +1,139 @@
-import { useEffect, useState } from "react";
-import { message } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Button,
+  Input,
+  InputNumber,
+  message,
+  Modal
+} from "antd";
 
-import { getRestaurantAreas, getRestaurantTables } from "./api";
-import type { RestaurantArea, RestaurantTable } from "./types";
+import {
+  createSaleOrder,
+  getMenuItems,
+  getRestaurantAreas,
+  getRestaurantTables,
+  getSaleOrder,
+  getSaleOrders,
+  updateSaleOrder
+} from "./api";
+import type {
+  MenuItem,
+  MenuItemOption,
+  RestaurantArea,
+  RestaurantTable,
+  SaleOrder,
+  SaleOrderInput,
+  SaleSurchargeInput
+} from "./types";
 import "./PosApp.css";
 
-type PosView = "ORDERS" | "MAP";
+type PosView = "MAP" | "ORDERS" | "SALE";
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
+type CartLine = {
+  key: string;
+  menuItemId: number;
+  optionId: number | null;
+  name: string;
+  optionName: string | null;
+  unitPrice: number;
+  quantity: number;
+  note: string;
+  surcharges: SaleSurchargeInput[];
+};
 
-function defaultTablePosition(index: number) {
-  const columns = 5;
+const money = (value: number) =>
+  new Intl.NumberFormat("vi-VN").format(Math.round(value));
+
+function defaultPosition(index: number) {
   return {
-    x: 4 + (index % columns) * 19,
-    y: 6 + Math.floor(index / columns) * 19
+    x: 4 + (index % 5) * 19,
+    y: 6 + Math.floor(index / 5) * 19
   };
 }
 
 function tablePosition(table: RestaurantTable, index: number) {
-  if (table.pos_x === 0 && table.pos_y === 0) {
-    return defaultTablePosition(index);
-  }
+  if (table.pos_x === 0 && table.pos_y === 0) return defaultPosition(index);
   return {
-    x: clamp(table.pos_x, 0, 84),
-    y: clamp(table.pos_y, 0, 84)
+    x: Math.max(0, Math.min(84, table.pos_x)),
+    y: Math.max(0, Math.min(84, table.pos_y))
   };
 }
+
+function rowTotal(line: CartLine): number {
+  return (
+    line.quantity * line.unitPrice +
+    line.surcharges.reduce((total, extra) => total + extra.amount, 0)
+  );
+}
+
+function timeSince(value: string) {
+  const elapsed = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return "";
+  const minutes = Math.floor(elapsed / 60_000);
+  return minutes < 60
+    ? `${minutes} phút`
+    : `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}`;
+}
+
+let newLineSequence = 0;
 
 export default function PosApp() {
   const [view, setView] = useState<PosView>("MAP");
   const [areas, setAreas] = useState<RestaurantArea[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const [orders, setOrders] = useState<SaleOrder[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
+  const [groupId, setGroupId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [editingOrder, setEditingOrder] = useState<SaleOrder | null>(null);
+  const [tableId, setTableId] = useState<number | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
+  const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [messageApi, contextHolder] = message.useMessage();
+
+  async function refresh() {
+    const [areaRows, tableRows, openOrders] = await Promise.all([
+      getRestaurantAreas(true),
+      getRestaurantTables({ active_only: true }),
+      getSaleOrders({ status: "OPEN" })
+    ]);
+
+    setAreas(areaRows);
+    setTables(tableRows);
+    setOrders(openOrders.filter((order) => order.order_type === "DINE_IN"));
+    setSelectedAreaId((current) =>
+      current !== null && areaRows.some((area) => area.id === current)
+        ? current
+        : areaRows[0]?.id ?? null
+    );
+  }
 
   useEffect(() => {
     let cancelled = false;
-
-    async function load() {
-      setLoading(true);
+    async function initialize() {
       try {
-        const [areaRows, tableRows] = await Promise.all([
-          getRestaurantAreas(true),
-          getRestaurantTables({ active_only: true })
-        ]);
-
+        const menu = await getMenuItems();
         if (cancelled) return;
-
-        setAreas(areaRows);
-        setTables(tableRows);
-        setSelectedAreaId((current) =>
-          current ?? (areaRows.length > 0 ? areaRows[0].id : null)
-        );
+        setMenuItems(menu.filter((item) => item.is_active));
+        await refresh();
       } catch (error) {
         if (!cancelled) {
           messageApi.error(
-            error instanceof Error
-              ? error.message
-              : "Không tải được sơ đồ bàn."
+            error instanceof Error ? error.message : "Không tải được dữ liệu POS."
           );
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-
-    void load();
-
+    void initialize();
     return () => {
       cancelled = true;
     };
@@ -81,44 +144,296 @@ export default function PosApp() {
   const areaTables = tables
     .filter((table) => table.area_id === selectedAreaId)
     .sort(
-      (left, right) =>
-        left.display_order - right.display_order || left.id - right.id
+      (a, b) => a.display_order - b.display_order || a.id - b.id
     );
-  const totalEmpty = tables.filter((table) => !table.open_order_id).length;
-  const areaEmpty = areaTables.filter((table) => !table.open_order_id).length;
+  const emptyCount = tables.filter((table) => !table.open_order_id).length;
+  const areaEmptyCount = areaTables.filter((table) => !table.open_order_id).length;
+
+  const groups = useMemo(() => {
+    const unique = new Map<number, string>();
+    menuItems.forEach((item) => unique.set(item.menu_group_id, item.menu_group_name));
+    return Array.from(unique, ([id, name]) => ({ id, name }));
+  }, [menuItems]);
+
+  const filteredMenu = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase("vi");
+    return menuItems.filter(
+      (item) =>
+        (groupId === null || item.menu_group_id === groupId) &&
+        (!term || item.name.toLocaleLowerCase("vi").includes(term))
+    );
+  }, [menuItems, groupId, search]);
+
+  const total = useMemo(
+    () =>
+      cart.reduce((sum, item) => sum + rowTotal(item), 0) +
+      (editingOrder?.surcharges.reduce((sum, item) => sum + item.amount, 0) ?? 0),
+    [cart, editingOrder]
+  );
+
+  const selectedTable = tables.find((table) => table.id === tableId);
+
+  function newOrder(table: RestaurantTable) {
+    setEditingOrder(null);
+    setTableId(table.id);
+    setCart([]);
+    setDirty(false);
+    setSearch("");
+    setGroupId(null);
+    setView("SALE");
+  }
+
+  async function openExisting(orderId: number) {
+    setBusy(true);
+    try {
+      const order = await getSaleOrder(orderId);
+      if (order.status !== "OPEN" || order.order_type !== "DINE_IN") {
+        messageApi.warning("Order này không còn đang phục vụ.");
+        await refresh();
+        return;
+      }
+      // Keep the entire existing order, including notes and surcharges, on edit.
+      if (order.items.some((item) => item.menu_item_id === null)) {
+        messageApi.warning("Order có món ngoài thực đơn, hãy sửa trên Web quản lý.");
+        return;
+      }
+
+      setEditingOrder(order);
+      setTableId(order.table_id);
+      setCart(
+        order.items.map((item) => ({
+          key: `saved-${item.id}`,
+          menuItemId: item.menu_item_id as number,
+          optionId: item.menu_item_option_id,
+          name: item.item_name_snapshot,
+          optionName: item.option_name_snapshot,
+          unitPrice: item.unit_price,
+          quantity: item.quantity,
+          note: item.note ?? "",
+          surcharges: item.surcharges.map((extra) => ({
+            name: extra.name,
+            amount: extra.amount
+          }))
+        }))
+      );
+      setDirty(false);
+      setSearch("");
+      setGroupId(null);
+      setView("SALE");
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không mở được Order."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openTable(table: RestaurantTable) {
+    if (busy) return;
+    if (table.open_order_id !== null) {
+      void openExisting(table.open_order_id);
+    } else {
+      newOrder(table);
+    }
+  }
+
+  function addItem(item: MenuItem, option: MenuItemOption | null = null) {
+    const optionId = option?.id ?? null;
+    const unitPrice = option?.sale_price ?? item.base_price;
+    setCart((current) => {
+      // Only merge identical plain lines. Keep annotated lines independent.
+      const identical = current.find(
+        (line) =>
+          line.menuItemId === item.id &&
+          line.optionId === optionId &&
+          !line.note &&
+          line.surcharges.length === 0
+      );
+      if (identical) {
+        return current.map((line) =>
+          line.key === identical.key
+            ? { ...line, quantity: line.quantity + 1 }
+            : line
+        );
+      }
+      newLineSequence += 1;
+      return [
+        ...current,
+        {
+          key: `new-${newLineSequence}`,
+          menuItemId: item.id,
+          optionId,
+          name: item.name,
+          optionName: option?.service_option_name ?? null,
+          unitPrice,
+          quantity: 1,
+          note: "",
+          surcharges: []
+        }
+      ];
+    });
+    setDirty(true);
+    setOptionItem(null);
+  }
+
+  function selectMenuItem(item: MenuItem) {
+    const options = item.options.filter((option) => option.is_active);
+    if (options.length) {
+      setOptionItem(item);
+    } else {
+      addItem(item);
+    }
+  }
+
+  function updateQuantity(key: string, quantity: number) {
+    if (!Number.isFinite(quantity)) return;
+    setCart((current) =>
+      quantity <= 0
+        ? current.filter((line) => line.key !== key)
+        : current.map((line) =>
+            line.key === key ? { ...line, quantity } : line
+          )
+    );
+    setDirty(true);
+  }
+
+  function backToMap() {
+    if (dirty) {
+      Modal.confirm({
+        title: "Chưa lưu thay đổi",
+        content: "Những thay đổi trong Order chưa được lưu. Bạn muốn bỏ thay đổi?",
+        okText: "Bỏ thay đổi",
+        okButtonProps: { danger: true },
+        cancelText: "Ở lại",
+        onOk: () => {
+          setDirty(false);
+          setView("MAP");
+          void refresh();
+        }
+      });
+      return;
+    }
+    setView("MAP");
+    void refresh();
+  }
+
+  async function saveOrder() {
+    if (busy) return;
+    if (tableId === null) {
+      messageApi.error("Chưa chọn bàn.");
+      return;
+    }
+    if (!cart.length) {
+      messageApi.warning("Chọn ít nhất một món trước khi lưu Order.");
+      return;
+    }
+    if (cart.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
+      messageApi.warning("Số lượng món phải lớn hơn 0.");
+      return;
+    }
+    if (editingOrder && !dirty) {
+      setView("MAP");
+      await refresh();
+      return;
+    }
+
+    const payload: SaleOrderInput = {
+      order_type: "DINE_IN",
+      table_id: tableId,
+      guest_count: editingOrder?.guest_count ?? 0,
+      customer_id: editingOrder?.customer_id ?? null,
+      note: editingOrder?.note ?? null,
+      payment_status: "DEBT",
+      items: cart.map((line) => ({
+        menu_item_id: line.menuItemId,
+        menu_item_option_id: line.optionId,
+        quantity: line.quantity,
+        note: line.note || null,
+        surcharges: line.surcharges
+      })),
+      surcharges:
+        editingOrder?.surcharges.map((extra) => ({
+          name: extra.name,
+          amount: extra.amount
+        })) ?? []
+    };
+
+    setBusy(true);
+    try {
+      const saved = editingOrder
+        ? await updateSaleOrder(editingOrder.id, payload)
+        : await createSaleOrder(payload);
+
+      setDirty(false);
+      setEditingOrder(saved);
+      setView("MAP");
+      messageApi.success(`Đã lưu ${saved.order_code}.`);
+
+      try {
+        await refresh();
+      } catch {
+        messageApi.warning("Order đã lưu nhưng chưa tải lại được sơ đồ. Bấm Làm mới.");
+      }
+    } catch (error) {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không lưu được Order."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setViewSafely(next: "MAP" | "ORDERS") {
+    if (view === "SALE" && dirty) {
+      Modal.confirm({
+        title: "Order chưa được lưu",
+        content: "Bạn muốn bỏ các thay đổi và rời Order?",
+        okText: "Rời Order",
+        okButtonProps: { danger: true },
+        cancelText: "Ở lại",
+        onOk: () => {
+          setDirty(false);
+          setView(next);
+          void refresh();
+        }
+      });
+    } else {
+      setView(next);
+      void refresh();
+    }
+  }
 
   return (
-    <div className="oc11-pos" onClick={() => menuOpen && setMenuOpen(false)}>
+    <div
+      className="oc11-pos"
+      onClick={() => menuOpen && setMenuOpen(false)}
+    >
       {contextHolder}
-
       <header className="pos-topbar">
         <button
           className="pos-home"
           type="button"
-          onClick={() => setView("MAP")}
-          aria-label="Sơ đồ bàn"
+          onClick={() => setViewSafely("MAP")}
+          aria-label="Trang sơ đồ"
         >
           ⌂
         </button>
-
         <button
           type="button"
           className={view === "ORDERS" ? "active" : ""}
-          onClick={() => setView("ORDERS")}
+          onClick={() => setViewSafely("ORDERS")}
         >
           🧾 Order
         </button>
-
         <button
           type="button"
           className={view === "MAP" ? "active" : ""}
-          onClick={() => setView("MAP")}
+          onClick={() => setViewSafely("MAP")}
         >
           ▥ Sơ đồ
         </button>
-
         <div className="pos-topbar-spacer" />
-
         <div
           className="pos-menu-wrap"
           onClick={(event) => event.stopPropagation()}
@@ -131,7 +446,6 @@ export default function PosApp() {
           >
             ☰
           </button>
-
           {menuOpen && (
             <div className="pos-menu-popup">
               <button
@@ -148,24 +462,29 @@ export default function PosApp() {
         </div>
       </header>
 
-      {view === "MAP" ? (
+      {view === "MAP" && (
         <main className="pos-map-view">
           <div className="pos-map-summary">
             <strong>Toàn bộ nhà hàng:</strong>
-            <span>
-              Trống {totalEmpty}/{tables.length} bàn
-            </span>
-
+            <span>Trống {emptyCount}/{tables.length} bàn</span>
             {selectedArea && (
               <>
                 <span className="pos-map-chevron">›</span>
                 <strong>{selectedArea.name}:</strong>
-                <span>
-                  Trống {areaEmpty}/{areaTables.length} bàn
-                </span>
+                <span>Trống {areaEmptyCount}/{areaTables.length} bàn</span>
               </>
             )}
-
+            <button
+              type="button"
+              className="pos-refresh"
+              onClick={() => void refresh().catch((error) =>
+                messageApi.error(
+                  error instanceof Error ? error.message : "Không làm mới được sơ đồ."
+                )
+              )}
+            >
+              ↻ Làm mới
+            </button>
             <span className="pos-legend pos-legend-first">
               <i className="empty" /> Bàn trống
             </span>
@@ -173,17 +492,11 @@ export default function PosApp() {
               <i className="busy" /> Bàn đang phục vụ
             </span>
           </div>
-
           <div className="pos-map-body">
             <aside className="pos-area-list">
               {areas.map((area) => {
-                const rows = tables.filter(
-                  (table) => table.area_id === area.id
-                );
-                const empty = rows.filter(
-                  (table) => !table.open_order_id
-                ).length;
-
+                const rows = tables.filter((table) => table.area_id === area.id);
+                const empty = rows.filter((table) => !table.open_order_id).length;
                 return (
                   <button
                     key={area.id}
@@ -191,23 +504,17 @@ export default function PosApp() {
                     className={selectedAreaId === area.id ? "active" : ""}
                     onClick={() => setSelectedAreaId(area.id)}
                   >
-                    <b>
-                      {area.name} ({rows.length})
-                    </b>
-                    <span>
-                      {empty}/{rows.length} trống
-                    </span>
+                    <b>{area.name} ({rows.length})</b>
+                    <span>{empty}/{rows.length} trống</span>
                   </button>
                 );
               })}
-
               {!loading && areas.length === 0 && (
                 <div className="pos-empty">
-                  Chưa có khu vực. Tạo khu vực và bàn trong Web quản lý → Cài đặt.
+                  Chưa có khu vực. Thêm khu vực và bàn trong Web quản lý → Cài đặt.
                 </div>
               )}
             </aside>
-
             <section className="pos-table-map">
               {areaTables.map((table, index) => {
                 const position = tablePosition(table, index);
@@ -215,43 +522,275 @@ export default function PosApp() {
                   <button
                     key={table.id}
                     type="button"
-                    className={`pos-table ${
-                      table.open_order_id ? "busy" : "empty"
-                    }`}
-                    style={{
-                      left: `${position.x}%`,
-                      top: `${position.y}%`
-                    }}
+                    disabled={busy}
+                    className={`pos-table ${table.open_order_id ? "busy" : "empty"}`}
+                    style={{ left: `${position.x}%`, top: `${position.y}%` }}
+                    onClick={() => openTable(table)}
                   >
                     <span className="table-icon">▣</span>
                     <strong>{table.name}</strong>
-                    {table.open_order_id && <small>Đang phục vụ</small>}
+                    {table.open_order_id !== null && (
+                      <>
+                        <small>{money(table.open_order_total ?? 0)} đ</small>
+                        <small>Đang phục vụ</small>
+                      </>
+                    )}
                   </button>
                 );
               })}
-
               {!loading && selectedArea && areaTables.length === 0 && (
                 <div className="pos-empty">Khu vực này chưa có bàn.</div>
               )}
-
-              {loading && (
-                <div className="pos-empty">Đang tải sơ đồ bàn...</div>
-              )}
+              {loading && <div className="pos-empty">Đang tải sơ đồ bàn...</div>}
             </section>
           </div>
         </main>
-      ) : (
+      )}
+
+      {view === "ORDERS" && (
         <main className="pos-order-view">
-          <div className="pos-placeholder">
-            <div className="pos-placeholder-card">
-              <div className="pos-placeholder-title">Order</div>
-              <div className="pos-placeholder-text">
-                Phần danh sách Order sẽ làm ở bước sau.
+          <div className="pos-order-toolbar">
+            <b>Chờ thanh toán ({orders.length})</b>
+            <Button onClick={() => void refresh()}>Làm mới</Button>
+          </div>
+          <div className="pos-active-orders">
+            {orders.map((order) => (
+              <button
+                key={order.id}
+                type="button"
+                disabled={busy}
+                className="pos-active-order-card"
+                onClick={() => void openExisting(order.id)}
+              >
+                <div>
+                  <strong>{order.area_name} · {order.table_name}</strong>
+                  <span>{order.order_code}</span>
+                </div>
+                <div className="pos-active-order-total">
+                  <b>{money(order.total_amount)} đ</b>
+                  <span>{timeSince(order.order_time)}</span>
+                </div>
+              </button>
+            ))}
+            {!orders.length && (
+              <div className="pos-empty">
+                Chưa có Order nào. Vào Sơ đồ và chọn bàn trống để tạo Order.
               </div>
-            </div>
+            )}
           </div>
         </main>
       )}
+
+      {view === "SALE" && (
+        <main className="pos-sale-view">
+          <section className="pos-menu-side">
+            <div className="pos-group-tabs">
+              <button
+                className={groupId === null ? "active" : ""}
+                onClick={() => setGroupId(null)}
+              >
+                Tất cả
+              </button>
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  className={groupId === group.id ? "active" : ""}
+                  onClick={() => setGroupId(group.id)}
+                >
+                  {group.name}
+                </button>
+              ))}
+            </div>
+            <div className="pos-search">
+              <Input
+                allowClear
+                placeholder="Tìm món trong thực đơn..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+            <div className="pos-menu-grid">
+              {filteredMenu.map((item) => {
+                const activeOptions = item.options.filter((option) => option.is_active);
+                return (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className="pos-menu-item"
+                    onClick={() => selectMenuItem(item)}
+                  >
+                    <span className="item-price">
+                      {activeOptions.length
+                        ? `Từ ${money(Math.min(...activeOptions.map((option) => option.sale_price)))}`
+                        : money(item.base_price)}
+                    </span>
+                    <strong>{item.name}</strong>
+                  </button>
+                );
+              })}
+              {!filteredMenu.length && (
+                <div className="pos-empty">Không có món phù hợp.</div>
+              )}
+            </div>
+          </section>
+
+          <section className="pos-cart-side">
+            <div className="pos-cart-head">
+              <div>
+                <strong>
+                  {selectedTable
+                    ? `${selectedTable.area_name} · ${selectedTable.name}`
+                    : "Chọn bàn"}
+                </strong>
+                <small>
+                  {editingOrder
+                    ? `${editingOrder.order_code} · Đang phục vụ`
+                    : "Order mới"}
+                </small>
+              </div>
+              <span className="pos-cart-status">Chưa thanh toán</span>
+            </div>
+            <div className="pos-cart-columns">
+              <b>Tên món</b>
+              <b>SL</b>
+              <b>Thành tiền</b>
+            </div>
+            <div className="pos-cart-lines">
+              {cart.map((line) => (
+                <div className="pos-cart-line" key={line.key}>
+                  <div className="pos-line-name">
+                    <strong>{line.name}</strong>
+                    {line.optionName && <em>+ {line.optionName}</em>}
+                    {line.surcharges.map((extra, index) => (
+                      <small key={index}>+ {extra.name}</small>
+                    ))}
+                    {line.note && <small className="pos-line-note">{line.note}</small>}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNoteLineKey(line.key);
+                        setNoteDraft(line.note);
+                      }}
+                    >
+                      {line.note ? "Sửa ghi chú" : "+ Ghi chú"}
+                    </button>
+                  </div>
+                  <div className="pos-line-qty">
+                    <button
+                      type="button"
+                      aria-label="Giảm số lượng"
+                      onClick={() => updateQuantity(line.key, line.quantity - 1)}
+                    >
+                      −
+                    </button>
+                    <InputNumber<number>
+                      min={0.01}
+                      step={1}
+                      value={line.quantity}
+                      onChange={(value) => {
+                        if (value !== null) updateQuantity(line.key, value);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Tăng số lượng"
+                      onClick={() => updateQuantity(line.key, line.quantity + 1)}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <strong>{money(rowTotal(line))}</strong>
+                  <button
+                    type="button"
+                    className="pos-line-remove"
+                    title="Bỏ món"
+                    onClick={() => updateQuantity(line.key, 0)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              {!cart.length && (
+                <div className="pos-empty">
+                  Chọn món ở phần thực đơn bên trái để lập Order.
+                </div>
+              )}
+            </div>
+            <div className="pos-cart-bottom">
+              <div className="pos-order-hint">
+                Order được lưu vào bàn; chưa thanh toán hoặc gửi bếp ở bước này.
+              </div>
+              <div className="pos-total">
+                <span>Tổng tiền</span>
+                <strong>{money(total)} đ</strong>
+              </div>
+              <div className="pos-create-actions">
+                <Button size="large" onClick={backToMap} disabled={busy}>
+                  Quay về sơ đồ
+                </Button>
+                <Button
+                  type="primary"
+                  size="large"
+                  className="pos-save-order"
+                  loading={busy}
+                  onClick={() => void saveOrder()}
+                >
+                  Lưu Order
+                </Button>
+              </div>
+            </div>
+          </section>
+        </main>
+      )}
+
+      <Modal
+        open={optionItem !== null}
+        title={optionItem ? `Chọn kiểu chế biến · ${optionItem.name}` : ""}
+        footer={null}
+        onCancel={() => setOptionItem(null)}
+        destroyOnClose
+      >
+        <div className="pos-option-list">
+          {optionItem?.options
+            .filter((option) => option.is_active)
+            .map((option) => (
+              <Button
+                key={option.id}
+                onClick={() => addItem(optionItem, option)}
+              >
+                <span>{option.service_option_name}</span>
+                <strong>{money(option.sale_price)} đ</strong>
+              </Button>
+            ))}
+        </div>
+      </Modal>
+
+      <Modal
+        open={noteLineKey !== null}
+        title="Ghi chú món"
+        okText="Xong"
+        cancelText="Hủy"
+        onCancel={() => setNoteLineKey(null)}
+        onOk={() => {
+          setCart((current) =>
+            current.map((line) =>
+              line.key === noteLineKey
+                ? { ...line, note: noteDraft.trim() }
+                : line
+            )
+          );
+          setDirty(true);
+          setNoteLineKey(null);
+        }}
+      >
+        <Input.TextArea
+          rows={3}
+          maxLength={300}
+          value={noteDraft}
+          onChange={(event) => setNoteDraft(event.target.value)}
+          placeholder="Ví dụ: ít cay, không hành..."
+        />
+      </Modal>
     </div>
   );
 }
