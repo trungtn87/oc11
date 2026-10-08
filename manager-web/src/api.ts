@@ -46,7 +46,9 @@ import type {
   RestaurantTable,
   RestaurantTableInput,
   PosSettings,
-  KitchenSendResult
+  KitchenSendResult,
+  PosPrintResult,
+  PrinterRole
 } from "./types";
 
 type ApiErrorPayload = {
@@ -740,19 +742,27 @@ export function getInstalledPrinters(): Promise<string[]> {
   return request<string[]>("/api/pos/printers");
 }
 
-export function testKitchenPrinter(): Promise<{
+export function testPosPrinter(role: PrinterRole): Promise<{
   ok: boolean;
   printer_name: string | null;
   error: string | null;
 }> {
-  return request("/api/pos/printer/test", { method: "POST" });
+  return request(`/api/pos/printer/test?role=${role}`, { method: "POST" });
 }
 
 export function sendSaleOrderToKitchen(
-  orderId: number
+  orderId: number,
+  temporaryNote = ""
 ): Promise<KitchenSendResult> {
   return request<KitchenSendResult>(
     `/api/pos/orders/${orderId}/send-kitchen`,
+    { method: "POST", body: JSON.stringify({ temporary_note: temporaryNote }) }
+  );
+}
+
+export function printSaleOrderReceipt(orderId: number): Promise<PosPrintResult> {
+  return request<PosPrintResult>(
+    `/api/pos/orders/${orderId}/print-receipt`,
     { method: "POST" }
   );
 }
