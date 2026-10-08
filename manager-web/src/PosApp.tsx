@@ -1418,18 +1418,18 @@ export default function PosApp() {
       >
         <div className="pos-table-actions">
           <strong>{money(tableActions?.open_order_total ?? 0)} đ</strong>
-          <Button block onClick={() => {
+          <Button block className="pos-table-actions-continue" onClick={() => {
             const id = tableActions?.open_order_id;
             setTableActions(null);
             if (id) void openExisting(id);
           }}>Tiếp tục order</Button>
-          <Button block danger onClick={() => {
+          <Button block danger className="pos-table-actions-cancel" onClick={() => {
             const id = tableActions?.open_order_id;
             setTableActions(null);
             if (id) void getSaleOrder(id).then(confirmCancelOrder).catch((error) =>
               messageApi.error(error instanceof Error ? error.message : "Không tải được Order."));
           }}>Hủy order</Button>
-          <Button block type="primary" onClick={() => {
+          <Button block type="primary" className="pos-table-actions-payment" onClick={() => {
             const id = tableActions?.open_order_id;
             setTableActions(null);
             if (id) void startCheckout(id);
