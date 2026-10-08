@@ -2236,3 +2236,44 @@ body {
 @media (max-width: 1100px) {
   .sales-checkout-choices { grid-template-columns: 1fr; }
 }
+
+
+/* Expanded Manager sidebar: never truncate navigation labels. */
+.main-menu .ant-menu-sub .ant-menu-item {
+  height: auto;
+  min-height: 36px;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  padding-block: 8px;
+}
+.main-menu .ant-menu-sub .ant-menu-item .ant-menu-title-content {
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.main-menu .ant-menu-sub .ant-menu-item .anticon {
+  flex-shrink: 0;
+}
+
+/* Cost tables: readable name column at 1024px, scroll rather than crush. */
+.cost-options-table .ant-table-cell,
+.cost-alerts-table .ant-table-cell {
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.cost-options-table .ant-table-thead > tr > th,
+.cost-alerts-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+.cost-options-table .ant-table-tbody > tr > td:first-child,
+.cost-alerts-table .ant-table-tbody > tr > td:first-child {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.cost-options-table .ant-tag,
+.cost-alerts-table .ant-tag {
+  white-space: nowrap;
+}
