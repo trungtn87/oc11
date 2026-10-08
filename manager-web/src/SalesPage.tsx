@@ -1317,10 +1317,23 @@ export function SalesOrdersPage({
         value === null ? "—" : `${money(value)} đ`
     },
     {
+      title: "Loại quỹ thanh toán",
+      dataIndex: "fund_account_type",
+      width: 170,
+      render: (value: FundAccountType | null, row) => {
+        if (row.status === "VOID") return <Tag>Đã hủy</Tag>;
+        if (row.status === "OPEN") return <Tag>Chưa thanh toán</Tag>;
+        if (value === "CASH") return <Tag color="green">Tiền mặt</Tag>;
+        if (value === "BANK") return <Tag color="blue">Chuyển khoản</Tag>;
+        return <Tag>Chưa xác định</Tag>;
+      }
+    },
+    {
       title: "Quỹ / tài khoản",
       dataIndex: "fund_account_name",
       width: 170,
-      render: (value: string | null) => value ?? "—"
+      render: (value: string | null, row) =>
+        row.status === "PAID" ? (value ?? "—") : "—"
     },
     {
       title: "Kho",
