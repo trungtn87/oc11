@@ -1500,6 +1500,7 @@ export function SalesOrdersPage({
           loading={loading}
           columns={columns}
           dataSource={orders}
+          scroll={{ x: 1520 }}
           pagination={{ pageSize: 30 }}
           rowClassName={(row) =>
             row.status === "VOID" ? "sales-row-void" : ""
