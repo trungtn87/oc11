@@ -22,6 +22,7 @@ import {
   createSupplier,
   getFundAccounts,
   getInventoryItems,
+  getInventoryStock,
   getItemGroups,
   getPurchaseReceipt,
   getPurchaseReceipts,
@@ -35,6 +36,7 @@ import type {
   FundAccount,
   FundAccountType,
   InventoryItem,
+  InventoryStock,
   ItemGroup,
   PurchasePaymentStatus,
   PurchaseReceipt,
@@ -125,6 +127,7 @@ export default function PurchaseOrdersPage({
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [stockDefaults, setStockDefaults] = useState<InventoryStock[]>([]);
   const [itemGroups, setItemGroups] = useState<ItemGroup[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [accounts, setAccounts] = useState<FundAccount[]>([]);
@@ -169,15 +172,17 @@ export default function PurchaseOrdersPage({
   );
 
   const loadMasterData = async () => {
-    const [nextSuppliers, nextItems, nextGroups, nextUnits, nextAccounts] = await Promise.all([
+    const [nextSuppliers, nextItems, nextStock, nextGroups, nextUnits, nextAccounts] = await Promise.all([
       getSuppliers(),
       getInventoryItems(),
+      getInventoryStock(),
       getItemGroups(),
       getUnits(),
       getFundAccounts()
     ]);
     setSuppliers(nextSuppliers);
     setItems(nextItems);
+    setStockDefaults(nextStock);
     setItemGroups(nextGroups);
     setUnits(nextUnits);
     setAccounts(nextAccounts);
@@ -272,12 +277,34 @@ export default function PurchaseOrdersPage({
     );
   };
 
+  const suggestedPurchasePrice = (
+    item: InventoryItem,
+    unitId: number
+  ): number | undefined => {
+    const stock = stockDefaults.find((row) => row.item_id === item.id);
+    if (!stock || stock.last_purchase_unit_price === null) return undefined;
+    // Prefer the actual last-price amount when the purchase unit matches.
+    if (stock.last_purchase_unit_id === unitId) {
+      return stock.last_purchase_unit_price;
+    }
+    // The snapshot's unit price is normalized by its historical conversion
+    // factor. Recalculate in the unit currently selected in this receipt.
+    const conversion = item.conversions.find((row) => row.unit_id === unitId && row.is_active);
+    if (!conversion || stock.last_purchase_price_per_smallest_unit === null) return undefined;
+    const value = stock.last_purchase_price_per_smallest_unit * conversion.quantity_in_smallest_unit;
+    return Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+  };
+
   const chooseItem = (key: string, itemId: number) => {
     const item = items.find((candidate) => candidate.id === itemId);
     if (!item) return;
+    const unitId = item.conversions.some(
+      (conversion) => conversion.unit_id === item.default_unit_id && conversion.is_active
+    ) ? item.default_unit_id : item.smallest_unit_id;
     updateLine(key, {
       item_id: itemId,
-      unit_id: item.default_unit_id
+      unit_id: unitId,
+      unit_price: suggestedPurchasePrice(item, unitId)
     });
   };
 
@@ -553,7 +580,8 @@ export default function PurchaseOrdersPage({
       setItems(nextItems);
       updateLine(quickItemLineKey, {
         item_id: created.id,
-        unit_id: created.default_unit_id
+        unit_id: created.default_unit_id,
+        unit_price: undefined
       });
       setQuickItemOpen(false);
       setQuickItemLineKey(null);
@@ -636,7 +664,14 @@ export default function PurchaseOrdersPage({
       });
       const nextItems = await getInventoryItems();
       setItems(nextItems);
-      updateLine(conversionLineKey, { unit_id: values.unit_id });
+      const currentStock = stockDefaults.find((row) => row.item_id === conversionItem.id);
+      const newPrice = currentStock?.last_purchase_price_per_smallest_unit == null
+        ? undefined
+        : Math.round(currentStock.last_purchase_price_per_smallest_unit * values.quantity_in_smallest_unit);
+      updateLine(conversionLineKey, {
+        unit_id: values.unit_id,
+        unit_price: newPrice
+      });
       setQuickConversionOpen(false);
       setConversionItem(null);
       setConversionLineKey(null);
@@ -1005,7 +1040,10 @@ export default function PurchaseOrdersPage({
                         value={line.unit_id}
                         placeholder="ĐVT"
                         disabled={paidEdit || !line.item_id}
-                        onChange={(value) => updateLine(line.key, { unit_id: value })}
+                        onChange={(value) => updateLine(line.key, {
+                          unit_id: value,
+                          unit_price: item ? suggestedPurchasePrice(item, value) : undefined
+                        })}
                         options={conversions.map((conversion) => ({
                           value: conversion.unit_id,
                           label: conversion.unit_name
