@@ -536,40 +536,97 @@ def powershell_quote(value: str) -> str:
 
 
 def print_text(printer_name: str, content: str) -> tuple[bool, str | None]:
-    if not printer_name.strip():
-        return False, "Chưa cấu hình máy in bếp."
-    if os.name != "nt":
-        return False, "In bếp trực tiếp chỉ hỗ trợ khi chạy trên Windows."
+    """Print a Unicode receipt on a real 80 mm Windows paper size.
 
-    path: Path | None = None
+    Windows PrintDocument/GDI avoids Out-Printer's default A4 pagination
+    and allows Vietnamese text via the installed Consolas font.
+    """
+    if not printer_name.strip():
+        return False, "Chưa cấu hình máy in."
+    if os.name != "nt":
+        return False, "In trực tiếp chỉ hỗ trợ khi chạy trên Windows."
+
+    text_path: Path | None = None
+    script_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8-sig", suffix=".txt", delete=False
         ) as handle:
             handle.write(content)
-            path = Path(handle.name)
+            text_path = Path(handle.name)
 
-        command = (
-            f"Get-Content -LiteralPath {powershell_quote(str(path))} "
-            f"-Raw -Encoding UTF8 | Out-Printer -Name {powershell_quote(printer_name)}"
-        )
+        # PaperSize uses hundredths of an inch: 315 = ~80 mm.
+        # The PrintPage canvas uses millimetres, independent of printer DPI.
+        script = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Printing;
+
+public static class Oc11Thermal80 {
+    public static void Print(string printer, string content) {
+        string[] lines = content.Replace("\r\n", "\n").Split('\n');
+        using (PrintDocument doc = new PrintDocument()) {
+            doc.PrinterSettings.PrinterName = printer;
+            if (!doc.PrinterSettings.IsValid)
+                throw new Exception("Máy in không tồn tại trên Windows: " + printer);
+            int height = Math.Min(12000, Math.Max(200, (lines.Length + 4) * 20));
+            doc.DefaultPageSettings.PaperSize = new PaperSize("80mm", 315, height);
+            doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+            doc.OriginAtMargins = false;
+            doc.PrintController = new StandardPrintController();
+            using (Font body = new Font("Consolas", 9.0f, FontStyle.Regular))
+            using (Font heading = new Font("Consolas", 11.0f, FontStyle.Bold)) {
+                doc.PrintPage += (sender, e) => {
+                    e.Graphics.PageUnit = GraphicsUnit.Millimeter;
+                    float y = 2.0f;
+                    foreach (string line in lines) {
+                        bool isHeading = line.Trim() == "CHE BIEN" ||
+                                         line.Trim() == "KIEM DO";
+                        e.Graphics.DrawString(
+                            line, isHeading ? heading : body,
+                            Brushes.Black, 2.0f, y
+                        );
+                        y += 5.0f;
+                    }
+                    e.HasMorePages = false;
+                };
+                doc.Print();
+            }
+        }
+    }
+}
+'@
+$text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
+[Oc11Thermal80]::Print($args[0], $text)
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8-sig", suffix=".ps1", delete=False
+        ) as handle:
+            handle.write(script)
+            script_path = Path(handle.name)
+
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
-            check=False, capture_output=True, text=True, timeout=20,
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-File", str(script_path),
+             printer_name, str(text_path)],
+            check=False, capture_output=True, text=True, timeout=25,
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
         )
         if result.returncode == 0:
             return True, None
-        error = (result.stderr or result.stdout or "Không in được phiếu bếp.").strip()
-        return False, error[-600:]
+        return False, (result.stderr or result.stdout or "Không in được phiếu.")[-600:].strip()
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     finally:
-        if path is not None:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        for path in (text_path, script_path):
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def format_quantity(value: float) -> str:
