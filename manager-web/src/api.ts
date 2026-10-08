@@ -50,7 +50,11 @@ import type {
 } from "./types";
 
 type ApiErrorPayload = {
-  detail?: string;
+  detail?: string | {
+    code?: string;
+    message?: string;
+    items?: Array<{ item_name?: string }>;
+  };
 };
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -67,8 +71,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
     try {
       const payload = (await response.json()) as ApiErrorPayload;
-      if (payload.detail) {
+      if (typeof payload.detail === "string") {
         detail = payload.detail;
+      } else if (payload.detail) {
+        const names = payload.detail.items?.map((item) => item.item_name).filter(Boolean);
+        detail = payload.detail.message ?? "Dữ liệu kho đã thay đổi.";
+        if (names?.length) detail += ` Mặt hàng: ${names.join(", ")}.`;
       }
     } catch {
       // Keep the generic message when the response has no JSON body.
