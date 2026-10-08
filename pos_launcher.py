@@ -126,17 +126,28 @@ def find_edge() -> Path | None:
     return None
 
 
+def pos_url_with_build() -> str:
+    # Changing the build changes the URL, avoiding a cached old Order HTML.
+    server_exe = root_dir() / "OC11.exe"
+    try:
+        version = server_exe.stat().st_mtime_ns
+    except OSError:
+        version = int(time.time())
+    return f"{POS_URL}&v={version}"
+
+
 def launch_pos() -> None:
     if os.getenv("OC11_POS_NO_LAUNCH") == "1":
         return
 
+    url = pos_url_with_build()
     edge = find_edge()
     if edge is not None:
         try:
             subprocess.Popen(
                 [
                     str(edge),
-                    f"--app={POS_URL}",
+                    f"--app={url}",
                     "--start-maximized",
                     "--disable-session-crashed-bubble",
                 ],
@@ -146,7 +157,7 @@ def launch_pos() -> None:
         except OSError:
             pass
 
-    webbrowser.open(POS_URL)
+    webbrowser.open(url)
 
 
 def main() -> None:
