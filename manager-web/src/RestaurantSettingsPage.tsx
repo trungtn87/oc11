@@ -21,7 +21,7 @@ import {
   getPosSettings,
   getRestaurantAreas,
   getRestaurantTables,
-  testKitchenPrinter,
+  testPosPrinter,
   updatePosSettings,
   updateRestaurantArea,
   updateRestaurantTable
@@ -611,7 +611,10 @@ export function KitchenPrinterSettings() {
 
   async function save() {
     try {
-      await updatePosSettings({ kitchen_printer_name: printerName.trim() });
+      await updatePosSettings({
+        ...(await getPosSettings()),
+        kitchen_printer_name: printerName.trim()
+      });
       messageApi.success("Đã lưu máy in bếp.");
     } catch (error) {
       messageApi.error(
@@ -623,8 +626,11 @@ export function KitchenPrinterSettings() {
   async function test() {
     setTesting(true);
     try {
-      await updatePosSettings({ kitchen_printer_name: printerName.trim() });
-      const result = await testKitchenPrinter();
+      await updatePosSettings({
+        ...(await getPosSettings()),
+        kitchen_printer_name: printerName.trim()
+      });
+      const result = await testPosPrinter("KITCHEN");
       if (result.ok) {
         messageApi.success("Đã gửi phiếu test tới máy in bếp.");
       } else {
@@ -645,7 +651,7 @@ export function KitchenPrinterSettings() {
       <Card loading={loading} title="Máy in bếp">
         <div style={{ maxWidth: 560 }}>
           <Text type="secondary">
-            Nút “Gửi bếp” trên POS sẽ in bill món trực tiếp ra máy in Windows đã chọn.
+            Cấu hình máy in bếp và máy thu ngân nằm ở menu ☰ của POS. Thay đổi tên máy in bếp tại đây vẫn giữ nguyên các lựa chọn nơi in.
           </Text>
           <div style={{ marginTop: 14 }}>
             <Select
