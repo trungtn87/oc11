@@ -12,15 +12,16 @@ RECEIPT_COLUMNS = 32
 
 
 def item_identity(item: dict) -> str:
-    extras = item.get("surcharges") or []
-    normalized = sorted(
-        str(x["name"] if isinstance(x, dict) else x).strip() for x in extras
-    )
+    """Use dish + preparation, never note, surcharge or volatile line id.
+
+    Editing an already sent dish's note must not send it again. Quantities
+    across differently annotated lines of the same dish are summed; new
+    lines are allocated the remaining unsent quantity in cart order.
+    Legacy tickets contain the same dish/preparation snapshots.
+    """
     return json.dumps([
         str(item.get("name") or "").strip(),
         str(item.get("option") or "").strip(),
-        str(item.get("note") or "").strip(),
-        normalized,
     ], ensure_ascii=False)
 
 
@@ -81,25 +82,25 @@ def render_80mm_ticket(order, items: list[dict], *, checking: bool,
                        sent_at: str, batch_number: int,
                        temporary_note: str = "") -> str:
     """32-column thermal layout, no prices; checklist is a separate document."""
-    title = "KIEM DO" if checking else "CHE BIEN"
+    title = "KIỂM ĐỒ" if checking else "CHẾ BIẾN"
     stamp = datetime.fromisoformat(sent_at).strftime("%d/%m/%Y %H:%M")
     rows = [
         title.center(RECEIPT_COLUMNS),
         "=" * RECEIPT_COLUMNS,
         f"Order: {order['order_code']}",
-        f"Ngay: {stamp}",
-        f"Lan gui: {batch_number} - MON MOI",
+        f"Ngày: {stamp}",
+        f"Lần gửi: {batch_number} - MÓN MỚI",
     ]
     if order["order_type"] == "DINE_IN":
         rows.extend(_wrap(
-            f"Ban: {order['table_name'] or ''}  ({order['area_name'] or ''})",
+            f"Bàn: {order['table_name'] or ''}  ({order['area_name'] or ''})",
             RECEIPT_COLUMNS
         ))
     else:
-        rows.append("MANG VE")
+        rows.append("MANG VỀ")
     rows.extend([
         "-" * RECEIPT_COLUMNS,
-        f"{'Mon'.ljust(18 if checking else 22)} DVT    SL",
+        f"{'Món'.ljust(18 if checking else 22)} ĐVT    SL",
         "-" * RECEIPT_COLUMNS
     ])
     for item in items:
@@ -108,7 +109,7 @@ def render_80mm_ticket(order, items: list[dict], *, checking: bool,
     if checking:
         rows.append("Da kiem: ______ / ______")
     if temporary_note.strip():
-        rows.append("GHI CHU GUI BEP:" if checking else "GHI CHU GUI BEP:")
+        rows.append("GHI CHÚ GỬI BẾP:" if checking else "GHI CHÚ GỬI BẾP:")
         for paragraph in temporary_note.splitlines():
             rows.extend(_wrap(paragraph, RECEIPT_COLUMNS))
     rows.extend(["=" * RECEIPT_COLUMNS, "", "", ""])
