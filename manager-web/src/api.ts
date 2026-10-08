@@ -14,6 +14,8 @@ import type {
   InventoryStock,
   StockAdjustment,
   StockAdjustmentInput,
+  StocktakeBatchInput,
+  StocktakeBatchOutput,
   ItemGroup,
   ItemGroupInput,
   PurchaseReceipt,
@@ -196,6 +198,16 @@ export function updateInventoryItem(
 }
 
 
+export function setItemStockTracking(
+  id: number,
+  isStockTracked: boolean
+): Promise<InventoryItem> {
+  return request<InventoryItem>(`/api/items/${id}/stock-tracking`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_stock_tracked: isStockTracked })
+  });
+}
+
 export function getFundAccounts(type?: FundAccountType): Promise<FundAccount[]> {
   const query = type ? `?type=${type}` : "";
   return request<FundAccount[]>(`/api/fund-accounts${query}`);
@@ -353,6 +365,7 @@ export function getInventoryStock(params?: {
   search?: string;
   group_id?: number;
   as_of?: string;
+  tracking?: "ALL" | "TRACKED" | "UNTRACKED";
 }): Promise<InventoryStock[]> {
   const query = new URLSearchParams();
 
@@ -364,6 +377,9 @@ export function getInventoryStock(params?: {
   }
   if (params?.as_of) {
     query.set("as_of", params.as_of);
+  }
+  if (params?.tracking) {
+    query.set("tracking", params.tracking);
   }
 
   const suffix = query.toString() ? `?${query.toString()}` : "";
@@ -397,6 +413,15 @@ export function createStockAdjustment(
   });
 }
 
+
+export function createStocktakeBatch(
+  payload: StocktakeBatchInput
+): Promise<StocktakeBatchOutput> {
+  return request<StocktakeBatchOutput>("/api/inventory/adjustments/batch", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
 
 export function getServiceOptionCosts(): Promise<ServiceOptionCost[]> {
   return request<ServiceOptionCost[]>("/api/cost/service-options");
