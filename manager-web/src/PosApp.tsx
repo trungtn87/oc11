@@ -1,29 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Input,
   InputNumber,
   message,
-  Modal
+  Modal,
+  Select
 } from "antd";
 
 import {
   createSaleOrder,
+  createSurchargePreset,
+  getFundAccounts,
   getMenuItems,
   getRestaurantAreas,
   getRestaurantTables,
   getSaleOrder,
   getSaleOrders,
+  getSurchargePresets,
+  paySaleOrder,
+  sendSaleOrderToKitchen,
   updateSaleOrder
 } from "./api";
 import type {
+  FundAccount,
+  FundAccountType,
   MenuItem,
   MenuItemOption,
   RestaurantArea,
   RestaurantTable,
   SaleOrder,
   SaleOrderInput,
-  SaleSurchargeInput
+  SaleSurchargeInput,
+  SurchargePreset
 } from "./types";
 import "./PosApp.css";
 
@@ -83,6 +92,9 @@ export default function PosApp() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [orders, setOrders] = useState<SaleOrder[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [accounts, setAccounts] = useState<FundAccount[]>([]);
+  const [surchargePresets, setSurchargePresets] = useState<SurchargePreset[]>([]);
+  const menuGridRef = useRef<HTMLDivElement | null>(null);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -96,6 +108,16 @@ export default function PosApp() {
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
+  const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
+  const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
+  const [surchargeName, setSurchargeName] = useState("");
+  const [surchargeAmount, setSurchargeAmount] = useState(0);
+  const [surchargeSaving, setSurchargeSaving] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentAccountType, setPaymentAccountType] = useState<FundAccountType>("CASH");
+  const [paymentFundAccountId, setPaymentFundAccountId] = useState<number>();
+  const [paymentAmount, setPaymentAmount] = useState(0);
   const [messageApi, contextHolder] = message.useMessage();
 
   async function refresh() {
@@ -119,9 +141,13 @@ export default function PosApp() {
     let cancelled = false;
     async function initialize() {
       try {
-        const menu = await getMenuItems();
+        const [menu, funds, presets] = await Promise.all([
+          getMenuItems(), getFundAccounts(), getSurchargePresets()
+        ]);
         if (cancelled) return;
         setMenuItems(menu.filter((item) => item.is_active));
+        setAccounts(funds);
+        setSurchargePresets(presets);
         await refresh();
       } catch (error) {
         if (!cancelled) {
@@ -177,6 +203,7 @@ export default function PosApp() {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
+    setSelectedLineKey(null);
     setDirty(false);
     setSearch("");
     setGroupId(null);
@@ -216,6 +243,7 @@ export default function PosApp() {
           }))
         }))
       );
+      setSelectedLineKey(null);
       setDirty(false);
       setSearch("");
       setGroupId(null);
@@ -295,6 +323,7 @@ export default function PosApp() {
             line.key === key ? { ...line, quantity } : line
           )
     );
+    if (quantity <= 0) setSelectedLineKey((current) => current === key ? null : current);
     setDirty(true);
   }
 
