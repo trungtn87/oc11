@@ -278,6 +278,14 @@ public final class StocktakeActivity extends Activity {
                 @Override public void afterTextChanged(Editable s) {}
             });
             card.addView(actual);
+            if (!tracked && drafts.containsKey(id)) {
+                Button remove = button("Bỏ hàng đã ngừng theo dõi khỏi phiếu");
+                remove.setOnClickListener(v -> {
+                    drafts.remove(id);
+                    renderRows();
+                });
+                card.addView(remove);
+            }
             stockContainer.addView(card);
         }
         countStatus.setText(
