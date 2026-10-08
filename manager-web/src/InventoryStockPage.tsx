@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tag,
   Typography
@@ -17,22 +18,28 @@ import {
 import type { TableProps } from "antd";
 
 import {
-  createStockAdjustment,
+  createStocktakeBatch,
   getInventoryItemHistory,
   getInventoryStock,
-  getItemGroups
+  getItemGroups,
+  setItemStockTracking
 } from "./api";
 import type {
   InventoryItemHistory,
   InventoryMovement,
   InventoryStock,
   ItemGroup,
-  StockAdjustmentInput
+  StocktakeBatchInput
 } from "./types";
 
 const { Title, Text } = Typography;
 
 type HistoryFilter = "ALL" | "PURCHASE" | "SALE" | "ADJUSTMENT" | "OTHER";
+type TrackingFilter = "TRACKED" | "UNTRACKED" | "ALL";
+
+function newSyncId() {
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
+}
 
 type AdjustmentForm = {
   actual_quantity: number;
@@ -88,6 +95,8 @@ export default function InventoryStockPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState<number | "all">("all");
+  const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>("TRACKED");
+  const [trackingSavingId, setTrackingSavingId] = useState<number | null>(null);
   const [asOf, setAsOf] = useState("");
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -101,6 +110,11 @@ export default function InventoryStockPage() {
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [adjustmentItem, setAdjustmentItem] = useState<InventoryStock | null>(null);
   const [adjustmentSaving, setAdjustmentSaving] = useState(false);
+  const [singleSyncId, setSingleSyncId] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkDraft, setBulkDraft] = useState<Record<number, number | undefined>>({});
+  const [bulkPending, setBulkPending] = useState<StocktakeBatchInput | null>(null);
   const [adjustmentForm] = Form.useForm<AdjustmentForm>();
   const actualQuantity = Form.useWatch("actual_quantity", adjustmentForm);
 
@@ -112,7 +126,8 @@ export default function InventoryStockPage() {
       const data = await getInventoryStock({
         search: search || undefined,
         group_id: groupFilter === "all" ? undefined : groupFilter,
-        as_of: asOf || undefined
+        as_of: asOf || undefined,
+        tracking: trackingFilter
       });
       setStocks(data);
     } catch (error) {
@@ -129,7 +144,7 @@ export default function InventoryStockPage() {
       try {
         const [nextGroups, nextStock] = await Promise.all([
           getItemGroups(),
-          getInventoryStock()
+          getInventoryStock({ tracking: "TRACKED" })
         ]);
         setGroups(nextGroups);
         setStocks(nextStock);
@@ -177,6 +192,8 @@ export default function InventoryStockPage() {
   };
 
   const openAdjustment = (row: InventoryStock) => {
+    if (asOf || !row.is_stock_tracked) return;
+    setSingleSyncId(newSyncId());
     setAdjustmentItem(row);
     adjustmentForm.resetFields();
     adjustmentForm.setFieldsValue({
@@ -193,26 +210,32 @@ export default function InventoryStockPage() {
       const values = await adjustmentForm.validateFields();
       setAdjustmentSaving(true);
 
-      const payload: StockAdjustmentInput = {
-        item_id: adjustmentItem.item_id,
-        actual_quantity: values.actual_quantity,
+      const payload: StocktakeBatchInput = {
+        client_sync_id: singleSyncId,
         reason: values.reason?.trim() || "Đối chiếu tồn",
-        note: values.note?.trim() || null
+        note: values.note?.trim() || undefined,
+        items: [{
+          item_id: adjustmentItem.item_id,
+          expected_quantity: adjustmentItem.stock_quantity,
+          expected_revision: adjustmentItem.stock_revision,
+          actual_quantity: values.actual_quantity
+        }]
       };
 
-      const created = await createStockAdjustment(payload);
+      const created = await createStocktakeBatch(payload);
+      const line = created.items[0];
       messageApi.success(
-        created.quantity_delta === 0
+        line.quantity_delta === 0
           ? "Đã ghi nhận mốc đối chiếu. Tồn thực tế khớp dữ liệu."
-          : `Đã đối chiếu tồn, chênh lệch ${signed(created.quantity_delta)} ${created.smallest_unit_name}.`
+          : `Đã đối chiếu tồn, chênh lệch ${signed(line.quantity_delta)} ${line.smallest_unit_name}.`
       );
 
       setAdjustmentOpen(false);
       setAdjustmentItem(null);
       await loadStock();
 
-      if (historyItem?.item_id === created.item_id && historyOpen) {
-        await loadHistory(created.item_id);
+      if (historyItem?.item_id === line.item_id && historyOpen) {
+        await loadHistory(line.item_id);
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -220,6 +243,61 @@ export default function InventoryStockPage() {
       }
     } finally {
       setAdjustmentSaving(false);
+    }
+  };
+
+  const toggleTracking = async (row: InventoryStock, enabled: boolean) => {
+    try {
+      setTrackingSavingId(row.item_id);
+      await setItemStockTracking(row.item_id, enabled);
+      messageApi.success(enabled ? "Đã bật theo dõi kho." : "Đã ngừng theo dõi kho.");
+      await loadStock();
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không cập nhật được theo dõi kho.");
+    } finally {
+      setTrackingSavingId(null);
+    }
+  };
+
+  const openBulk = () => {
+    if (asOf) return;
+    setBulkDraft({});
+    setBulkPending(null);
+    setBulkOpen(true);
+  };
+
+  const saveBulk = async () => {
+    const rows = stocks.filter((row) =>
+      row.is_stock_tracked && bulkDraft[row.item_id] !== undefined
+    );
+    if (!bulkPending && rows.length === 0) {
+      messageApi.warning("Nhập số thực tế cho ít nhất một mặt hàng.");
+      return;
+    }
+    const request: StocktakeBatchInput = bulkPending ?? {
+      client_sync_id: newSyncId(),
+      reason: "Kiểm kho trên web",
+      items: rows.map((row) => ({
+        item_id: row.item_id,
+        expected_quantity: row.stock_quantity,
+        expected_revision: row.stock_revision,
+        actual_quantity: bulkDraft[row.item_id] as number
+      }))
+    };
+    // Reuse the exact same payload after a connection timeout.
+    setBulkPending(request);
+    try {
+      setBulkSaving(true);
+      const created = await createStocktakeBatch(request);
+      messageApi.success(`Đã lưu kiểm kho ${created.items.length} mặt hàng (${created.adjustment_code}).`);
+      setBulkOpen(false);
+      setBulkPending(null);
+      setBulkDraft({});
+      await loadStock();
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được kiểm kho. Có thể thử gửi lại.");
+    } finally {
+      setBulkSaving(false);
     }
   };
 
@@ -261,6 +339,8 @@ export default function InventoryStockPage() {
       key: "stock_quantity",
       width: 145,
       align: "right",
+      sorter: (a, b) => a.stock_quantity - b.stock_quantity,
+      defaultSortOrder: "ascend",
       render: (value: number) => (
         <Text
           strong
@@ -322,6 +402,22 @@ export default function InventoryStockPage() {
         )
     },
     {
+      title: "Theo dõi",
+      key: "is_stock_tracked",
+      width: 120,
+      render: (_, row) => (
+        <Switch
+          size="small"
+          checked={row.is_stock_tracked}
+          loading={trackingSavingId === row.item_id}
+          disabled={trackingSavingId !== null}
+          onChange={(checked) => void toggleTracking(row, checked)}
+          checkedChildren="Bật"
+          unCheckedChildren="Tắt"
+        />
+      )
+    },
+    {
       title: "Thao tác",
       key: "action",
       width: 150,
@@ -331,7 +427,11 @@ export default function InventoryStockPage() {
           <Button type="link" onClick={() => void openHistory(row)}>
             Lịch sử
           </Button>
-          <Button type="link" onClick={() => openAdjustment(row)}>
+          <Button
+            type="link"
+            disabled={Boolean(asOf) || !row.is_stock_tracked}
+            onClick={() => openAdjustment(row)}
+          >
             Đối chiếu
           </Button>
         </Space>
@@ -434,6 +534,9 @@ export default function InventoryStockPage() {
       </div>
 
       <div className="toolbar stock-toolbar">
+        <Button type="primary" onClick={openBulk} disabled={Boolean(asOf)}>
+          + Kiểm kho nhiều mặt hàng
+        </Button>
         <Input.Search
           allowClear
           placeholder="Tìm mặt hàng..."
@@ -456,6 +559,17 @@ export default function InventoryStockPage() {
           ]}
         />
 
+        <Select<TrackingFilter>
+          value={trackingFilter}
+          onChange={setTrackingFilter}
+          style={{ minWidth: 180 }}
+          options={[
+            { value: "TRACKED", label: "Đang theo dõi" },
+            { value: "UNTRACKED", label: "Ngừng theo dõi" },
+            { value: "ALL", label: "Tất cả hàng hóa" }
+          ]}
+        />
+
         <Input
           type="date"
           value={asOf}
@@ -468,16 +582,17 @@ export default function InventoryStockPage() {
           Lấy dữ liệu
         </Button>
 
-        {(search || groupFilter !== "all" || asOf) && (
+        {(search || groupFilter !== "all" || trackingFilter !== "TRACKED" || asOf) && (
           <Button
             onClick={() => {
               setSearch("");
               setGroupFilter("all");
+              setTrackingFilter("TRACKED");
               setAsOf("");
               void (async () => {
                 try {
                   setLoading(true);
-                  setStocks(await getInventoryStock());
+                  setStocks(await getInventoryStock({ tracking: "TRACKED" }));
                 } finally {
                   setLoading(false);
                 }
@@ -504,6 +619,81 @@ export default function InventoryStockPage() {
           locale={{ emptyText: "Chưa có dữ liệu tồn kho." }}
         />
       </div>
+
+      <Modal
+        open={bulkOpen}
+        title="Kiểm kho nhiều mặt hàng"
+        width="min(950px, 96vw)"
+        okText={bulkPending ? "Thử đồng bộ lại" : "Lưu kiểm kho"}
+        cancelText="Đóng"
+        confirmLoading={bulkSaving}
+        onOk={() => void saveBulk()}
+        onCancel={() => {
+          setBulkOpen(false);
+          setBulkDraft({});
+          setBulkPending(null);
+        }}
+      >
+        <Text type="secondary">
+          Nhập số lượng đếm được vào các ô cần kiểm. Để trống những mặt hàng chưa kiểm.
+          Chỉ những dòng đã nhập mới được ghi vào phiếu kiểm kho. Đơn vị là đơn vị nhỏ nhất.
+        </Text>
+        {bulkPending && (
+          <div style={{ marginTop: 12 }}>
+            <Text type="warning">
+              Đã thử gửi phiếu này. Giữ nguyên dữ liệu để gửi lại an toàn nếu mất kết nối.
+              Muốn sửa số đếm, đóng phiếu và tải tồn kho mới trước khi kiểm lại.
+            </Text>
+          </div>
+        )}
+        <div style={{ marginTop: 16 }}>
+          <Table<InventoryStock>
+            rowKey="item_id"
+            size="small"
+            pagination={{ pageSize: 30 }}
+            scroll={{ y: 440 }}
+            dataSource={stocks.filter((row) => row.is_stock_tracked)}
+            columns={[
+              { title: "Hàng hóa", dataIndex: "item_name", key: "item_name" },
+              {
+                title: "Tồn hệ thống",
+                key: "system",
+                width: 150,
+                align: "right",
+                render: (_, row) => `${number(row.stock_quantity)} ${row.smallest_unit_name}`
+              },
+              {
+                title: "Thực tế đếm được",
+                key: "actual",
+                width: 155,
+                render: (_, row) => (
+                  <InputNumber<number>
+                    min={0}
+                    step="any"
+                    placeholder="Chưa kiểm"
+                    style={{ width: "100%" }}
+                    disabled={bulkPending !== null || bulkSaving}
+                    value={bulkDraft[row.item_id]}
+                    onChange={(value) =>
+                      setBulkDraft((previous) => ({ ...previous, [row.item_id]: value ?? undefined }))
+                    }
+                  />
+                )
+              },
+              {
+                title: "Chênh lệch",
+                key: "difference",
+                width: 135,
+                align: "right",
+                render: (_, row) =>
+                  bulkDraft[row.item_id] === undefined
+                    ? "—"
+                    : `${signed((bulkDraft[row.item_id] as number) - row.stock_quantity)} ${row.smallest_unit_name}`
+              }
+            ]}
+          />
+        </div>
+      </Modal>
 
       <Modal
         open={historyOpen}

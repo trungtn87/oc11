@@ -14,6 +14,8 @@ import type {
   InventoryStock,
   StockAdjustment,
   StockAdjustmentInput,
+  StocktakeBatchInput,
+  StocktakeBatchOutput,
   ItemGroup,
   ItemGroupInput,
   PurchaseReceipt,
@@ -48,7 +50,11 @@ import type {
 } from "./types";
 
 type ApiErrorPayload = {
-  detail?: string;
+  detail?: string | {
+    code?: string;
+    message?: string;
+    items?: Array<{ item_name?: string }>;
+  };
 };
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -65,8 +71,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
     try {
       const payload = (await response.json()) as ApiErrorPayload;
-      if (payload.detail) {
+      if (typeof payload.detail === "string") {
         detail = payload.detail;
+      } else if (payload.detail) {
+        const names = payload.detail.items?.map((item) => item.item_name).filter(Boolean);
+        detail = payload.detail.message ?? "Dữ liệu kho đã thay đổi.";
+        if (names?.length) detail += ` Mặt hàng: ${names.join(", ")}.`;
       }
     } catch {
       // Keep the generic message when the response has no JSON body.
@@ -195,6 +205,16 @@ export function updateInventoryItem(
   });
 }
 
+
+export function setItemStockTracking(
+  id: number,
+  isStockTracked: boolean
+): Promise<InventoryItem> {
+  return request<InventoryItem>(`/api/items/${id}/stock-tracking`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_stock_tracked: isStockTracked })
+  });
+}
 
 export function getFundAccounts(type?: FundAccountType): Promise<FundAccount[]> {
   const query = type ? `?type=${type}` : "";
@@ -353,6 +373,7 @@ export function getInventoryStock(params?: {
   search?: string;
   group_id?: number;
   as_of?: string;
+  tracking?: "ALL" | "TRACKED" | "UNTRACKED";
 }): Promise<InventoryStock[]> {
   const query = new URLSearchParams();
 
@@ -364,6 +385,9 @@ export function getInventoryStock(params?: {
   }
   if (params?.as_of) {
     query.set("as_of", params.as_of);
+  }
+  if (params?.tracking) {
+    query.set("tracking", params.tracking);
   }
 
   const suffix = query.toString() ? `?${query.toString()}` : "";
@@ -397,6 +421,15 @@ export function createStockAdjustment(
   });
 }
 
+
+export function createStocktakeBatch(
+  payload: StocktakeBatchInput
+): Promise<StocktakeBatchOutput> {
+  return request<StocktakeBatchOutput>("/api/inventory/adjustments/batch", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
 
 export function getServiceOptionCosts(): Promise<ServiceOptionCost[]> {
   return request<ServiceOptionCost[]>("/api/cost/service-options");

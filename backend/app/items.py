@@ -28,6 +28,8 @@ class ItemInput(BaseModel):
     smallest_unit_id: int
     note: str | None = Field(default=None, max_length=500)
     is_active: bool = True
+    # None keeps the previous setting on legacy PUT clients.
+    is_stock_tracked: bool | None = None
     conversions: list[ItemUnitConversionInput] = Field(default_factory=list)
 
 
@@ -42,7 +44,12 @@ class ItemOutput(BaseModel):
     smallest_unit_name: str
     note: str | None
     is_active: bool
+    is_stock_tracked: bool
     conversions: list[ItemUnitConversionOutput]
+
+
+class StockTrackingInput(BaseModel):
+    is_stock_tracked: bool
 
 
 def clean_name(value: str) -> str:
@@ -222,7 +229,8 @@ def select_item(connection: sqlite3.Connection, item_id: int) -> sqlite3.Row | N
             i.smallest_unit_id,
             su.name AS smallest_unit_name,
             i.note,
-            i.is_active
+            i.is_active,
+            i.is_stock_tracked
         FROM items AS i
         JOIN item_groups AS g ON g.id = i.item_group_id
         JOIN units AS du ON du.id = i.default_unit_id
@@ -280,6 +288,7 @@ def row_to_output(
         smallest_unit_name=row["smallest_unit_name"],
         note=row["note"],
         is_active=bool(row["is_active"]),
+        is_stock_tracked=bool(row["is_stock_tracked"]),
         conversions=conversions,
     )
 
@@ -299,7 +308,8 @@ def list_items() -> list[ItemOutput]:
                 i.smallest_unit_id,
                 su.name AS smallest_unit_name,
                 i.note,
-                i.is_active
+                i.is_active,
+                i.is_stock_tracked
             FROM items AS i
             JOIN item_groups AS g ON g.id = i.item_group_id
             JOIN units AS du ON du.id = i.default_unit_id
@@ -345,9 +355,10 @@ def create_item(payload: ItemInput) -> ItemOutput:
                 default_unit_id,
                 smallest_unit_id,
                 note,
-                is_active
+                is_active,
+                is_stock_tracked
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cleaned_name,
@@ -356,6 +367,7 @@ def create_item(payload: ItemInput) -> ItemOutput:
                 payload.smallest_unit_id,
                 clean_optional(payload.note),
                 int(payload.is_active),
+                int(payload.is_stock_tracked if payload.is_stock_tracked is not None else True),
             ),
         )
 
@@ -389,7 +401,7 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
 
     with connect() as connection:
         existing = connection.execute(
-            "SELECT id, smallest_unit_id FROM items WHERE id = ?",
+            "SELECT id, smallest_unit_id, is_stock_tracked FROM items WHERE id = ?",
             (item_id,),
         ).fetchone()
 
@@ -434,7 +446,8 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
                 default_unit_id = ?,
                 smallest_unit_id = ?,
                 note = ?,
-                is_active = ?
+                is_active = ?,
+                is_stock_tracked = ?
             WHERE id = ?
             """,
             (
@@ -444,6 +457,8 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
                 payload.smallest_unit_id,
                 clean_optional(payload.note),
                 int(payload.is_active),
+                int(existing["is_stock_tracked"]) if payload.is_stock_tracked is None
+                else int(payload.is_stock_tracked),
                 item_id,
             ),
         )
@@ -459,4 +474,28 @@ def update_item(item_id: int, payload: ItemInput) -> ItemOutput:
         output = row_to_output(connection, row)
 
     backup_database(reason="item-updated")
+    return output
+
+
+@router.patch("/{item_id}/stock-tracking", response_model=ItemOutput)
+def set_item_stock_tracking(
+    item_id: int,
+    payload: StockTrackingInput,
+) -> ItemOutput:
+    # Changing monitoring never removes movements or disables purchases/sales.
+    with connect() as connection:
+        current = select_item(connection, item_id)
+        if current is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Không tìm thấy hàng hóa.",
+            )
+        connection.execute(
+            "UPDATE items SET is_stock_tracked = ? WHERE id = ?",
+            (int(payload.is_stock_tracked), item_id),
+        )
+        connection.commit()
+        output = row_to_output(connection, select_item(connection, item_id))
+
+    backup_database(reason="item-stock-tracking-updated")
     return output

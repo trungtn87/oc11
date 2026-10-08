@@ -89,6 +89,7 @@ class SaleOrderOutput(BaseModel):
     customer_name: str | None
     fund_account_id: int | None
     fund_account_name: str | None
+    fund_account_type: Literal["CASH", "BANK"] | None
     total_amount: int
     surcharge_total: int
     actual_received_amount: int | None
@@ -461,6 +462,7 @@ def select_order(
             c.name AS customer_name,
             so.fund_account_id,
             fa.name AS fund_account_name,
+            fa.type AS fund_account_type,
             so.total_amount,
             so.actual_received_amount,
             so.payment_reference_code,
@@ -647,6 +649,7 @@ def order_to_output(
             else None
         ),
         fund_account_name=row["fund_account_name"],
+        fund_account_type=row["fund_account_type"],
         total_amount=int(row["total_amount"]),
         surcharge_total=item_surcharge_total + order_surcharge_total,
         actual_received_amount=(

@@ -17,6 +17,8 @@ from .item_groups import router as item_groups_router
 from .items import router as items_router
 from .menu import router as menu_router
 from .inventory import router as inventory_router
+from .stocktake import router as stocktake_router
+from .purchase_defaults import router as purchase_defaults_router
 from .purchase_receipts import router as purchase_receipts_router
 from .pos import router as pos_router
 from .sales import router as sales_router
@@ -57,6 +59,8 @@ app.include_router(fund_transactions_router)
 app.include_router(items_router)
 app.include_router(menu_router)
 app.include_router(inventory_router)
+app.include_router(stocktake_router)
+app.include_router(purchase_defaults_router)
 app.include_router(purchase_receipts_router)
 app.include_router(pos_router)
 app.include_router(sales_router)

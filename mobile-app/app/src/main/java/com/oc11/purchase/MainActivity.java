@@ -2,6 +2,7 @@ package com.oc11.purchase;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -51,6 +52,7 @@ public class MainActivity extends Activity {
     private TextView connectionText;
     private TextView pendingText;
     private LinearLayout receiptList;
+    private LinearLayout stocktakeList;
     private Button syncButton;
 
     private int dp(float value) {
@@ -111,6 +113,12 @@ public class MainActivity extends Activity {
         refreshHome();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (receiptList != null) refreshHome();
+    }
+
     private void buildHome() {
         LinearLayout root = vertical();
         root.setPadding(dp(16), dp(18), dp(16), dp(20));
@@ -135,6 +143,11 @@ public class MainActivity extends Activity {
         addButton.setOnClickListener(v -> showReceiptForm(null));
         root.addView(addButton);
 
+        Button stocktakeButton = button("▤ Kiểm kho (offline)");
+        stocktakeButton.setOnClickListener(v ->
+                startActivity(new Intent(this, StocktakeActivity.class)));
+        root.addView(stocktakeButton);
+
         syncButton = button("⟳ Đồng bộ với máy tính");
         syncButton.setOnClickListener(v -> syncManually());
         root.addView(syncButton);
@@ -150,6 +163,11 @@ public class MainActivity extends Activity {
         receiptList = vertical();
         root.addView(receiptList);
 
+        root.addView(spacer(12));
+        root.addView(text("Phiếu kiểm kho trên điện thoại", 17, true));
+        stocktakeList = vertical();
+        root.addView(stocktakeList);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
@@ -160,9 +178,11 @@ public class MainActivity extends Activity {
         String updated = store.getCacheUpdatedAt("items");
         String api = prefs.getString(KEY_API_URL, "");
         connectionText.setText(api.isEmpty() ? "Chưa cấu hình máy tính" : "Máy tính: " + api);
-        pendingText.setText("Chờ đồng bộ: " + pending + " phiếu" +
+        pendingText.setText("Chờ đồng bộ: " + pending + " phiếu nhập, " +
+                store.pendingStocktakeCount() + " phiếu kiểm" +
                 (updated == null ? " • Chưa tải dữ liệu nền" : " • Dữ liệu nền: " + updated));
 
+        refreshStocktakeList();
         receiptList.removeAllViews();
         List<LocalStore.PendingReceipt> rows = store.listReceipts();
         if (rows.isEmpty()) {
@@ -224,6 +244,61 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void refreshStocktakeList() {
+        stocktakeList.removeAllViews();
+        List<LocalStore.PendingStocktake> rows = store.listStocktakes();
+        if (rows.isEmpty()) {
+            stocktakeList.addView(text("Chưa có phiếu kiểm kho offline.", 14, false));
+            return;
+        }
+        int shown = 0;
+        for (LocalStore.PendingStocktake row : rows) {
+            if (shown++ >= 30) break;
+            try {
+                JSONObject payload = new JSONObject(row.payload);
+                JSONArray lines = payload.optJSONArray("items");
+                int counted = lines == null ? 0 : lines.length();
+                LinearLayout c = card();
+                c.addView(text("Kiểm kho • " + counted + " mặt hàng", 15, true));
+                String state = row.synced == 1
+                        ? "✓ Đã đồng bộ " + (row.serverCode == null ? "" : row.serverCode)
+                        : (row.error == null ? "● Chờ đồng bộ" : "! Lỗi đồng bộ");
+                c.addView(text(row.createdAt + " • " + state, 12, false));
+                if (row.error != null) {
+                    TextView t = text(row.error, 12, false);
+                    t.setTextColor(Color.rgb(180, 50, 40));
+                    c.addView(t);
+                }
+                if (row.synced == 0) {
+                    LinearLayout actions = new LinearLayout(this);
+                    actions.setOrientation(LinearLayout.HORIZONTAL);
+                    Button edit = button("Sửa");
+                    edit.setOnClickListener(v -> {
+                        Intent intent = new Intent(this, StocktakeActivity.class);
+                        intent.putExtra("stocktake_id", row.id);
+                        startActivity(intent);
+                    });
+                    Button delete = button("Xóa");
+                    delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                            .setTitle("Xóa phiếu kiểm chưa đồng bộ?")
+                            .setMessage("Phiếu lưu trên điện thoại sẽ bị xóa. Dữ liệu đã đồng bộ trên máy tính không bị tác động.")
+                            .setNegativeButton("Hủy", null)
+                            .setPositiveButton("Xóa", (d, w) -> {
+                                store.deleteUnsyncedStocktake(row.id);
+                                refreshHome();
+                            })
+                            .show());
+                    actions.addView(edit, new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    actions.addView(delete, new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    c.addView(actions);
+                }
+                stocktakeList.addView(c);
+            } catch (Exception ignored) {}
+        }
+    }
+
     private void showSettings() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
@@ -271,6 +346,8 @@ public class MainActivity extends Activity {
         io.execute(() -> {
             int uploaded = 0;
             int failed = 0;
+            int uploadedStocktakes = 0;
+            int failedStocktakes = 0;
             String fatal = null;
             try {
                 JSONObject health = ApiClient.getObject(baseUrl, "/api/health");
@@ -290,18 +367,48 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                // Send purchases first. Counts based on stale stock must then
+                // conflict safely instead of silently overwriting purchases.
+                for (LocalStore.PendingStocktake row : store.listUnsyncedStocktakes()) {
+                    try {
+                        JSONObject response = ApiClient.postObject(
+                                baseUrl, "/api/inventory/adjustments/batch",
+                                new JSONObject(row.payload));
+                        store.markStocktakeSynced(
+                                row.id, response.optString("adjustment_code", null));
+                        uploadedStocktakes++;
+                    } catch (Exception ex) {
+                        store.markStocktakeError(row.id, ex.getMessage());
+                        failedStocktakes++;
+                    }
+                }
+
+                // Fetch the whole snapshot before changing any offline cache.
+                // Most importantly, latest purchase prices do NOT depend on
+                // availability of stock movement snapshots.
+                JSONArray latestSuppliers = ApiClient.getArray(baseUrl, "/api/suppliers");
+                JSONArray latestItems = ApiClient.getArray(baseUrl, "/api/items");
+                JSONArray latestFunds = ApiClient.getArray(baseUrl, "/api/fund-accounts");
+                JSONArray latestGroups = ApiClient.getArray(baseUrl, "/api/item-groups");
+                JSONArray latestStock = ApiClient.getArray(baseUrl, "/api/inventory/stock");
+                JSONArray latestPurchaseDefaults = ApiClient.getArray(
+                        baseUrl, "/api/items/purchase-defaults");
+
                 String stamp = nowDisplay();
-                store.putCache("suppliers", ApiClient.getArray(baseUrl, "/api/suppliers").toString(), stamp);
-                store.putCache("items", ApiClient.getArray(baseUrl, "/api/items").toString(), stamp);
-                store.putCache("fund_accounts", ApiClient.getArray(baseUrl, "/api/fund-accounts").toString(), stamp);
-                store.putCache("item_groups", ApiClient.getArray(baseUrl, "/api/item-groups").toString(), stamp);
-                store.putCache("inventory", ApiClient.getArray(baseUrl, "/api/inventory/stock").toString(), stamp);
+                store.putCache("suppliers", latestSuppliers.toString(), stamp);
+                store.putCache("items", latestItems.toString(), stamp);
+                store.putCache("fund_accounts", latestFunds.toString(), stamp);
+                store.putCache("item_groups", latestGroups.toString(), stamp);
+                store.putCache("inventory", latestStock.toString(), stamp);
+                store.putCache("purchase_defaults", latestPurchaseDefaults.toString(), stamp);
             } catch (Exception ex) {
                 fatal = ex.getMessage();
             }
 
             final int okCount = uploaded;
             final int failCount = failed;
+            final int stockOkCount = uploadedStocktakes;
+            final int stockFailCount = failedStocktakes;
             final String fatalMessage = fatal;
             runOnUiThread(() -> {
                 syncButton.setEnabled(true);
@@ -310,8 +417,11 @@ public class MainActivity extends Activity {
                 if (fatalMessage != null) {
                     Toast.makeText(this, "Không đồng bộ được: " + fatalMessage, Toast.LENGTH_LONG).show();
                 } else {
-                    String msg = "Đồng bộ xong: " + okCount + " phiếu";
-                    if (failCount > 0) msg += ", lỗi " + failCount;
+                    String msg = "Đồng bộ: " + okCount + " phiếu nhập, " +
+                            stockOkCount + " phiếu kiểm";
+                    if (failCount + stockFailCount > 0) {
+                        msg += ", lỗi " + (failCount + stockFailCount);
+                    }
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                 }
             });
@@ -595,6 +705,7 @@ public class MainActivity extends Activity {
 
     private void showLineDialog(JSONArray items, JSONArray lines, Runnable afterAdd) {
         JSONArray inventory = LocalStore.asArray(store.getCache("inventory"));
+        JSONArray purchaseDefaults = LocalStore.asArray(store.getCache("purchase_defaults"));
 
         LinearLayout form = vertical();
         form.setPadding(dp(16), dp(4), dp(16), dp(8));
@@ -638,6 +749,10 @@ public class MainActivity extends Activity {
 
         final List<Integer> unitIds = new ArrayList<>();
         final JSONObject[] selectedItem = new JSONObject[]{null};
+        // Spinner emits delayed selection callbacks when the adapter changes.
+        // Suppress duplicate callbacks so a user-edited price is not overwritten.
+        final int[] appliedItemId = new int[]{-1};
+        final int[] appliedUnitId = new int[]{-1};
 
         Runnable refreshItem = () -> {
             JSONObject item = selectedItem[0];
@@ -648,6 +763,8 @@ public class MainActivity extends Activity {
                         android.R.layout.simple_spinner_dropdown_item,
                         new ArrayList<String>()));
                 info.setText("Gõ tên hàng hóa rồi chọn trong danh sách.");
+                appliedItemId[0] = -1;
+                appliedUnitId[0] = -1;
                 price.setText("");
                 return;
             }
@@ -667,21 +784,57 @@ public class MainActivity extends Activity {
                     android.R.layout.simple_spinner_dropdown_item,
                     unitNames));
 
-            JSONObject stock = findInventory(inventory, item.optInt("id"));
-            if (stock != null) {
-                String msg = "Tồn trước: " + trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
-                        stock.optString("smallest_unit_name");
-                long last = stock.optLong("last_purchase_unit_price", -1);
-                if (last >= 0) msg += " • Giá gần nhất: " + MONEY.format(last) + " đ";
-                info.setText(msg);
-                int lastUnitId = stock.optInt("last_purchase_unit_id", -1);
-                int idx = unitIds.indexOf(lastUnitId);
-                if (idx >= 0) unitSpinner.setSelection(idx);
-                if (last >= 0) price.setText(String.valueOf(last));
+            int preferredUnitId = item.optInt("default_unit_id", -1);
+            int idx = unitIds.indexOf(preferredUnitId);
+            if (idx < 0) idx = unitIds.indexOf(item.optInt("smallest_unit_id", -1));
+            if (idx < 0 && !unitIds.isEmpty()) idx = 0;
+            if (idx >= 0) unitSpinner.setSelection(idx);
+
+            int itemId = item.optInt("id");
+            JSONObject stock = findInventory(inventory, itemId);
+            JSONObject purchaseDefault = findInventory(purchaseDefaults, itemId);
+            if (idx >= 0) {
+                int unitId = unitIds.get(idx);
+                Long suggested = suggestedPurchasePrice(item, purchaseDefault, stock, unitId);
+                price.setText(suggested == null ? "" : String.valueOf(suggested));
+                info.setText(purchasePriceHint(
+                        stock, purchaseDefault, suggested, unitNames.get(idx)));
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = unitId;
             } else {
-                info.setText("Chưa có dữ liệu tồn / giá gần nhất.");
+                price.setText("");
+                info.setText("Mặt hàng chưa có đơn vị nhập hợp lệ.");
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = -1;
             }
         };
+
+        // Selecting another unit must update the suggested price to match it.
+        // Never copy a price for a case/carton into a gram/piece price field.
+        unitSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                JSONObject item = selectedItem[0];
+                if (item == null || position < 0 || position >= unitIds.size()) return;
+                int itemId = item.optInt("id");
+                int unitId = unitIds.get(position);
+                if (appliedItemId[0] == itemId && appliedUnitId[0] == unitId) {
+                    return; // already filled for this item/unit; preserve manual edits
+                }
+                appliedItemId[0] = itemId;
+                appliedUnitId[0] = unitId;
+                JSONObject stock = findInventory(inventory, itemId);
+                JSONObject purchaseDefault = findInventory(purchaseDefaults, itemId);
+                Long suggested = suggestedPurchasePrice(item, purchaseDefault, stock, unitId);
+                price.setText(suggested == null ? "" : String.valueOf(suggested));
+                info.setText(purchasePriceHint(
+                        stock, purchaseDefault, suggested,
+                        String.valueOf(parent.getItemAtPosition(position))));
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         itemInput.setOnItemClickListener((parent, view, position, id) -> {
             String chosenName = String.valueOf(parent.getItemAtPosition(position));
@@ -692,9 +845,15 @@ public class MainActivity extends Activity {
         itemInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                JSONObject exact = findItemByName(activeItems, s.toString().trim());
                 JSONObject chosen = selectedItem[0];
-                if (chosen != null && !chosen.optString("name").equalsIgnoreCase(s.toString().trim())) {
+                if (exact == null && chosen != null) {
                     selectedItem[0] = null;
+                    refreshItem.run();
+                } else if (exact != null
+                        && (chosen == null || chosen.optInt("id") != exact.optInt("id"))) {
+                    // Typing the complete item name also triggers default unit/price.
+                    selectedItem[0] = exact;
                     refreshItem.run();
                 }
             }
@@ -723,6 +882,9 @@ public class MainActivity extends Activity {
                 if (unitIds.isEmpty() || unitSpinner.getSelectedItemPosition() < 0) throw new Exception("Hàng hóa chưa có đơn vị nhập.");
                 double q = Double.parseDouble(qty.getText().toString().trim().replace(",", "."));
                 if (q <= 0) throw new Exception("Số lượng phải lớn hơn 0.");
+                if (price.getText().toString().trim().isEmpty()) {
+                    throw new Exception("Hãy nhập giá cho mặt hàng chưa có lịch sử nhập.");
+                }
                 long p = parseLong(price.getText().toString());
                 JSONObject line = new JSONObject();
                 line.put("item_id", item.optInt("id"));
@@ -738,6 +900,82 @@ public class MainActivity extends Activity {
             }
         }));
         dialog.show();
+    }
+
+    private Long suggestedPurchasePrice(
+            JSONObject item,
+            JSONObject purchaseDefault,
+            JSONObject stock,
+            int unitId) {
+        if (purchaseDefault != null) {
+            JSONArray prices = purchaseDefault.optJSONArray("unit_prices");
+            if (prices == null) return null;
+            for (int i = 0; i < prices.length(); i++) {
+                JSONObject row = prices.optJSONObject(i);
+                if (row != null && row.optInt("unit_id") == unitId
+                        && row.has("suggested_unit_price")
+                        && !row.isNull("suggested_unit_price")) {
+                    return row.optLong("suggested_unit_price");
+                }
+            }
+            return null; // Real lack of history, not stale inventory cache.
+        }
+        // Compatibility with an old local cache before the first new sync.
+        return suggestedPurchasePrice(item, stock, unitId);
+    }
+
+    private String purchasePriceHint(
+            JSONObject stock,
+            JSONObject purchaseDefault,
+            Long suggested,
+            String unitName) {
+        String msg = stock == null
+                ? "Chưa có dữ liệu tồn"
+                : "Tồn trước: " +
+                  trimNumber(stock.optDouble("stock_quantity", 0)) + " " +
+                  stock.optString("smallest_unit_name");
+        if (suggested == null) {
+            return msg + (purchaseDefault == null
+                    ? " • Bấm Đồng bộ để tải giá nhập gần nhất"
+                    : " • Chưa có giá nhập gần nhất, hãy nhập tay");
+        }
+        msg += " • Giá nhập gần nhất: " + MONEY.format(suggested) + " đ / " + unitName;
+        if (purchaseDefault != null) {
+            String receipt = purchaseDefault.optString("last_purchase_receipt_code", "");
+            if (!receipt.isEmpty()) msg += " (" + receipt + ")";
+        } else {
+            msg += " • Cần đồng bộ giá mới";
+        }
+        return msg;
+    }
+
+    private Long suggestedPurchasePrice(JSONObject item, JSONObject stock, int unitId) {
+        if (stock == null || stock.isNull("last_purchase_unit_price")
+                || !stock.has("last_purchase_unit_price")) return null;
+
+        if (stock.optInt("last_purchase_unit_id", -1) == unitId) {
+            return stock.optLong("last_purchase_unit_price");
+        }
+
+        // Normalize from the saved conversion of the previous purchase and
+        // convert to the CURRENT conversion of the selected item/unit.
+        if (stock.isNull("last_purchase_price_per_smallest_unit")
+                || !stock.has("last_purchase_price_per_smallest_unit")) return null;
+        double smallestUnitPrice = stock.optDouble("last_purchase_price_per_smallest_unit", Double.NaN);
+        JSONArray conversions = item.optJSONArray("conversions");
+        if (conversions == null) return null;
+        for (int i = 0; i < conversions.length(); i++) {
+            JSONObject conversion = conversions.optJSONObject(i);
+            if (conversion == null || !conversion.optBoolean("is_active", true)
+                    || conversion.optInt("unit_id") != unitId) continue;
+            double factor = conversion.optDouble("quantity_in_smallest_unit", 0);
+            double suggested = smallestUnitPrice * factor;
+            if (!Double.isFinite(suggested) || suggested < 0 || suggested > Long.MAX_VALUE) {
+                return null;
+            }
+            return Math.round(suggested);
+        }
+        return null;
     }
 
     private JSONObject findFixedMarketFund(JSONArray funds, String type) {
