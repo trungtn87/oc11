@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AutoComplete,
   Button,
   Input,
   InputNumber,
@@ -12,14 +13,19 @@ import {
   createSaleOrder,
   createSurchargePreset,
   getFundAccounts,
+  getInstalledPrinters,
   getMenuItems,
   getRestaurantAreas,
   getRestaurantTables,
   getSaleOrder,
   getSaleOrders,
   getSurchargePresets,
+  getPosSettings,
   paySaleOrder,
+  printSaleOrderReceipt,
   sendSaleOrderToKitchen,
+  testPosPrinter,
+  updatePosSettings,
   updateSaleOrder
 } from "./api";
 import type {
@@ -27,6 +33,9 @@ import type {
   FundAccountType,
   MenuItem,
   MenuItemOption,
+  PosSettings,
+  PrinterRole,
+  PrinterTarget,
   RestaurantArea,
   RestaurantTable,
   SaleOrder,
@@ -99,6 +108,17 @@ export default function PosApp() {
   const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [printerModalOpen, setPrinterModalOpen] = useState(false);
+  const [printerLoading, setPrinterLoading] = useState(false);
+  const [printerSaving, setPrinterSaving] = useState(false);
+  const [printerTesting, setPrinterTesting] = useState<PrinterRole | null>(null);
+  const [installedPrinters, setInstalledPrinters] = useState<string[]>([]);
+  const [printerSettings, setPrinterSettings] = useState<PosSettings>({
+    kitchen_printer_name: "",
+    cashier_printer_name: "",
+    send_kitchen_targets: "KITCHEN",
+    print_receipt_targets: "CASHIER"
+  });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingOrder, setEditingOrder] = useState<SaleOrder | null>(null);
@@ -108,6 +128,7 @@ export default function PosApp() {
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [kitchenNote, setKitchenNote] = useState("");
   const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
   const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
   const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
@@ -203,6 +224,7 @@ export default function PosApp() {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
+    setKitchenNote("");
     setSelectedLineKey(null);
     setDirty(false);
     setSearch("");
@@ -243,6 +265,7 @@ export default function PosApp() {
           }))
         }))
       );
+      setKitchenNote("");
       setSelectedLineKey(null);
       setDirty(false);
       setSearch("");
