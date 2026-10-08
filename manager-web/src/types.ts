@@ -178,6 +178,20 @@ export type FundTransactionCategoryInput = {
 };
 
 
+export type ItemPurchaseDefault = {
+  item_id: number;
+  default_unit_id: number;
+  last_purchase_time: string | null;
+  last_purchase_receipt_code: string | null;
+  last_purchase_unit_id: number | null;
+  last_purchase_unit_price: number | null;
+  unit_prices: Array<{
+    unit_id: number;
+    unit_name: string;
+    suggested_unit_price: number;
+  }>;
+};
+
 export type PurchasePaymentStatus = "PAID" | "DEBT";
 
 export type PurchaseReceiptItem = {
@@ -225,6 +239,7 @@ export type PurchaseReceipt = {
 };
 
 export type PurchaseReceiptInput = {
+  client_sync_id?: string | null;
   supplier_id: number;
   receipt_time: string;
   description?: string | null;
