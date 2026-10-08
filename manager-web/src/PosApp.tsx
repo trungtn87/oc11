@@ -773,7 +773,7 @@ export default function PosApp() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-            <div className="pos-menu-grid">
+            <div className="pos-menu-grid" ref={menuGridRef}>
               {filteredMenu.map((item) => {
                 const activeOptions = item.options.filter((option) => option.is_active);
                 return (
@@ -795,6 +795,16 @@ export default function PosApp() {
               {!filteredMenu.length && (
                 <div className="pos-empty">Không có món phù hợp.</div>
               )}
+            </div>
+            <div className="pos-menu-scroll-controls">
+              <button type="button" aria-label="Cuộn danh sách món lên"
+                onClick={() => menuGridRef.current?.scrollBy({ top: -320, behavior: "smooth" })}>
+                ▲ Lên
+              </button>
+              <button type="button" aria-label="Cuộn danh sách món xuống"
+                onClick={() => menuGridRef.current?.scrollBy({ top: 320, behavior: "smooth" })}>
+                ▼ Xuống
+              </button>
             </div>
           </section>
 
@@ -820,60 +830,69 @@ export default function PosApp() {
               <b>Thành tiền</b>
             </div>
             <div className="pos-cart-lines">
-              {cart.map((line) => (
-                <div className="pos-cart-line" key={line.key}>
-                  <div className="pos-line-name">
-                    <strong>{line.name}</strong>
-                    {line.optionName && <em>+ {line.optionName}</em>}
-                    {line.surcharges.map((extra, index) => (
-                      <small key={index}>+ {extra.name}</small>
-                    ))}
-                    {line.note && <small className="pos-line-note">{line.note}</small>}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNoteLineKey(line.key);
-                        setNoteDraft(line.note);
-                      }}
-                    >
-                      {line.note ? "Sửa ghi chú" : "+ Ghi chú"}
-                    </button>
+              {cart.map((line) => {
+                const expanded = selectedLineKey === line.key;
+                return (
+                  <div className={`pos-cart-line${expanded ? " expanded" : ""}`} key={line.key}>
+                    <div className="pos-line-name">
+                      <button
+                        type="button"
+                        className="pos-line-toggle"
+                        aria-expanded={expanded}
+                        onClick={() => setSelectedLineKey((current) =>
+                          current === line.key ? null : line.key
+                        )}
+                      >
+                        <strong>{line.name}</strong>
+                        {line.optionName && <em>+ {line.optionName}</em>}
+                      </button>
+                      {expanded && (
+                        <div className="pos-line-details">
+                          {line.surcharges.map((extra, index) => (
+                            <div className="pos-line-extra" key={index}>
+                              <span>+ {extra.name}: {money(extra.amount)} đ</span>
+                              <button
+                                type="button"
+                                aria-label={`Bỏ phụ thu ${extra.name}`}
+                                onClick={() => removeLineSurcharge(line.key, index)}
+                              >×</button>
+                            </div>
+                          ))}
+                          {line.note && <small className="pos-line-note">{line.note}</small>}
+                          <div className="pos-line-tools">
+                            <button type="button" onClick={() => openSurcharge(line.key)}>
+                              + Phụ thu
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNoteLineKey(line.key);
+                                setNoteDraft(line.note);
+                              }}
+                            >
+                              {line.note ? "Sửa ghi chú" : "+ Ghi chú"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="pos-line-qty">
+                      <button type="button" aria-label="Giảm số lượng"
+                        onClick={() => updateQuantity(line.key, line.quantity - 1)}>−</button>
+                      <InputNumber<number> min={0.01} step={1} value={line.quantity}
+                        onChange={(value) => {
+                          if (value !== null) updateQuantity(line.key, value);
+                        }}
+                      />
+                      <button type="button" aria-label="Tăng số lượng"
+                        onClick={() => updateQuantity(line.key, line.quantity + 1)}>+</button>
+                    </div>
+                    <strong>{money(rowTotal(line))}</strong>
+                    <button type="button" className="pos-line-remove" title="Bỏ món"
+                      onClick={() => updateQuantity(line.key, 0)}>×</button>
                   </div>
-                  <div className="pos-line-qty">
-                    <button
-                      type="button"
-                      aria-label="Giảm số lượng"
-                      onClick={() => updateQuantity(line.key, line.quantity - 1)}
-                    >
-                      −
-                    </button>
-                    <InputNumber<number>
-                      min={0.01}
-                      step={1}
-                      value={line.quantity}
-                      onChange={(value) => {
-                        if (value !== null) updateQuantity(line.key, value);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Tăng số lượng"
-                      onClick={() => updateQuantity(line.key, line.quantity + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                  <strong>{money(rowTotal(line))}</strong>
-                  <button
-                    type="button"
-                    className="pos-line-remove"
-                    title="Bỏ món"
-                    onClick={() => updateQuantity(line.key, 0)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                );
+              })}
               {!cart.length && (
                 <div className="pos-empty">
                   Chọn món ở phần thực đơn bên trái để lập Order.
@@ -881,26 +900,18 @@ export default function PosApp() {
               )}
             </div>
             <div className="pos-cart-bottom">
-              <div className="pos-order-hint">
-                Order được lưu vào bàn; chưa thanh toán hoặc gửi bếp ở bước này.
-              </div>
               <div className="pos-total">
                 <span>Tổng tiền</span>
                 <strong>{money(total)} đ</strong>
               </div>
               <div className="pos-create-actions">
-                <Button size="large" onClick={backToMap} disabled={busy}>
-                  Quay về sơ đồ
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  className="pos-save-order"
-                  loading={busy}
-                  onClick={() => void saveOrder()}
-                >
-                  Lưu Order
-                </Button>
+                <Button className="pos-kitchen-button" disabled={busy || !cart.length}
+                  loading={busy} onClick={sendKitchen}>Gửi bếp</Button>
+                <Button danger disabled={busy} onClick={backToMap}>Huỷ</Button>
+                <Button className="pos-save-order" disabled={!cart.length} loading={busy}
+                  onClick={() => void saveOrder()}>Lưu</Button>
+                <Button className="pos-pay-button" type="primary" disabled={!cart.length || busy}
+                  onClick={openPayment}>Tính tiền</Button>
               </div>
             </div>
           </section>
