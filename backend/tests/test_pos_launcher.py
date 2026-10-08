@@ -72,3 +72,16 @@ def test_pos_requires_paired_backend_executable(tmp_path, monkeypatch):
     monkeypatch.setattr(pos_launcher, "notify_error", errors.append)
     assert pos_launcher.ensure_server() is False
     assert "OC11.exe" in errors[0]
+
+
+def test_pos_url_changes_with_paired_backend_build(tmp_path, monkeypatch):
+    server = tmp_path / "OC11.exe"
+    server.write_bytes(b"new")
+    monkeypatch.setattr(pos_launcher, "root_dir", lambda: tmp_path)
+    url_before = pos_launcher.pos_url_with_build()
+    assert url_before.startswith("http://127.0.0.1:8000/?mode=pos&v=")
+    server.write_bytes(b"another")
+    import os
+    os.utime(server, ns=(server.stat().st_atime_ns, server.stat().st_mtime_ns + 1_000_000))
+    url_after = pos_launcher.pos_url_with_build()
+    assert url_after != url_before
