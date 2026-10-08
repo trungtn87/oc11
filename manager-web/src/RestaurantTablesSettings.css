@@ -1,0 +1,142 @@
+.table-layout-card .ant-card-body {
+  padding: 14px;
+}
+
+.table-layout-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.table-area-tabs,
+.table-create-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-create-tools .ant-input-number {
+  width: 74px;
+}
+
+.table-layout-hint {
+  margin: 4px 0 10px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.table-layout-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 590px;
+  border: 1px solid #cfd7df;
+  background:
+    linear-gradient(#edf1f4 1px, transparent 1px),
+    linear-gradient(90deg, #edf1f4 1px, transparent 1px),
+    #fff;
+  background-size: 24px 24px;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+}
+
+.layout-table {
+  position: absolute;
+  width: 138px;
+  height: 94px;
+  border-radius: 6px;
+  background: #1387c4;
+  color: #fff;
+  box-shadow: 0 3px 7px rgba(0, 0, 0, .18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+
+.layout-table:active {
+  cursor: grabbing;
+}
+
+.layout-table.inactive {
+  background: #9aa0a6;
+  opacity: .78;
+}
+
+.layout-table-icon {
+  font-size: 25px;
+  line-height: 1;
+  margin-bottom: 5px;
+}
+
+.layout-table-name {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  max-width: 106px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.layout-table .ant-input {
+  width: 104px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.layout-table-toggle,
+.layout-table-edit {
+  position: absolute;
+  border: 0;
+  background: rgba(255, 255, 255, .18);
+  color: #fff;
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 22px;
+  padding: 0;
+}
+
+.layout-table-toggle {
+  left: 5px;
+  top: 5px;
+  font-size: 11px;
+}
+
+.layout-table-edit {
+  right: 5px;
+  top: 5px;
+  font-size: 15px;
+}
+
+.layout-table-toggle:hover,
+.layout-table-edit:hover {
+  background: rgba(255, 255, 255, .32);
+}
+
+.layout-table-status {
+  position: absolute;
+  bottom: 4px;
+  font-size: 10px;
+  opacity: .9;
+}
+
+.table-layout-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #7b8794;
+  pointer-events: none;
+}
