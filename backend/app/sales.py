@@ -48,6 +48,7 @@ class SalePaymentInput(BaseModel):
     fund_account_id: int | None = None
     actual_received_amount: int | None = Field(default=None, ge=0)
     payment_method: Literal["CASH", "BANK", "DEBT"] | None = None
+    expected_total_amount: int | None = Field(default=None, ge=0)
     customer_id: int | None = None
     request_einvoice: bool = False
 
@@ -1366,6 +1367,12 @@ def pay_order(order_id: int, payload: SalePaymentInput) -> SaleOrderOutput:
         order = select_order(connection, order_id)
         if order is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if (payload.expected_total_amount is not None and
+                payload.expected_total_amount != int(order["total_amount"])):
+            raise HTTPException(
+                status_code=409,
+                detail="Tổng tiền Order đã thay đổi. Tải lại đơn trước khi thanh toán.",
+            )
         existing_debt = order["status"] == "PAID" and order["settlement_status"] == "DEBT"
         if order["status"] != "OPEN" and not existing_debt:
             raise HTTPException(
