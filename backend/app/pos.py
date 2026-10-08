@@ -795,14 +795,16 @@ def send_order_to_kitchen(
                     detail="Chỉ gửi bếp với Order đang phục vụ.",
                 )
 
-            # Finish a partially printed batch before allocating new quantities.
-            # Unlike legacy FAILED tickets, new tickets track both destinations.
+            # Retry only a partially printed batch. If neither printer succeeded,
+            # make a fresh snapshot from the current order instead, so an edit
+            # cannot accidentally send a stale failed ticket to the kitchen.
             retry = connection.execute(
                 """
                 SELECT * FROM kitchen_tickets
                 WHERE sales_order_id = ? AND print_status = 'FAILED'
                   AND kitchen_print_ok IS NOT NULL
                   AND check_print_ok IS NOT NULL
+                  AND (kitchen_print_ok = 1 OR check_print_ok = 1)
                 ORDER BY id LIMIT 1
                 """, (order_id,),
             ).fetchone()
