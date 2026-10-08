@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AutoComplete,
   Button,
   Input,
   InputNumber,
@@ -12,14 +13,19 @@ import {
   createSaleOrder,
   createSurchargePreset,
   getFundAccounts,
+  getInstalledPrinters,
   getMenuItems,
   getRestaurantAreas,
   getRestaurantTables,
   getSaleOrder,
   getSaleOrders,
   getSurchargePresets,
+  getPosSettings,
   paySaleOrder,
+  printSaleOrderReceipt,
   sendSaleOrderToKitchen,
+  testPosPrinter,
+  updatePosSettings,
   updateSaleOrder
 } from "./api";
 import type {
@@ -27,6 +33,9 @@ import type {
   FundAccountType,
   MenuItem,
   MenuItemOption,
+  PosSettings,
+  PrinterRole,
+  PrinterTarget,
   RestaurantArea,
   RestaurantTable,
   SaleOrder,
@@ -99,6 +108,17 @@ export default function PosApp() {
   const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [printerModalOpen, setPrinterModalOpen] = useState(false);
+  const [printerLoading, setPrinterLoading] = useState(false);
+  const [printerSaving, setPrinterSaving] = useState(false);
+  const [printerTesting, setPrinterTesting] = useState<PrinterRole | null>(null);
+  const [installedPrinters, setInstalledPrinters] = useState<string[]>([]);
+  const [printerSettings, setPrinterSettings] = useState<PosSettings>({
+    kitchen_printer_name: "",
+    cashier_printer_name: "",
+    send_kitchen_targets: "KITCHEN",
+    print_receipt_targets: "CASHIER"
+  });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingOrder, setEditingOrder] = useState<SaleOrder | null>(null);
@@ -108,6 +128,9 @@ export default function PosApp() {
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [kitchenNote, setKitchenNote] = useState("");
+  const kitchenNoteDrafts = useRef<Map<number, string>>(new Map());
+  const partialKitchenPrints = useRef<Set<number>>(new Set());
   const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
   const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
   const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
@@ -199,10 +222,19 @@ export default function PosApp() {
 
   const selectedTable = tables.find((table) => table.id === tableId);
 
+  function changeKitchenNote(value: string) {
+    setKitchenNote(value);
+    if (tableId !== null) {
+      if (value.trim()) kitchenNoteDrafts.current.set(tableId, value);
+      else kitchenNoteDrafts.current.delete(tableId);
+    }
+  }
+
   function newOrder(table: RestaurantTable) {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
+    setKitchenNote(kitchenNoteDrafts.current.get(table.id) ?? "");
     setSelectedLineKey(null);
     setDirty(false);
     setSearch("");
@@ -243,6 +275,7 @@ export default function PosApp() {
           }))
         }))
       );
+      setKitchenNote(order.table_id === null ? "" : kitchenNoteDrafts.current.get(order.table_id) ?? "");
       setSelectedLineKey(null);
       setDirty(false);
       setSearch("");
@@ -461,20 +494,76 @@ export default function PosApp() {
     }
   }
 
+  async function openPrinterConfig() {
+    setMenuOpen(false);
+    setPrinterModalOpen(true);
+    setPrinterLoading(true);
+    try {
+      const [settings, printers] = await Promise.all([
+        getPosSettings(), getInstalledPrinters()
+      ]);
+      setPrinterSettings(settings);
+      setInstalledPrinters(printers);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không đọc được cấu hình máy in.");
+    } finally {
+      setPrinterLoading(false);
+    }
+  }
+
+  async function savePrinterConfig() {
+    setPrinterSaving(true);
+    try {
+      const saved = await updatePosSettings(printerSettings);
+      setPrinterSettings(saved);
+      messageApi.success("Đã lưu cấu hình máy in cho cả hai chức năng.");
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được máy in.");
+    } finally {
+      setPrinterSaving(false);
+    }
+  }
+
+  async function testPrinter(role: PrinterRole) {
+    setPrinterTesting(role);
+    try {
+      const result = await testPosPrinter(role);
+      if (result.ok) {
+        messageApi.success("Đã gửi phiếu in thử đến " + (result.printer_name ?? "máy in") + ".");
+      } else {
+        messageApi.error(result.error ?? "Máy in thử không thành công.");
+      }
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không in thử được.");
+    } finally {
+      setPrinterTesting(null);
+    }
+  }
+
   async function performSendKitchen() {
     const saved = await saveOrder(false);
     if (!saved) return;
     setBusy(true);
+    const noteForThisPrint = kitchenNote;
     try {
-      const ticket = await sendSaleOrderToKitchen(saved.id);
+      const ticket = await sendSaleOrderToKitchen(saved.id, noteForThisPrint);
       if (ticket.print_status !== "PRINTED") {
+        if (ticket.printer_results.some((result) => result.ok) && saved.table_id !== null) {
+          partialKitchenPrints.current.add(saved.table_id);
+        }
         messageApi.error(
-          `Order đã lưu nhưng gửi bếp thất bại: ${ticket.error_message || "Kiểm tra máy in bếp."}`
+          "Order đã lưu nhưng chưa in đủ phiếu: " +
+          (ticket.error_message || "Kiểm tra cấu hình máy in.")
         );
         return;
       }
+      setKitchenNote("");
+      if (saved.table_id !== null) {
+        kitchenNoteDrafts.current.delete(saved.table_id);
+        partialKitchenPrints.current.delete(saved.table_id);
+      }
       setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
-      messageApi.success(`Đã gửi bếp ${saved.order_code}.`);
+      messageApi.success("Đã gửi bếp " + saved.order_code + ".");
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
     } finally {
@@ -484,10 +573,10 @@ export default function PosApp() {
 
   function sendKitchen() {
     if (busy) return;
-    if (editingOrder?.kitchen_sent_at) {
+    if (editingOrder?.kitchen_sent_at || (tableId !== null && partialKitchenPrints.current.has(tableId))) {
       Modal.confirm({
         title: "Gửi lại toàn bộ Order tới bếp?",
-        content: "Phiếu bếp sẽ in lại TẤT CẢ món, kể cả món đã gửi trước đó.",
+        content: "Các máy in được chọn sẽ in lại toàn bộ món. Nếu một máy đã in thành công trước đó, máy ấy có thể nhận phiếu trùng.",
         okText: "Gửi lại",
         cancelText: "Không",
         onOk: () => performSendKitchen()
@@ -495,6 +584,28 @@ export default function PosApp() {
     } else {
       void performSendKitchen();
     }
+  }
+
+  async function tryPrintPaidReceipt(orderId: number) {
+    let failure: string | null = null;
+    try {
+      const result = await printSaleOrderReceipt(orderId);
+      if (result.print_status === "PRINTED") {
+        messageApi.success("Đã in phiếu thanh toán.");
+        return;
+      }
+      failure = result.error_message ?? "Một số máy in không nhận được phiếu.";
+    } catch (error) {
+      failure = error instanceof Error ? error.message : "Lỗi in phiếu thanh toán.";
+    }
+    // Never attempt payment again when only the printer failed.
+    Modal.confirm({
+      title: "Đơn đã thanh toán, nhưng in phiếu chưa thành công",
+      content: failure,
+      okText: "Thử in lại",
+      cancelText: "Để sau",
+      onOk: () => tryPrintPaidReceipt(orderId)
+    });
   }
 
   function openPayment() {
@@ -531,6 +642,11 @@ export default function PosApp() {
         actual_received_amount: Math.round(paymentAmount)
       });
       setPaymentOpen(false);
+      if (tableId !== null) {
+        kitchenNoteDrafts.current.delete(tableId);
+        partialKitchenPrints.current.delete(tableId);
+      }
+      setKitchenNote("");
       setEditingOrder(null);
       setCart([]);
       setTableId(null);
@@ -541,6 +657,7 @@ export default function PosApp() {
       await refresh().catch(() => messageApi.warning(
         "Đã thanh toán nhưng chưa cập nhật sơ đồ."
       ));
+      await tryPrintPaidReceipt(paid.id);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Thanh toán thất bại.");
     } finally {
@@ -612,6 +729,9 @@ export default function PosApp() {
           </button>
           {menuOpen && (
             <div className="pos-menu-popup">
+              <button type="button" onClick={() => void openPrinterConfig()}>
+                ⚙ Cài đặt máy in
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -900,6 +1020,17 @@ export default function PosApp() {
               )}
             </div>
             <div className="pos-cart-bottom">
+              <div className="pos-kitchen-note">
+                <label htmlFor="pos-kitchen-note">Ghi chú gửi bếp (không lưu vào đơn)</label>
+                <Input.TextArea
+                  id="pos-kitchen-note"
+                  value={kitchenNote}
+                  maxLength={500}
+                  autoSize={{ minRows: 1, maxRows: 2 }}
+                  onChange={(event) => changeKitchenNote(event.target.value)}
+                  placeholder="Ví dụ: bàn cần ra đồ cùng lúc..."
+                />
+              </div>
               <div className="pos-total">
                 <span>Tổng tiền</span>
                 <strong>{money(total)} đ</strong>
@@ -1014,6 +1145,85 @@ export default function PosApp() {
             onChange={(value) => setSurchargeAmount(Number(value ?? 0))}
             style={{ width: "100%" }}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        open={printerModalOpen}
+        title="Cài đặt máy in POS"
+        width={550}
+        onCancel={() => { if (!printerSaving) setPrinterModalOpen(false); }}
+        footer={[
+          <Button key="close" onClick={() => setPrinterModalOpen(false)} disabled={printerSaving}>
+            Đóng
+          </Button>,
+          <Button key="save" type="primary" loading={printerSaving}
+            disabled={printerLoading} onClick={() => void savePrinterConfig()}>
+            Lưu cấu hình
+          </Button>
+        ]}
+      >
+        <div className="pos-printer-settings">
+          <div className="pos-printer-info">Chọn máy in đã cài trên Windows hoặc gõ tên máy in.
+            Lưu cấu hình trước khi in thử.</div>
+          <label>Máy in bếp</label>
+          <div className="pos-printer-picker">
+            <AutoComplete
+              value={printerSettings.kitchen_printer_name}
+              disabled={printerLoading}
+              onChange={(name) => setPrinterSettings((current) =>
+                ({ ...current, kitchen_printer_name: name }))}
+              options={installedPrinters.map((name) => ({ value: name }))}
+              placeholder="Chọn hoặc nhập tên máy in bếp"
+              allowClear
+            />
+            <Button onClick={() => void testPrinter("KITCHEN")}
+              loading={printerTesting === "KITCHEN"} disabled={printerLoading || printerSaving}>
+              In thử
+            </Button>
+          </div>
+          <label>Máy in thu ngân</label>
+          <div className="pos-printer-picker">
+            <AutoComplete
+              value={printerSettings.cashier_printer_name}
+              disabled={printerLoading}
+              onChange={(name) => setPrinterSettings((current) =>
+                ({ ...current, cashier_printer_name: name }))}
+              options={installedPrinters.map((name) => ({ value: name }))}
+              placeholder="Chọn hoặc nhập tên máy in thu ngân"
+              allowClear
+            />
+            <Button onClick={() => void testPrinter("CASHIER")}
+              loading={printerTesting === "CASHIER"} disabled={printerLoading || printerSaving}>
+              In thử
+            </Button>
+          </div>
+          <label>Chức năng Gửi bếp in tại</label>
+          <Select
+            value={printerSettings.send_kitchen_targets}
+            disabled={printerLoading}
+            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
+              ({ ...current, send_kitchen_targets: value }))}
+            options={[
+              { value: "KITCHEN", label: "Chỉ máy in bếp" },
+              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
+              { value: "BOTH", label: "Cả hai máy" }
+            ]}
+          />
+          <label>Chức năng In phiếu thanh toán in tại</label>
+          <Select
+            value={printerSettings.print_receipt_targets}
+            disabled={printerLoading}
+            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
+              ({ ...current, print_receipt_targets: value }))}
+            options={[
+              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
+              { value: "KITCHEN", label: "Chỉ máy in bếp" },
+              { value: "BOTH", label: "Cả hai máy" }
+            ]}
+          />
+          <div className="pos-printer-info">Phiếu thanh toán tự in khi xác nhận Tính tiền.
+            Nếu in lỗi, đơn vẫn được thanh toán và có thể chọn in lại.</div>
         </div>
       </Modal>
 

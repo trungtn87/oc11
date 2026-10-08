@@ -4,13 +4,14 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .backup import backup_database
 from .database import connect
-from .sales import select_item_surcharges, select_order, select_order_items
+from .sales import select_item_surcharges, select_order, select_order_items, select_order_surcharges
 from .settings import load_settings, save_settings
 
 
@@ -52,22 +53,47 @@ class RestaurantTableOutput(RestaurantTableInput):
     guest_count: int = 0
 
 
+PrinterTarget = Literal["KITCHEN", "CASHIER", "BOTH"]
+
+
 class PosSettingsInput(BaseModel):
-    kitchen_printer_name: str | None = Field(default=None, max_length=300)
+    kitchen_printer_name: str | None = Field(default="", max_length=300)
+    cashier_printer_name: str | None = Field(default="", max_length=300)
+    send_kitchen_targets: PrinterTarget = "KITCHEN"
+    print_receipt_targets: PrinterTarget = "CASHIER"
 
 
 class PosSettingsOutput(BaseModel):
     kitchen_printer_name: str
+    cashier_printer_name: str
+    send_kitchen_targets: PrinterTarget
+    print_receipt_targets: PrinterTarget
 
 
-class KitchenSendOutput(BaseModel):
-    ticket_id: int
+class PrintDestinationResult(BaseModel):
+    role: Literal["KITCHEN", "CASHIER"]
+    printer_name: str | None
+    ok: bool
+    error: str | None = None
+
+
+class KitchenSendInput(BaseModel):
+    # Print-only: never write to orders, kitchen ticket JSON, logs or settings.
+    temporary_note: str = Field(default="", max_length=500)
+
+
+class PrintDispatchOutput(BaseModel):
     order_id: int
     order_code: str
+    print_status: Literal["PRINTED", "FAILED"]
+    error_message: str | None
+    printer_results: list[PrintDestinationResult]
+
+
+class KitchenSendOutput(PrintDispatchOutput):
+    ticket_id: int
     sent_at: str
     printer_name: str | None
-    print_status: str
-    error_message: str | None
 
 
 def clean_name(value: str) -> str:
@@ -473,20 +499,33 @@ def list_printers() -> list[str]:
     return get_installed_printers()
 
 
+def pos_settings_output(settings: dict) -> PosSettingsOutput:
+    def target(key: str, default: PrinterTarget) -> PrinterTarget:
+        value = settings.get(key)
+        return value if value in ("KITCHEN", "CASHIER", "BOTH") else default
+
+    return PosSettingsOutput(
+        kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
+        cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
+        send_kitchen_targets=target("send_kitchen_targets", "KITCHEN"),
+        print_receipt_targets=target("print_receipt_targets", "CASHIER"),
+    )
+
+
 @router.get("/settings", response_model=PosSettingsOutput)
 def get_pos_settings() -> PosSettingsOutput:
-    settings = load_settings()
-    return PosSettingsOutput(
-        kitchen_printer_name=str(settings.get("kitchen_printer_name") or "")
-    )
+    return pos_settings_output(load_settings())
 
 
 @router.put("/settings", response_model=PosSettingsOutput)
 def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings = load_settings()
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
+    settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
+    settings["send_kitchen_targets"] = payload.send_kitchen_targets
+    settings["print_receipt_targets"] = payload.print_receipt_targets
     save_settings(settings)
-    return PosSettingsOutput(kitchen_printer_name=settings["kitchen_printer_name"])
+    return pos_settings_output(settings)
 
 
 def powershell_quote(value: str) -> str:
@@ -536,7 +575,7 @@ def format_quantity(value: float) -> str:
     return f"{value:g}"
 
 
-def build_kitchen_ticket(connection, order) -> tuple[str, dict]:
+def build_kitchen_ticket(connection, order, temporary_note: str = "") -> tuple[str, dict]:
     lines = select_order_items(connection, int(order["id"]))
     payload_items = []
     text_lines = [
@@ -579,6 +618,8 @@ def build_kitchen_ticket(connection, order) -> tuple[str, dict]:
 
     if order["note"]:
         text_lines.extend(["-" * 36, f"Ghi chú đơn: {order['note']}"])
+    if temporary_note.strip():
+        text_lines.extend(["-" * 36, "GHI CHÚ GỬI BẾP:", temporary_note.strip()])
     text_lines.extend(["=" * 36, "", "", ""])
     payload = {
         "order_id": int(order["id"]),
@@ -593,37 +634,127 @@ def build_kitchen_ticket(connection, order) -> tuple[str, dict]:
     return "\r\n".join(text_lines), payload
 
 
+def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: str):
+    roles = ["KITCHEN", "CASHIER"] if target == "BOTH" else [target]
+    results: list[PrintDestinationResult] = []
+    attempted: dict[str, PrintDestinationResult] = {}
+    for role in roles:
+        name = (
+            settings.kitchen_printer_name
+            if role == "KITCHEN" else settings.cashier_printer_name
+        ).strip()
+        if name and name.casefold() in attempted:
+            previous = attempted[name.casefold()]
+            results.append(PrintDestinationResult(
+                role=role, printer_name=name, ok=previous.ok, error=previous.error
+            ))
+            continue
+        if not name:
+            outcome = PrintDestinationResult(
+                role=role, printer_name=None, ok=False,
+                error=f"Chưa cấu hình máy in {'bếp' if role == 'KITCHEN' else 'thu ngân'}.",
+            )
+        else:
+            ok, error = print_text(name, content)
+            outcome = PrintDestinationResult(
+                role=role, printer_name=name, ok=ok, error=error
+            )
+            attempted[name.casefold()] = outcome
+        results.append(outcome)
+    failures = [
+        f"{'Bếp' if result.role == 'KITCHEN' else 'Thu ngân'}: {result.error or 'In lỗi'}"
+        for result in results if not result.ok
+    ]
+    return (
+        "FAILED" if failures else "PRINTED",
+        "; ".join(failures) if failures else None,
+        results,
+    )
+
+
+def build_cashier_receipt(connection, order) -> str:
+    text_lines = [
+        "ỐC 11 - PHIẾU THANH TOÁN",
+        "=" * 36,
+        f"Mã đơn: {order['order_code']}",
+    ]
+    if order["order_type"] == "DINE_IN":
+        text_lines.append(f"Bàn: {order['area_name'] or ''} / {order['table_name'] or ''}")
+    text_lines.extend([
+        f"Thời gian: {order['paid_at'] or order['order_time']}",
+        "-" * 36,
+    ])
+    for line in select_order_items(connection, int(order["id"])):
+        text_lines.append(
+            f"{format_quantity(float(line['quantity']))} x {line['item_name_snapshot']}"
+        )
+        if line["option_name_snapshot"]:
+            text_lines.append(f"  + {line['option_name_snapshot']}")
+        text_lines.append(f"  Thành tiền: {int(line['line_total']):,} đ")
+        for extra in select_item_surcharges(connection, int(line["id"])):
+            text_lines.append(f"  + {extra['name']}: {int(extra['amount']):,} đ")
+    for extra in select_order_surcharges(connection, int(order["id"])):
+        text_lines.append(f"Phụ thu {extra['name']}: {int(extra['amount']):,} đ")
+    text_lines.extend([
+        "-" * 36,
+        f"TỔNG TIỀN: {int(order['total_amount']):,} đ",
+        f"THỰC THU: {int(order['actual_received_amount'] or 0):,} đ",
+        "=" * 36,
+        "Cảm ơn quý khách!",
+        "", "", "",
+    ])
+    return "\r\n".join(text_lines)
+
+
 @router.post("/printer/test")
-def test_kitchen_printer() -> dict[str, str | bool | None]:
-    printer_name = str(load_settings().get("kitchen_printer_name") or "").strip()
+def test_kitchen_printer(
+    role: Literal["KITCHEN", "CASHIER"] = Query(default="KITCHEN"),
+) -> dict[str, str | bool | None]:
+    settings = pos_settings_output(load_settings())
+    printer_name = (
+        settings.kitchen_printer_name
+        if role == "KITCHEN" else settings.cashier_printer_name
+    )
+    label = "BẾP" if role == "KITCHEN" else "THU NGÂN"
     content = (
-        "ỐC 11 - TEST MÁY IN BẾP\r\n"
+        f"ỐC 11 - TEST MÁY IN {label}\r\n"
         "============================\r\n"
         f"{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\r\n"
         "Nếu đọc được phiếu này, máy in đã sẵn sàng.\r\n\r\n"
     )
+    if not printer_name:
+        return {"ok": False, "printer_name": None, "error": f"Chưa cấu hình máy in {label}."}
     ok, error = print_text(printer_name, content)
     return {"ok": ok, "printer_name": printer_name or None, "error": error}
 
 
 @router.post("/orders/{order_id}/send-kitchen", response_model=KitchenSendOutput)
-def send_order_to_kitchen(order_id: int) -> KitchenSendOutput:
+def send_order_to_kitchen(
+    order_id: int, payload: KitchenSendInput | None = None,
+) -> KitchenSendOutput:
     sent_at = datetime.now().isoformat(timespec="microseconds")
-    printer_name = str(load_settings().get("kitchen_printer_name") or "").strip()
+    settings = pos_settings_output(load_settings())
+    temporary_note = payload.temporary_note if payload else ""
 
     with connect() as connection:
         order = select_order(connection, order_id)
         if order is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
-        if order["status"] == "VOID":
+        if order["status"] != "OPEN":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Đơn đã hủy nên không thể gửi bếp.",
+                detail="Chỉ gửi bếp với Order đang phục vụ.",
             )
 
-        content, payload = build_kitchen_ticket(connection, order)
-        ok, error = print_text(printer_name, content)
-        print_status = "PRINTED" if ok else "FAILED"
+        content, persistent_payload = build_kitchen_ticket(
+            connection, order, temporary_note=temporary_note
+        )
+        print_status, error, results = dispatch_print(
+            settings, settings.send_kitchen_targets, content
+        )
+        printer_names = list(dict.fromkeys(
+            result.printer_name for result in results if result.printer_name
+        ))
         cursor = connection.execute(
             """
             INSERT INTO kitchen_tickets (
@@ -633,11 +764,12 @@ def send_order_to_kitchen(order_id: int) -> KitchenSendOutput:
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                order_id, sent_at, printer_name or None, print_status, error,
-                json.dumps(payload, ensure_ascii=False),
+                order_id, sent_at, ", ".join(printer_names) or None,
+                print_status, error,
+                json.dumps(persistent_payload, ensure_ascii=False),
             ),
         )
-        if ok:
+        if print_status == "PRINTED":
             connection.execute(
                 """
                 UPDATE sales_orders
@@ -647,16 +779,40 @@ def send_order_to_kitchen(order_id: int) -> KitchenSendOutput:
                 (sent_at, order_id),
             )
         connection.commit()
-
         result = KitchenSendOutput(
             ticket_id=int(cursor.lastrowid),
             order_id=order_id,
             order_code=order["order_code"],
             sent_at=sent_at,
-            printer_name=printer_name or None,
+            printer_name=", ".join(printer_names) or None,
             print_status=print_status,
             error_message=error,
+            printer_results=results,
         )
-
     backup_database(reason="kitchen-ticket")
     return result
+
+
+@router.post("/orders/{order_id}/print-receipt", response_model=PrintDispatchOutput)
+def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
+    settings = pos_settings_output(load_settings())
+    with connect() as connection:
+        order = select_order(connection, order_id)
+        if order is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if order["status"] != "PAID":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Chỉ in phiếu thanh toán cho đơn đã thanh toán.",
+            )
+        content = build_cashier_receipt(connection, order)
+        print_status, error, results = dispatch_print(
+            settings, settings.print_receipt_targets, content
+        )
+        return PrintDispatchOutput(
+            order_id=order_id,
+            order_code=order["order_code"],
+            print_status=print_status,
+            error_message=error,
+            printer_results=results,
+        )

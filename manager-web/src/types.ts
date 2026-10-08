@@ -670,18 +670,35 @@ export type RestaurantTableInput = {
   is_active: boolean;
 };
 
+export type PrinterRole = "KITCHEN" | "CASHIER";
+export type PrinterTarget = PrinterRole | "BOTH";
+
 export type PosSettings = {
   kitchen_printer_name: string;
+  cashier_printer_name: string;
+  send_kitchen_targets: PrinterTarget;
+  print_receipt_targets: PrinterTarget;
 };
 
-export type KitchenSendResult = {
-  ticket_id: number;
+export type PrintDestinationResult = {
+  role: PrinterRole;
+  printer_name: string | null;
+  ok: boolean;
+  error: string | null;
+};
+
+export type PosPrintResult = {
   order_id: number;
   order_code: string;
-  sent_at: string;
-  printer_name: string | null;
   print_status: "PRINTED" | "FAILED";
   error_message: string | null;
+  printer_results: PrintDestinationResult[];
+};
+
+export type KitchenSendResult = PosPrintResult & {
+  ticket_id: number;
+  sent_at: string;
+  printer_name: string | null;
 };
 
 export type SaleOrderStatus = "OPEN" | "PAID" | "VOID";

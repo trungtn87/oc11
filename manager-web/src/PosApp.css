@@ -710,3 +710,50 @@
   .pos-create-actions { gap: 4px; padding: 6px; }
   .pos-create-actions button { font-size: 12px; }
 }
+
+/* Dual printer routing and transient kitchen note */
+.pos-kitchen-note {
+  padding: 8px 12px 2px;
+  background: #f7fafd;
+  border-top: 1px solid #dbe7ef;
+}
+.pos-kitchen-note label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 13px;
+  color: #276488;
+  font-weight: 700;
+}
+.pos-kitchen-note .ant-input {
+  resize: none;
+}
+.pos-printer-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.pos-printer-settings > label {
+  font-size: 14px;
+  margin-top: 9px;
+  font-weight: 700;
+}
+.pos-printer-settings > .ant-select {
+  width: 100%;
+}
+.pos-printer-picker {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.pos-printer-picker .ant-select {
+  flex: 1;
+  min-width: 0;
+}
+.pos-printer-picker .ant-btn {
+  min-width: 85px;
+}
+.pos-printer-info {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.5;
+}
