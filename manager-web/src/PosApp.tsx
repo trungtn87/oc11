@@ -347,24 +347,77 @@ export default function PosApp() {
     void refresh();
   }
 
-  async function saveOrder() {
-    if (busy) return;
+  function openSurcharge(key: string) {
+    setSurchargeLineKey(key);
+    setSurchargePresetId(undefined);
+    setSurchargeName("");
+    setSurchargeAmount(0);
+  }
+
+  async function addLineSurcharge() {
+    const name = surchargeName.trim();
+    const amount = Math.round(Number(surchargeAmount));
+    if (!surchargeLineKey || !cart.some((line) => line.key === surchargeLineKey)) {
+      messageApi.warning("Món này không còn trong Order.");
+      return;
+    }
+    if (!name || name.length > 120 || !Number.isFinite(amount) || amount <= 0) {
+      messageApi.warning("Nhập tên phụ thu và số tiền lớn hơn 0.");
+      return;
+    }
+    setSurchargeSaving(true);
+    try {
+      const known = surchargePresets.some(
+        (preset) => preset.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+      );
+      if (!known) {
+        const preset = await createSurchargePreset({ name, amount });
+        setSurchargePresets((current) => [...current, preset].sort(
+          (a, b) => a.name.localeCompare(b.name, "vi")
+        ));
+      }
+      setCart((current) => current.map((line) => line.key === surchargeLineKey
+        ? { ...line, surcharges: [...line.surcharges, { name, amount }] }
+        : line
+      ));
+      setDirty(true);
+      setSurchargeLineKey(null);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được phụ thu.");
+    } finally {
+      setSurchargeSaving(false);
+    }
+  }
+
+  function removeLineSurcharge(key: string, index: number) {
+    setCart((current) => current.map((line) => line.key === key
+      ? { ...line, surcharges: line.surcharges.filter((_, i) => i !== index) }
+      : line
+    ));
+    setDirty(true);
+  }
+
+  // Save before kitchen / payment so the backend receives the latest detail.
+  async function saveOrder(returnToMap = true): Promise<SaleOrder | null> {
+    if (busy) return null;
     if (tableId === null) {
       messageApi.error("Chưa chọn bàn.");
-      return;
+      return null;
     }
     if (!cart.length) {
       messageApi.warning("Chọn ít nhất một món trước khi lưu Order.");
-      return;
+      return null;
     }
     if (cart.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
       messageApi.warning("Số lượng món phải lớn hơn 0.");
-      return;
+      return null;
     }
     if (editingOrder && !dirty) {
-      setView("MAP");
-      await refresh();
-      return;
+      if (returnToMap) {
+        setView("MAP");
+        await refresh().catch(() => messageApi.warning("Không tải lại được sơ đồ."));
+      }
+      return editingOrder;
     }
 
     const payload: SaleOrderInput = {
@@ -381,11 +434,10 @@ export default function PosApp() {
         note: line.note || null,
         surcharges: line.surcharges
       })),
-      surcharges:
-        editingOrder?.surcharges.map((extra) => ({
-          name: extra.name,
-          amount: extra.amount
-        })) ?? []
+      surcharges: editingOrder?.surcharges.map((extra) => ({
+        name: extra.name,
+        amount: extra.amount
+      })) ?? []
     };
 
     setBusy(true);
@@ -393,21 +445,104 @@ export default function PosApp() {
       const saved = editingOrder
         ? await updateSaleOrder(editingOrder.id, payload)
         : await createSaleOrder(payload);
-
       setDirty(false);
       setEditingOrder(saved);
-      setView("MAP");
+      if (returnToMap) setView("MAP");
       messageApi.success(`Đã lưu ${saved.order_code}.`);
-
-      try {
-        await refresh();
-      } catch {
-        messageApi.warning("Order đã lưu nhưng chưa tải lại được sơ đồ. Bấm Làm mới.");
-      }
+      await refresh().catch(() => messageApi.warning(
+        "Order đã lưu nhưng chưa tải lại được sơ đồ."
+      ));
+      return saved;
     } catch (error) {
-      messageApi.error(
-        error instanceof Error ? error.message : "Không lưu được Order."
-      );
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được Order.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function performSendKitchen() {
+    const saved = await saveOrder(false);
+    if (!saved) return;
+    setBusy(true);
+    try {
+      const ticket = await sendSaleOrderToKitchen(saved.id);
+      if (ticket.print_status !== "PRINTED") {
+        messageApi.error(
+          `Order đã lưu nhưng gửi bếp thất bại: ${ticket.error_message || "Kiểm tra máy in bếp."}`
+        );
+        return;
+      }
+      setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
+      messageApi.success(`Đã gửi bếp ${saved.order_code}.`);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function sendKitchen() {
+    if (busy) return;
+    if (editingOrder?.kitchen_sent_at) {
+      Modal.confirm({
+        title: "Gửi lại toàn bộ Order tới bếp?",
+        content: "Phiếu bếp sẽ in lại TẤT CẢ món, kể cả món đã gửi trước đó.",
+        okText: "Gửi lại",
+        cancelText: "Không",
+        onOk: () => performSendKitchen()
+      });
+    } else {
+      void performSendKitchen();
+    }
+  }
+
+  function openPayment() {
+    if (busy) return;
+    void (async () => {
+      const saved = await saveOrder(false);
+      if (!saved) return;
+      const active = accounts.filter((account) => account.is_active);
+      const preferred =
+        active.find((account) => account.type === "CASH" && account.is_default) ??
+        active.find((account) => account.type === "CASH") ??
+        active.find((account) => account.is_default) ??
+        active[0];
+      setPaymentAccountType(preferred?.type ?? "CASH");
+      setPaymentFundAccountId(preferred?.id);
+      setPaymentAmount(saved.total_amount);
+      setPaymentOpen(true);
+    })();
+  }
+
+  async function confirmPayment() {
+    if (!editingOrder || !paymentFundAccountId || busy) {
+      if (!paymentFundAccountId) messageApi.warning("Chọn quỹ hoặc tài khoản nhận tiền.");
+      return;
+    }
+    if (!Number.isFinite(paymentAmount) || (total > 0 && paymentAmount <= 0)) {
+      messageApi.warning("Tiền thực thu phải lớn hơn 0.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const paid = await paySaleOrder(editingOrder.id, {
+        fund_account_id: paymentFundAccountId,
+        actual_received_amount: Math.round(paymentAmount)
+      });
+      setPaymentOpen(false);
+      setEditingOrder(null);
+      setCart([]);
+      setTableId(null);
+      setSelectedLineKey(null);
+      setDirty(false);
+      setView("MAP");
+      messageApi.success(`Đã thanh toán ${paid.order_code}. Tiền đã ghi vào quỹ.`);
+      await refresh().catch(() => messageApi.warning(
+        "Đã thanh toán nhưng chưa cập nhật sơ đồ."
+      ));
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Thanh toán thất bại.");
     } finally {
       setBusy(false);
     }
