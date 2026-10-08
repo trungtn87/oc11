@@ -4,13 +4,14 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .backup import backup_database
 from .database import connect
-from .sales import select_item_surcharges, select_order, select_order_items
+from .sales import select_item_surcharges, select_order, select_order_items, select_order_surcharges
 from .settings import load_settings, save_settings
 
 
@@ -52,22 +53,47 @@ class RestaurantTableOutput(RestaurantTableInput):
     guest_count: int = 0
 
 
+PrinterTarget = Literal["KITCHEN", "CASHIER", "BOTH"]
+
+
 class PosSettingsInput(BaseModel):
-    kitchen_printer_name: str | None = Field(default=None, max_length=300)
+    kitchen_printer_name: str | None = Field(default="", max_length=300)
+    cashier_printer_name: str | None = Field(default="", max_length=300)
+    send_kitchen_targets: PrinterTarget = "KITCHEN"
+    print_receipt_targets: PrinterTarget = "CASHIER"
 
 
 class PosSettingsOutput(BaseModel):
     kitchen_printer_name: str
+    cashier_printer_name: str
+    send_kitchen_targets: PrinterTarget
+    print_receipt_targets: PrinterTarget
 
 
-class KitchenSendOutput(BaseModel):
-    ticket_id: int
+class PrintDestinationResult(BaseModel):
+    role: Literal["KITCHEN", "CASHIER"]
+    printer_name: str | None
+    ok: bool
+    error: str | None = None
+
+
+class KitchenSendInput(BaseModel):
+    # Print-only: never write to orders, kitchen ticket JSON, logs or settings.
+    temporary_note: str = Field(default="", max_length=500)
+
+
+class PrintDispatchOutput(BaseModel):
     order_id: int
     order_code: str
+    print_status: Literal["PRINTED", "FAILED"]
+    error_message: str | None
+    printer_results: list[PrintDestinationResult]
+
+
+class KitchenSendOutput(PrintDispatchOutput):
+    ticket_id: int
     sent_at: str
     printer_name: str | None
-    print_status: str
-    error_message: str | None
 
 
 def clean_name(value: str) -> str:
@@ -473,20 +499,33 @@ def list_printers() -> list[str]:
     return get_installed_printers()
 
 
+def pos_settings_output(settings: dict) -> PosSettingsOutput:
+    def target(key: str, default: PrinterTarget) -> PrinterTarget:
+        value = settings.get(key)
+        return value if value in ("KITCHEN", "CASHIER", "BOTH") else default
+
+    return PosSettingsOutput(
+        kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
+        cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
+        send_kitchen_targets=target("send_kitchen_targets", "KITCHEN"),
+        print_receipt_targets=target("print_receipt_targets", "CASHIER"),
+    )
+
+
 @router.get("/settings", response_model=PosSettingsOutput)
 def get_pos_settings() -> PosSettingsOutput:
-    settings = load_settings()
-    return PosSettingsOutput(
-        kitchen_printer_name=str(settings.get("kitchen_printer_name") or "")
-    )
+    return pos_settings_output(load_settings())
 
 
 @router.put("/settings", response_model=PosSettingsOutput)
 def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings = load_settings()
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
+    settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
+    settings["send_kitchen_targets"] = payload.send_kitchen_targets
+    settings["print_receipt_targets"] = payload.print_receipt_targets
     save_settings(settings)
-    return PosSettingsOutput(kitchen_printer_name=settings["kitchen_printer_name"])
+    return pos_settings_output(settings)
 
 
 def powershell_quote(value: str) -> str:
@@ -536,7 +575,7 @@ def format_quantity(value: float) -> str:
     return f"{value:g}"
 
 
-def build_kitchen_ticket(connection, order) -> tuple[str, dict]:
+def build_kitchen_ticket(connection, order, temporary_note: str = "") -> tuple[str, dict]:
     lines = select_order_items(connection, int(order["id"]))
     payload_items = []
     text_lines = [
@@ -579,6 +618,8 @@ def build_kitchen_ticket(connection, order) -> tuple[str, dict]:
 
     if order["note"]:
         text_lines.extend(["-" * 36, f"Ghi chú đơn: {order['note']}"])
+    if temporary_note.strip():
+        text_lines.extend(["-" * 36, "GHI CHÚ GỬI BẾP:", temporary_note.strip()])
     text_lines.extend(["=" * 36, "", "", ""])
     payload = {
         "order_id": int(order["id"]),
