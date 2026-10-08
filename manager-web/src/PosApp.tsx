@@ -1,29 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Input,
   InputNumber,
   message,
-  Modal
+  Modal,
+  Select
 } from "antd";
 
 import {
   createSaleOrder,
+  createSurchargePreset,
+  getFundAccounts,
   getMenuItems,
   getRestaurantAreas,
   getRestaurantTables,
   getSaleOrder,
   getSaleOrders,
+  getSurchargePresets,
+  paySaleOrder,
+  sendSaleOrderToKitchen,
   updateSaleOrder
 } from "./api";
 import type {
+  FundAccount,
+  FundAccountType,
   MenuItem,
   MenuItemOption,
   RestaurantArea,
   RestaurantTable,
   SaleOrder,
   SaleOrderInput,
-  SaleSurchargeInput
+  SaleSurchargeInput,
+  SurchargePreset
 } from "./types";
 import "./PosApp.css";
 
@@ -83,6 +92,9 @@ export default function PosApp() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [orders, setOrders] = useState<SaleOrder[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [accounts, setAccounts] = useState<FundAccount[]>([]);
+  const [surchargePresets, setSurchargePresets] = useState<SurchargePreset[]>([]);
+  const menuGridRef = useRef<HTMLDivElement | null>(null);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -96,6 +108,16 @@ export default function PosApp() {
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [selectedLineKey, setSelectedLineKey] = useState<string | null>(null);
+  const [surchargeLineKey, setSurchargeLineKey] = useState<string | null>(null);
+  const [surchargePresetId, setSurchargePresetId] = useState<number | undefined>();
+  const [surchargeName, setSurchargeName] = useState("");
+  const [surchargeAmount, setSurchargeAmount] = useState(0);
+  const [surchargeSaving, setSurchargeSaving] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentAccountType, setPaymentAccountType] = useState<FundAccountType>("CASH");
+  const [paymentFundAccountId, setPaymentFundAccountId] = useState<number>();
+  const [paymentAmount, setPaymentAmount] = useState(0);
   const [messageApi, contextHolder] = message.useMessage();
 
   async function refresh() {
@@ -119,9 +141,13 @@ export default function PosApp() {
     let cancelled = false;
     async function initialize() {
       try {
-        const menu = await getMenuItems();
+        const [menu, funds, presets] = await Promise.all([
+          getMenuItems(), getFundAccounts(), getSurchargePresets()
+        ]);
         if (cancelled) return;
         setMenuItems(menu.filter((item) => item.is_active));
+        setAccounts(funds);
+        setSurchargePresets(presets);
         await refresh();
       } catch (error) {
         if (!cancelled) {
@@ -177,6 +203,7 @@ export default function PosApp() {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
+    setSelectedLineKey(null);
     setDirty(false);
     setSearch("");
     setGroupId(null);
@@ -216,6 +243,7 @@ export default function PosApp() {
           }))
         }))
       );
+      setSelectedLineKey(null);
       setDirty(false);
       setSearch("");
       setGroupId(null);
@@ -295,6 +323,7 @@ export default function PosApp() {
             line.key === key ? { ...line, quantity } : line
           )
     );
+    if (quantity <= 0) setSelectedLineKey((current) => current === key ? null : current);
     setDirty(true);
   }
 
@@ -318,24 +347,77 @@ export default function PosApp() {
     void refresh();
   }
 
-  async function saveOrder() {
-    if (busy) return;
+  function openSurcharge(key: string) {
+    setSurchargeLineKey(key);
+    setSurchargePresetId(undefined);
+    setSurchargeName("");
+    setSurchargeAmount(0);
+  }
+
+  async function addLineSurcharge() {
+    const name = surchargeName.trim();
+    const amount = Math.round(Number(surchargeAmount));
+    if (!surchargeLineKey || !cart.some((line) => line.key === surchargeLineKey)) {
+      messageApi.warning("Món này không còn trong Order.");
+      return;
+    }
+    if (!name || name.length > 120 || !Number.isFinite(amount) || amount <= 0) {
+      messageApi.warning("Nhập tên phụ thu và số tiền lớn hơn 0.");
+      return;
+    }
+    setSurchargeSaving(true);
+    try {
+      const known = surchargePresets.some(
+        (preset) => preset.name.toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi")
+      );
+      if (!known) {
+        const preset = await createSurchargePreset({ name, amount });
+        setSurchargePresets((current) => [...current, preset].sort(
+          (a, b) => a.name.localeCompare(b.name, "vi")
+        ));
+      }
+      setCart((current) => current.map((line) => line.key === surchargeLineKey
+        ? { ...line, surcharges: [...line.surcharges, { name, amount }] }
+        : line
+      ));
+      setDirty(true);
+      setSurchargeLineKey(null);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được phụ thu.");
+    } finally {
+      setSurchargeSaving(false);
+    }
+  }
+
+  function removeLineSurcharge(key: string, index: number) {
+    setCart((current) => current.map((line) => line.key === key
+      ? { ...line, surcharges: line.surcharges.filter((_, i) => i !== index) }
+      : line
+    ));
+    setDirty(true);
+  }
+
+  // Save before kitchen / payment so the backend receives the latest detail.
+  async function saveOrder(returnToMap = true): Promise<SaleOrder | null> {
+    if (busy) return null;
     if (tableId === null) {
       messageApi.error("Chưa chọn bàn.");
-      return;
+      return null;
     }
     if (!cart.length) {
       messageApi.warning("Chọn ít nhất một món trước khi lưu Order.");
-      return;
+      return null;
     }
     if (cart.some((line) => !Number.isFinite(line.quantity) || line.quantity <= 0)) {
       messageApi.warning("Số lượng món phải lớn hơn 0.");
-      return;
+      return null;
     }
     if (editingOrder && !dirty) {
-      setView("MAP");
-      await refresh();
-      return;
+      if (returnToMap) {
+        setView("MAP");
+        await refresh().catch(() => messageApi.warning("Không tải lại được sơ đồ."));
+      }
+      return editingOrder;
     }
 
     const payload: SaleOrderInput = {
@@ -352,11 +434,10 @@ export default function PosApp() {
         note: line.note || null,
         surcharges: line.surcharges
       })),
-      surcharges:
-        editingOrder?.surcharges.map((extra) => ({
-          name: extra.name,
-          amount: extra.amount
-        })) ?? []
+      surcharges: editingOrder?.surcharges.map((extra) => ({
+        name: extra.name,
+        amount: extra.amount
+      })) ?? []
     };
 
     setBusy(true);
@@ -364,21 +445,104 @@ export default function PosApp() {
       const saved = editingOrder
         ? await updateSaleOrder(editingOrder.id, payload)
         : await createSaleOrder(payload);
-
       setDirty(false);
       setEditingOrder(saved);
-      setView("MAP");
+      if (returnToMap) setView("MAP");
       messageApi.success(`Đã lưu ${saved.order_code}.`);
-
-      try {
-        await refresh();
-      } catch {
-        messageApi.warning("Order đã lưu nhưng chưa tải lại được sơ đồ. Bấm Làm mới.");
-      }
+      await refresh().catch(() => messageApi.warning(
+        "Order đã lưu nhưng chưa tải lại được sơ đồ."
+      ));
+      return saved;
     } catch (error) {
-      messageApi.error(
-        error instanceof Error ? error.message : "Không lưu được Order."
-      );
+      messageApi.error(error instanceof Error ? error.message : "Không lưu được Order.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function performSendKitchen() {
+    const saved = await saveOrder(false);
+    if (!saved) return;
+    setBusy(true);
+    try {
+      const ticket = await sendSaleOrderToKitchen(saved.id);
+      if (ticket.print_status !== "PRINTED") {
+        messageApi.error(
+          `Order đã lưu nhưng gửi bếp thất bại: ${ticket.error_message || "Kiểm tra máy in bếp."}`
+        );
+        return;
+      }
+      setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
+      messageApi.success(`Đã gửi bếp ${saved.order_code}.`);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function sendKitchen() {
+    if (busy) return;
+    if (editingOrder?.kitchen_sent_at) {
+      Modal.confirm({
+        title: "Gửi lại toàn bộ Order tới bếp?",
+        content: "Phiếu bếp sẽ in lại TẤT CẢ món, kể cả món đã gửi trước đó.",
+        okText: "Gửi lại",
+        cancelText: "Không",
+        onOk: () => performSendKitchen()
+      });
+    } else {
+      void performSendKitchen();
+    }
+  }
+
+  function openPayment() {
+    if (busy) return;
+    void (async () => {
+      const saved = await saveOrder(false);
+      if (!saved) return;
+      const active = accounts.filter((account) => account.is_active);
+      const preferred =
+        active.find((account) => account.type === "CASH" && account.is_default) ??
+        active.find((account) => account.type === "CASH") ??
+        active.find((account) => account.is_default) ??
+        active[0];
+      setPaymentAccountType(preferred?.type ?? "CASH");
+      setPaymentFundAccountId(preferred?.id);
+      setPaymentAmount(saved.total_amount);
+      setPaymentOpen(true);
+    })();
+  }
+
+  async function confirmPayment() {
+    if (!editingOrder || !paymentFundAccountId || busy) {
+      if (!paymentFundAccountId) messageApi.warning("Chọn quỹ hoặc tài khoản nhận tiền.");
+      return;
+    }
+    if (!Number.isFinite(paymentAmount) || (total > 0 && paymentAmount <= 0)) {
+      messageApi.warning("Tiền thực thu phải lớn hơn 0.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const paid = await paySaleOrder(editingOrder.id, {
+        fund_account_id: paymentFundAccountId,
+        actual_received_amount: Math.round(paymentAmount)
+      });
+      setPaymentOpen(false);
+      setEditingOrder(null);
+      setCart([]);
+      setTableId(null);
+      setSelectedLineKey(null);
+      setDirty(false);
+      setView("MAP");
+      messageApi.success(`Đã thanh toán ${paid.order_code}. Tiền đã ghi vào quỹ.`);
+      await refresh().catch(() => messageApi.warning(
+        "Đã thanh toán nhưng chưa cập nhật sơ đồ."
+      ));
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "Thanh toán thất bại.");
     } finally {
       setBusy(false);
     }
@@ -609,7 +773,7 @@ export default function PosApp() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-            <div className="pos-menu-grid">
+            <div className="pos-menu-grid" ref={menuGridRef}>
               {filteredMenu.map((item) => {
                 const activeOptions = item.options.filter((option) => option.is_active);
                 return (
@@ -631,6 +795,16 @@ export default function PosApp() {
               {!filteredMenu.length && (
                 <div className="pos-empty">Không có món phù hợp.</div>
               )}
+            </div>
+            <div className="pos-menu-scroll-controls">
+              <button type="button" aria-label="Cuộn danh sách món lên"
+                onClick={() => menuGridRef.current?.scrollBy({ top: -320, behavior: "smooth" })}>
+                ▲ Lên
+              </button>
+              <button type="button" aria-label="Cuộn danh sách món xuống"
+                onClick={() => menuGridRef.current?.scrollBy({ top: 320, behavior: "smooth" })}>
+                ▼ Xuống
+              </button>
             </div>
           </section>
 
@@ -656,60 +830,69 @@ export default function PosApp() {
               <b>Thành tiền</b>
             </div>
             <div className="pos-cart-lines">
-              {cart.map((line) => (
-                <div className="pos-cart-line" key={line.key}>
-                  <div className="pos-line-name">
-                    <strong>{line.name}</strong>
-                    {line.optionName && <em>+ {line.optionName}</em>}
-                    {line.surcharges.map((extra, index) => (
-                      <small key={index}>+ {extra.name}</small>
-                    ))}
-                    {line.note && <small className="pos-line-note">{line.note}</small>}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNoteLineKey(line.key);
-                        setNoteDraft(line.note);
-                      }}
-                    >
-                      {line.note ? "Sửa ghi chú" : "+ Ghi chú"}
-                    </button>
+              {cart.map((line) => {
+                const expanded = selectedLineKey === line.key;
+                return (
+                  <div className={`pos-cart-line${expanded ? " expanded" : ""}`} key={line.key}>
+                    <div className="pos-line-name">
+                      <button
+                        type="button"
+                        className="pos-line-toggle"
+                        aria-expanded={expanded}
+                        onClick={() => setSelectedLineKey((current) =>
+                          current === line.key ? null : line.key
+                        )}
+                      >
+                        <strong>{line.name}</strong>
+                        {line.optionName && <em>+ {line.optionName}</em>}
+                      </button>
+                      {expanded && (
+                        <div className="pos-line-details">
+                          {line.surcharges.map((extra, index) => (
+                            <div className="pos-line-extra" key={index}>
+                              <span>+ {extra.name}: {money(extra.amount)} đ</span>
+                              <button
+                                type="button"
+                                aria-label={`Bỏ phụ thu ${extra.name}`}
+                                onClick={() => removeLineSurcharge(line.key, index)}
+                              >×</button>
+                            </div>
+                          ))}
+                          {line.note && <small className="pos-line-note">{line.note}</small>}
+                          <div className="pos-line-tools">
+                            <button type="button" onClick={() => openSurcharge(line.key)}>
+                              + Phụ thu
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNoteLineKey(line.key);
+                                setNoteDraft(line.note);
+                              }}
+                            >
+                              {line.note ? "Sửa ghi chú" : "+ Ghi chú"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="pos-line-qty">
+                      <button type="button" aria-label="Giảm số lượng"
+                        onClick={() => updateQuantity(line.key, line.quantity - 1)}>−</button>
+                      <InputNumber<number> min={0.01} step={1} value={line.quantity}
+                        onChange={(value) => {
+                          if (value !== null) updateQuantity(line.key, value);
+                        }}
+                      />
+                      <button type="button" aria-label="Tăng số lượng"
+                        onClick={() => updateQuantity(line.key, line.quantity + 1)}>+</button>
+                    </div>
+                    <strong>{money(rowTotal(line))}</strong>
+                    <button type="button" className="pos-line-remove" title="Bỏ món"
+                      onClick={() => updateQuantity(line.key, 0)}>×</button>
                   </div>
-                  <div className="pos-line-qty">
-                    <button
-                      type="button"
-                      aria-label="Giảm số lượng"
-                      onClick={() => updateQuantity(line.key, line.quantity - 1)}
-                    >
-                      −
-                    </button>
-                    <InputNumber<number>
-                      min={0.01}
-                      step={1}
-                      value={line.quantity}
-                      onChange={(value) => {
-                        if (value !== null) updateQuantity(line.key, value);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Tăng số lượng"
-                      onClick={() => updateQuantity(line.key, line.quantity + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                  <strong>{money(rowTotal(line))}</strong>
-                  <button
-                    type="button"
-                    className="pos-line-remove"
-                    title="Bỏ món"
-                    onClick={() => updateQuantity(line.key, 0)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                );
+              })}
               {!cart.length && (
                 <div className="pos-empty">
                   Chọn món ở phần thực đơn bên trái để lập Order.
@@ -717,26 +900,18 @@ export default function PosApp() {
               )}
             </div>
             <div className="pos-cart-bottom">
-              <div className="pos-order-hint">
-                Order được lưu vào bàn; chưa thanh toán hoặc gửi bếp ở bước này.
-              </div>
               <div className="pos-total">
                 <span>Tổng tiền</span>
                 <strong>{money(total)} đ</strong>
               </div>
               <div className="pos-create-actions">
-                <Button size="large" onClick={backToMap} disabled={busy}>
-                  Quay về sơ đồ
-                </Button>
-                <Button
-                  type="primary"
-                  size="large"
-                  className="pos-save-order"
-                  loading={busy}
-                  onClick={() => void saveOrder()}
-                >
-                  Lưu Order
-                </Button>
+                <Button className="pos-kitchen-button" disabled={busy || !cart.length}
+                  loading={busy} onClick={sendKitchen}>Gửi bếp</Button>
+                <Button danger disabled={busy} onClick={backToMap}>Huỷ</Button>
+                <Button className="pos-save-order" disabled={!cart.length} loading={busy}
+                  onClick={() => void saveOrder()}>Lưu</Button>
+                <Button className="pos-pay-button" type="primary" disabled={!cart.length || busy}
+                  onClick={openPayment}>Tính tiền</Button>
               </div>
             </div>
           </section>
@@ -790,6 +965,113 @@ export default function PosApp() {
           onChange={(event) => setNoteDraft(event.target.value)}
           placeholder="Ví dụ: ít cay, không hành..."
         />
+      </Modal>
+
+      <Modal
+        open={surchargeLineKey !== null}
+        title="Phụ thu theo món"
+        okText="Thêm phụ thu"
+        okButtonProps={{ loading: surchargeSaving }}
+        cancelText="Đóng"
+        onCancel={() => { if (!surchargeSaving) setSurchargeLineKey(null); }}
+        onOk={() => void addLineSurcharge()}
+        destroyOnClose
+      >
+        <div className="pos-surcharge-form">
+          <label>Phụ thu đã sử dụng</label>
+          <Select
+            allowClear
+            placeholder="Chọn phụ thu cũ hoặc nhập mới"
+            value={surchargePresetId}
+            onChange={(value: number | undefined) => {
+              setSurchargePresetId(value);
+              const preset = surchargePresets.find((item) => item.id === value);
+              if (preset) {
+                setSurchargeName(preset.name);
+                setSurchargeAmount(preset.amount);
+              }
+            }}
+            options={surchargePresets.map((preset) => ({
+              value: preset.id, label: `${preset.name} – ${money(preset.amount)} đ`
+            }))}
+          />
+          <label>Tên phụ thu</label>
+          <Input
+            value={surchargeName}
+            maxLength={120}
+            placeholder="Ví dụ: Thêm sốt, thêm phô mai..."
+            onChange={(event) => {
+              setSurchargePresetId(undefined);
+              setSurchargeName(event.target.value);
+            }}
+          />
+          <label>Số tiền (đ)</label>
+          <InputNumber<number>
+            min={1}
+            step={1000}
+            precision={0}
+            value={surchargeAmount}
+            onChange={(value) => setSurchargeAmount(Number(value ?? 0))}
+            style={{ width: "100%" }}
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        open={paymentOpen}
+        title="Tính tiền · Thanh toán Order"
+        okText="Xác nhận thanh toán"
+        okButtonProps={{ loading: busy }}
+        cancelText="Để sau"
+        onCancel={() => { if (!busy) setPaymentOpen(false); }}
+        onOk={() => void confirmPayment()}
+        destroyOnClose
+      >
+        <div className="pos-payment-modal">
+          <div><span>Tổng tiền</span><strong>{money(total)} đ</strong></div>
+          <label>Loại tài khoản
+            <Select
+              value={paymentAccountType}
+              onChange={(type: FundAccountType) => {
+                setPaymentAccountType(type);
+                const available = accounts.filter((account) =>
+                  account.is_active && account.type === type
+                );
+                setPaymentFundAccountId(
+                  (available.find((account) => account.is_default) ?? available[0])?.id
+                );
+              }}
+              options={[
+                { value: "CASH", label: "Tiền mặt" },
+                { value: "BANK", label: "Ngân hàng" }
+              ]}
+            />
+          </label>
+          <label>Quỹ / tài khoản nhận tiền
+            <Select
+              placeholder="Chọn quỹ nhận tiền"
+              value={paymentFundAccountId}
+              onChange={setPaymentFundAccountId}
+              options={accounts.filter((account) =>
+                account.is_active && account.type === paymentAccountType
+              ).map((account) => ({
+                value: account.id, label: account.name
+              }))}
+            />
+          </label>
+          <label>Tiền thực thu (đ)
+            <InputNumber<number>
+              min={0}
+              precision={0}
+              value={paymentAmount}
+              onChange={(value) => setPaymentAmount(Number(value ?? 0))}
+            />
+          </label>
+          <div className="pos-payment-difference">
+            <span>Chênh lệch làm tròn</span>
+            <strong>{money(paymentAmount - total)} đ</strong>
+          </div>
+        </div>
       </Modal>
     </div>
   );
