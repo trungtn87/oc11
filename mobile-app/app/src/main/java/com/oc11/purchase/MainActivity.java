@@ -2,6 +2,7 @@ package com.oc11.purchase;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -51,6 +52,7 @@ public class MainActivity extends Activity {
     private TextView connectionText;
     private TextView pendingText;
     private LinearLayout receiptList;
+    private LinearLayout stocktakeList;
     private Button syncButton;
 
     private int dp(float value) {
@@ -111,6 +113,12 @@ public class MainActivity extends Activity {
         refreshHome();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (receiptList != null) refreshHome();
+    }
+
     private void buildHome() {
         LinearLayout root = vertical();
         root.setPadding(dp(16), dp(18), dp(16), dp(20));
@@ -135,6 +143,11 @@ public class MainActivity extends Activity {
         addButton.setOnClickListener(v -> showReceiptForm(null));
         root.addView(addButton);
 
+        Button stocktakeButton = button("▤ Kiểm kho (offline)");
+        stocktakeButton.setOnClickListener(v ->
+                startActivity(new Intent(this, StocktakeActivity.class)));
+        root.addView(stocktakeButton);
+
         syncButton = button("⟳ Đồng bộ với máy tính");
         syncButton.setOnClickListener(v -> syncManually());
         root.addView(syncButton);
@@ -150,6 +163,11 @@ public class MainActivity extends Activity {
         receiptList = vertical();
         root.addView(receiptList);
 
+        root.addView(spacer(12));
+        root.addView(text("Phiếu kiểm kho trên điện thoại", 17, true));
+        stocktakeList = vertical();
+        root.addView(stocktakeList);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
@@ -160,9 +178,11 @@ public class MainActivity extends Activity {
         String updated = store.getCacheUpdatedAt("items");
         String api = prefs.getString(KEY_API_URL, "");
         connectionText.setText(api.isEmpty() ? "Chưa cấu hình máy tính" : "Máy tính: " + api);
-        pendingText.setText("Chờ đồng bộ: " + pending + " phiếu" +
+        pendingText.setText("Chờ đồng bộ: " + pending + " phiếu nhập, " +
+                store.pendingStocktakeCount() + " phiếu kiểm" +
                 (updated == null ? " • Chưa tải dữ liệu nền" : " • Dữ liệu nền: " + updated));
 
+        refreshStocktakeList();
         receiptList.removeAllViews();
         List<LocalStore.PendingReceipt> rows = store.listReceipts();
         if (rows.isEmpty()) {
@@ -224,6 +244,61 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void refreshStocktakeList() {
+        stocktakeList.removeAllViews();
+        List<LocalStore.PendingStocktake> rows = store.listStocktakes();
+        if (rows.isEmpty()) {
+            stocktakeList.addView(text("Chưa có phiếu kiểm kho offline.", 14, false));
+            return;
+        }
+        int shown = 0;
+        for (LocalStore.PendingStocktake row : rows) {
+            if (shown++ >= 30) break;
+            try {
+                JSONObject payload = new JSONObject(row.payload);
+                JSONArray lines = payload.optJSONArray("items");
+                int counted = lines == null ? 0 : lines.length();
+                LinearLayout c = card();
+                c.addView(text("Kiểm kho • " + counted + " mặt hàng", 15, true));
+                String state = row.synced == 1
+                        ? "✓ Đã đồng bộ " + (row.serverCode == null ? "" : row.serverCode)
+                        : (row.error == null ? "● Chờ đồng bộ" : "! Lỗi đồng bộ");
+                c.addView(text(row.createdAt + " • " + state, 12, false));
+                if (row.error != null) {
+                    TextView t = text(row.error, 12, false);
+                    t.setTextColor(Color.rgb(180, 50, 40));
+                    c.addView(t);
+                }
+                if (row.synced == 0) {
+                    LinearLayout actions = new LinearLayout(this);
+                    actions.setOrientation(LinearLayout.HORIZONTAL);
+                    Button edit = button("Sửa");
+                    edit.setOnClickListener(v -> {
+                        Intent intent = new Intent(this, StocktakeActivity.class);
+                        intent.putExtra("stocktake_id", row.id);
+                        startActivity(intent);
+                    });
+                    Button delete = button("Xóa");
+                    delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                            .setTitle("Xóa phiếu kiểm chưa đồng bộ?")
+                            .setMessage("Phiếu lưu trên điện thoại sẽ bị xóa. Dữ liệu đã đồng bộ trên máy tính không bị tác động.")
+                            .setNegativeButton("Hủy", null)
+                            .setPositiveButton("Xóa", (d, w) -> {
+                                store.deleteUnsyncedStocktake(row.id);
+                                refreshHome();
+                            })
+                            .show());
+                    actions.addView(edit, new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    actions.addView(delete, new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                    c.addView(actions);
+                }
+                stocktakeList.addView(c);
+            } catch (Exception ignored) {}
+        }
+    }
+
     private void showSettings() {
         EditText input = new EditText(this);
         input.setSingleLine(true);
@@ -271,6 +346,8 @@ public class MainActivity extends Activity {
         io.execute(() -> {
             int uploaded = 0;
             int failed = 0;
+            int uploadedStocktakes = 0;
+            int failedStocktakes = 0;
             String fatal = null;
             try {
                 JSONObject health = ApiClient.getObject(baseUrl, "/api/health");
@@ -290,6 +367,22 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                // Send purchases first. Counts based on stale stock must then
+                // conflict safely instead of silently overwriting purchases.
+                for (LocalStore.PendingStocktake row : store.listUnsyncedStocktakes()) {
+                    try {
+                        JSONObject response = ApiClient.postObject(
+                                baseUrl, "/api/inventory/adjustments/batch",
+                                new JSONObject(row.payload));
+                        store.markStocktakeSynced(
+                                row.id, response.optString("adjustment_code", null));
+                        uploadedStocktakes++;
+                    } catch (Exception ex) {
+                        store.markStocktakeError(row.id, ex.getMessage());
+                        failedStocktakes++;
+                    }
+                }
+
                 String stamp = nowDisplay();
                 store.putCache("suppliers", ApiClient.getArray(baseUrl, "/api/suppliers").toString(), stamp);
                 store.putCache("items", ApiClient.getArray(baseUrl, "/api/items").toString(), stamp);
@@ -302,6 +395,8 @@ public class MainActivity extends Activity {
 
             final int okCount = uploaded;
             final int failCount = failed;
+            final int stockOkCount = uploadedStocktakes;
+            final int stockFailCount = failedStocktakes;
             final String fatalMessage = fatal;
             runOnUiThread(() -> {
                 syncButton.setEnabled(true);
@@ -310,8 +405,11 @@ public class MainActivity extends Activity {
                 if (fatalMessage != null) {
                     Toast.makeText(this, "Không đồng bộ được: " + fatalMessage, Toast.LENGTH_LONG).show();
                 } else {
-                    String msg = "Đồng bộ xong: " + okCount + " phiếu";
-                    if (failCount > 0) msg += ", lỗi " + failCount;
+                    String msg = "Đồng bộ: " + okCount + " phiếu nhập, " +
+                            stockOkCount + " phiếu kiểm";
+                    if (failCount + stockFailCount > 0) {
+                        msg += ", lỗi " + (failCount + stockFailCount);
+                    }
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                 }
             });
