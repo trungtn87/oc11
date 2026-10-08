@@ -110,6 +110,8 @@ def test_stock_list_uses_smallest_unit_and_latest_purchase_price(
         assert row["last_purchase_unit_price"] == 240_000
         assert row["last_purchase_price_per_smallest_unit"] == 10_000
         assert row["last_purchase_conversion_factor"] == 24
+        assert row["default_unit_name"] == "thùng"
+        assert row["default_unit_conversion_factor"] == 24
 
 
 def test_stock_uses_unit_from_latest_non_void_purchase_at_requested_date(
@@ -143,6 +145,43 @@ def test_stock_uses_unit_from_latest_non_void_purchase_at_requested_date(
         assert latest["last_purchase_unit_name"] == "lon"
         assert latest["last_purchase_conversion_factor"] == 1
         assert latest["last_purchase_price_per_smallest_unit"] == 12_000
+
+
+def test_stock_shortage_has_default_purchase_unit_fallback_when_never_purchased(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+
+    with TestClient(app) as client:
+        _, thung, lon, item, _ = setup_inventory_master(client)
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO inventory_movements (
+                    item_id, movement_time, quantity_delta,
+                    source_type, source_id, source_line_id, note
+                ) VALUES (?, '2026-10-07T12:00:00', -36, 'SALE',
+                          'seed-negative', 'line-negative', 'Negative stock')
+                """,
+                (item["id"],),
+            )
+            connection.commit()
+
+        response = client.get("/api/inventory/stock", params={"tracking": "TRACKED"})
+        assert response.status_code == 200, response.text
+        row = next(stock for stock in response.json() if stock["item_id"] == item["id"])
+        assert row["stock_quantity"] == -36  # always smallest units internally
+        assert row["smallest_unit_name"] == "lon"
+        assert row["default_unit_name"] == "thùng"
+        assert row["default_unit_conversion_factor"] == 24
+        assert row["last_purchase_unit_name"] is None
+        assert row["last_purchase_conversion_factor"] is None
+        # Dashboard renders -36 / 24 = -1.5 thùng, not -36 lon.
+
+        # No history should never fabricate a latest purchase price.
+        assert row["last_purchase_unit_price"] is None
+        assert row["last_purchase_price_per_smallest_unit"] is None
 
 
 def test_inventory_history_calculates_opening_sales_adjustment_and_closing(
