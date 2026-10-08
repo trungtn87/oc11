@@ -2859,7 +2859,7 @@ function App() {
   return (
     <Layout className="app-shell">
       <Sider
-        width={202}
+        width={238}
         className="sidebar"
       >
         <BrandLogo collapsed={false} />
