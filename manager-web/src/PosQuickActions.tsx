@@ -35,6 +35,16 @@ type Props = {
 const MARKET_CASH_ID = 3; // Giữ cùng cấu hình với app Android.
 const MARKET_BANK_ID = 1; // BIDV trên app Android.
 const formatMoney = (amount: number) => new Intl.NumberFormat("vi-VN").format(Math.round(amount));
+const makeRequestId = () =>
+  typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : "POS-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+const roundLineTotal = (value: number) => {
+  const floor = Math.floor(value);
+  const fraction = value - floor;
+  if (Math.abs(fraction - 0.5) < 1e-10) return floor % 2 === 0 ? floor : floor + 1;
+  return Math.round(value);
+};
 const localTimestamp = () => {
   const now = new Date();
   const pad = (number: number) => String(number).padStart(2, "0");
@@ -88,7 +98,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
     setSupplierId(undefined);
     setPaymentType("CASH");
     setLines([{ key: ++nextLineId.current }]);
-    requestId.current = crypto.randomUUID();
+    requestId.current = makeRequestId();
     void (async () => {
       try {
         if (action === "TRANSFER") {
@@ -120,7 +130,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
   const destination = marketAccount(accounts, "CASH");
   const paymentAccount = marketAccount(accounts, paymentType);
   const total = lines.reduce((sum, line) =>
-    sum + Math.round((line.quantity ?? 0) * (line.unit_price ?? 0)), 0
+    sum + roundLineTotal((line.quantity ?? 0) * (line.unit_price ?? 0)), 0
   );
   const activeSuppliers = [...suppliers].sort((a, b) => a.name.localeCompare(b.name, "vi"));
   const activeItems = [...items].sort((a, b) => a.name.localeCompare(b.name, "vi"));
@@ -229,7 +239,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
         receipt_time: localTimestamp(),
         description: null,
         shipping_fee: 0,
-        actual_paid_amount: total,
+        actual_paid_amount: null,
         payment_status: "PAID",
         payment: { account_type: paymentType, fund_account_id: paymentAccount.id },
         shipping_payment: null,
@@ -408,7 +418,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
                       disabled={loading || saving}
                       onChange={(value) => updateLine(line.key, { unit_price: value ?? undefined })}
                     />
-                    <strong>{formatMoney(Math.round((line.quantity ?? 0) * (line.unit_price ?? 0)))} đ</strong>
+                    <strong>{formatMoney(roundLineTotal((line.quantity ?? 0) * (line.unit_price ?? 0)))} đ</strong>
                     <Button danger className="pos-quick-remove" aria-label={"Xóa dòng " + (index + 1)}
                       disabled={loading || saving}
                       onClick={() => setLines((current) => current.filter((row) => row.key !== line.key))}>
