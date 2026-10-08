@@ -88,7 +88,7 @@ export default function PosDashboard() {
   const balance = accounts.reduce((sum, row) => sum + row.current_balance, 0);
   const alertStock = (data?.stock ?? [])
     .filter((row) => row.is_active && row.is_stock_tracked && row.stock_quantity <= 0)
-    .sort((a, b) => a.stock_quantity - b.stock_quantity || a.item_name.localeCompare(b.item_name, "vi"));
+    .sort((a, b) => displayStockQuantity(a) - displayStockQuantity(b) || a.item_name.localeCompare(b.item_name, "vi"));
   const negativeCount = alertStock.filter((row) => row.stock_quantity < 0).length;
   const zeroCount = alertStock.length - negativeCount;
   const stockTotal = (data?.stock ?? []).reduce(
@@ -182,7 +182,7 @@ export default function PosDashboard() {
                   <td className={stock.stock_quantity < 0 ? "pos-dashboard-negative" : "pos-dashboard-zero"}>
                     {quantity(displayStockQuantity(stock))}
                   </td>
-                  <td>{displayStockUnit(stock)}</td>
+                  <td>{displayStockUnit(stock)}{!stock.last_purchase_unit_name ? " (mặc định)" : ""}</td>
                   <td>{stock.last_purchase_unit_price === null ? "—" : currency(stock.last_purchase_unit_price)}</td>
                   <td>{currency(stockInventoryValue(stock) ?? 0)}</td>
                 </tr>
