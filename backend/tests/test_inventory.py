@@ -109,6 +109,40 @@ def test_stock_list_uses_smallest_unit_and_latest_purchase_price(
         assert row["last_purchase_unit_name"] == "thùng"
         assert row["last_purchase_unit_price"] == 240_000
         assert row["last_purchase_price_per_smallest_unit"] == 10_000
+        assert row["last_purchase_conversion_factor"] == 24
+
+
+def test_stock_uses_unit_from_latest_non_void_purchase_at_requested_date(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("OC11_DB_PATH", str(tmp_path / "oc11.db"))
+
+    with TestClient(app) as client:
+        _, thung, lon, item, supplier = setup_inventory_master(client)
+        create_purchase(
+            client, supplier_id=supplier["id"], item_id=item["id"],
+            unit_id=thung["id"], receipt_time="2026-10-01T08:00",
+            quantity=5, unit_price=240_000,
+        )
+        create_purchase(
+            client, supplier_id=supplier["id"], item_id=item["id"],
+            unit_id=lon["id"], receipt_time="2026-10-04T09:00",
+            quantity=10, unit_price=12_000,
+        )
+
+        old = client.get("/api/inventory/stock", params={"as_of": "2026-10-02"}).json()
+        previous = next(row for row in old if row["item_id"] == item["id"])
+        assert previous["stock_quantity"] == 120
+        assert previous["last_purchase_unit_name"] == "thùng"
+        assert previous["last_purchase_conversion_factor"] == 24
+        assert previous["last_purchase_price_per_smallest_unit"] == 10_000
+
+        current = client.get("/api/inventory/stock").json()
+        latest = next(row for row in current if row["item_id"] == item["id"])
+        assert latest["stock_quantity"] == 130
+        assert latest["last_purchase_unit_name"] == "lon"
+        assert latest["last_purchase_conversion_factor"] == 1
+        assert latest["last_purchase_price_per_smallest_unit"] == 12_000
 
 
 def test_inventory_history_calculates_opening_sales_adjustment_and_closing(
