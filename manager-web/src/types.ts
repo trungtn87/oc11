@@ -743,6 +743,7 @@ export type SaleOrder = {
   customer_name: string | null;
   fund_account_id: number | null;
   fund_account_name: string | null;
+  fund_account_type: FundAccountType | null;
   total_amount: number;
   surcharge_total: number;
   actual_received_amount: number | null;
