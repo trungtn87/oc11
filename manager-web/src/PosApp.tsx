@@ -642,6 +642,25 @@ export default function PosApp() {
     await startCheckout(saved.id);
   }
 
+  async function tryPrintCancelSlip(orderId: number) {
+    try {
+      const printed = await printSaleOrderCancellation(orderId);
+      if (printed.print_status === "PRINTED") {
+        messageApi.success("Đã in phiếu hủy ở máy bếp.");
+        return;
+      }
+      throw new Error(printed.error_message || "Máy bếp chưa nhận được phiếu hủy.");
+    } catch (error) {
+      Modal.confirm({
+        title: "Order đã hủy, nhưng phiếu hủy bếp chưa được in",
+        content: error instanceof Error ? error.message : "Kiểm tra máy in bếp.",
+        okText: "Thử in lại",
+        cancelText: "Để sau",
+        onOk: () => tryPrintCancelSlip(orderId)
+      });
+    }
+  }
+
   async function printEstimate() {
     if (!checkoutOrder || busy) return;
     setBusy(true);
@@ -690,15 +709,13 @@ export default function PosApp() {
           setView("MAP");
           if (canceled.table_id !== null) kitchenNoteDrafts.current.delete(canceled.table_id);
           setKitchenNote("");
-          await refresh();
+          await refresh().catch(() =>
+            messageApi.warning("Đã hủy Order nhưng chưa cập nhật được sơ đồ."));
           messageApi.success(`Đã hủy ${canceled.order_code} và giải phóng bàn.`);
           if (canceled.kitchen_sent_at) {
-            try {
-              const printed = await printSaleOrderCancellation(canceled.id);
-              if (printed.print_status !== "PRINTED")
-                messageApi.error("Đã hủy Order nhưng chưa in được phiếu hủy bếp: " +
-                  (printed.error_message || "Kiểm tra máy in."));
-            } catch (error) {
+            await tryPrintCancelSlip(canceled.id);
+          }
+        } catch (error) {
               messageApi.error("Đã hủy Order nhưng chưa gửi được phiếu hủy bếp: " +
                 (error instanceof Error ? error.message : "Lỗi máy in."));
             }
