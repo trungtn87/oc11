@@ -821,6 +821,7 @@ export type SalePaymentInput = {
   fund_account_id?: number | null;
   actual_received_amount?: number | null;
   payment_method?: "CASH" | "BANK" | "DEBT";
+  expected_total_amount?: number;
   customer_id?: number | null;
   request_einvoice?: boolean;
 };
