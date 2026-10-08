@@ -16,6 +16,7 @@ import {
   Typography
 } from "antd";
 import type { TableProps } from "antd";
+import { displayStockQuantity, displayStockUnit, stockInventoryValue } from "./stockDisplay";
 
 import {
   createStocktakeBatch,
@@ -310,6 +311,10 @@ export default function InventoryStockPage() {
     () => stocks.filter((row) => Math.abs(row.stock_quantity) < 1e-9).length,
     [stocks]
   );
+  const totalValue = stocks.reduce((sum, row) => sum + (stockInventoryValue(row) ?? 0), 0);
+  const unpricedCount = stocks.filter(
+    (row) => row.stock_quantity > 0 && stockInventoryValue(row) === null
+  ).length;
 
   const columns: TableProps<InventoryStock>["columns"] = [
     {
@@ -328,12 +333,6 @@ export default function InventoryStockPage() {
       )
     },
     {
-      title: "Nhóm",
-      dataIndex: "item_group_name",
-      key: "item_group_name",
-      width: 150
-    },
-    {
       title: "Tồn theo dữ liệu",
       dataIndex: "stock_quantity",
       key: "stock_quantity",
@@ -341,21 +340,21 @@ export default function InventoryStockPage() {
       align: "right",
       sorter: (a, b) => a.stock_quantity - b.stock_quantity,
       defaultSortOrder: "ascend",
-      render: (value: number) => (
+      render: (_, row) => (
         <Text
           strong
-          type={value < 0 ? "danger" : undefined}
+          type={row.stock_quantity < 0 ? "danger" : undefined}
           className="stock-quantity"
         >
-          {number(value)}
+          {number(displayStockQuantity(row))}
         </Text>
       )
     },
     {
       title: "ĐVT",
-      dataIndex: "smallest_unit_name",
-      key: "smallest_unit_name",
-      width: 90
+      key: "display_unit",
+      width: 90,
+      render: (_, row) => displayStockUnit(row)
     },
     {
       title: "Giá nhập gần nhất",
@@ -371,6 +370,16 @@ export default function InventoryStockPage() {
             <Text type="secondary">/{row.last_purchase_unit_name}</Text>
           </div>
         )
+    },
+    {
+      title: "Giá trị tồn",
+      key: "stock_value",
+      width: 150,
+      align: "right",
+      render: (_, row) => {
+        const value = stockInventoryValue(row);
+        return value === null ? <Text type="secondary">—</Text> : <Text>{money(value)} đ</Text>;
+      }
     },
     {
       title: "Lần nhập cuối",
@@ -531,6 +540,19 @@ export default function InventoryStockPage() {
             valueStyle={negativeCount > 0 ? { color: "#cf1322" } : undefined}
           />
         </Card>
+        <Card size="small">
+          <Statistic
+            title="Tổng giá trị hàng hóa"
+            value={totalValue}
+            suffix="đ"
+            formatter={(value) => money(Number(value))}
+          />
+          {unpricedCount > 0 && (
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              Chưa tính {unpricedCount} mặt hàng tồn dương chưa có giá nhập
+            </Text>
+          )}
+        </Card>
       </div>
 
       <div className="toolbar stock-toolbar">
@@ -615,7 +637,7 @@ export default function InventoryStockPage() {
           columns={columns}
           dataSource={stocks}
           pagination={{ pageSize: 40, showSizeChanger: false }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
           locale={{ emptyText: "Chưa có dữ liệu tồn kho." }}
         />
       </div>
