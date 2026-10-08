@@ -281,3 +281,199 @@ def test_order_from_table_can_be_reopened_and_edited_without_payment(
             "SELECT COUNT(*) FROM fund_transactions WHERE source_type = 'SALE'"
         ).fetchone()[0]
         assert payments == 0
+
+
+
+def test_printer_settings_route_and_temporary_kitchen_note_do_not_persist(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "pos-settings"))
+    captured: list[tuple[str, str]] = []
+
+    def fake_print(name: str, content: str):
+        captured.append((name, content))
+        return True, None
+
+    monkeypatch.setattr("backend.app.pos.print_text", fake_print)
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        configured = client.put(
+            "/api/pos/settings",
+            json={
+                "kitchen_printer_name": "May Bep",
+                "cashier_printer_name": "May Thu Ngan",
+                "send_kitchen_targets": "BOTH",
+                "print_receipt_targets": "CASHIER",
+            },
+        )
+        assert configured.status_code == 200, configured.text
+        assert client.get("/api/pos/settings").json()["send_kitchen_targets"] == "BOTH"
+        assert client.put(
+            "/api/pos/settings",
+            json={"send_kitchen_targets": "INVALID"},
+        ).status_code == 422
+
+        created = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        })
+        assert created.status_code == 201, created.text
+        order_id = created.json()["id"]
+        temp_note = "Bàn gấp - ra món cùng lúc"
+        sent = client.post(
+            f"/api/pos/orders/{order_id}/send-kitchen",
+            json={"temporary_note": temp_note},
+        )
+        assert sent.status_code == 200, sent.text
+        assert sent.json()["print_status"] == "PRINTED"
+        assert [row["role"] for row in sent.json()["printer_results"]] == [
+            "KITCHEN", "CASHIER"
+        ]
+        assert [row[0] for row in captured] == ["May Bep", "May Thu Ngan"]
+        assert all(temp_note in content for _, content in captured)
+        assert client.get(f"/api/sales/orders/{order_id}").json()["note"] is None
+
+    with sqlite3.connect(db_path) as connection:
+        saved = connection.execute(
+            "SELECT payload_json, print_status FROM kitchen_tickets WHERE sales_order_id = ?",
+            (order_id,),
+        ).fetchone()
+        assert saved[1] == "PRINTED"
+        assert temp_note not in saved[0]
+        row = connection.execute(
+            "SELECT note, kitchen_sent_at FROM sales_orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        assert row[0] is None
+        assert row[1] is not None
+
+
+def test_partial_printer_failure_can_retry_without_persisting_note(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "printer-failure"))
+    captured: list[str] = []
+
+    def failing_cashier(name: str, content: str):
+        captured.append(name)
+        return (False, "Máy in thu ngân mất kết nối") if name == "Cashier" else (True, None)
+
+    monkeypatch.setattr("backend.app.pos.print_text", failing_cashier)
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        configured = client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+            "send_kitchen_targets": "BOTH",
+            "print_receipt_targets": "BOTH",
+        })
+        assert configured.status_code == 200
+        order = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        sent = client.post(
+            f"/api/pos/orders/{order['id']}/send-kitchen",
+            json={"temporary_note": "Chỉ in tạm"},
+        )
+        assert sent.status_code == 200
+        assert sent.json()["print_status"] == "FAILED"
+        assert len(sent.json()["printer_results"]) == 2
+        assert [r["ok"] for r in sent.json()["printer_results"]] == [True, False]
+        assert "Thu ngân" in sent.json()["error_message"]
+        assert client.get(f"/api/sales/orders/{order['id']}").json()["kitchen_sent_at"] is None
+
+        # A later retry prints both again, but never stores the temporary note.
+        monkeypatch.setattr("backend.app.pos.print_text", lambda name, content: (True, None))
+        retry = client.post(
+            f"/api/pos/orders/{order['id']}/send-kitchen",
+            json={"temporary_note": "Chỉ in tạm"},
+        )
+        assert retry.json()["print_status"] == "PRINTED"
+
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT payload_json FROM kitchen_tickets WHERE sales_order_id = ?",
+            (order["id"],),
+        ).fetchall()
+        assert len(rows) == 2
+        assert all("Chỉ in tạm" not in row[0] for row in rows)
+
+
+def test_cashier_receipt_print_routing_is_separate_from_payment(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "receipt-settings"))
+    captured: list[tuple[str, str]] = []
+
+    def fake_print(name: str, content: str):
+        captured.append((name, content))
+        return (False, "Hết giấy") if name == "Cashier" else (True, None)
+
+    monkeypatch.setattr("backend.app.pos.print_text", fake_print)
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        assert client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+            "send_kitchen_targets": "KITCHEN",
+            "print_receipt_targets": "BOTH",
+        }).status_code == 200
+        order = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        no_payment = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
+        assert no_payment.status_code == 409
+        funds = client.get("/api/fund-accounts?type=CASH").json()
+        paid = client.post(
+            f"/api/sales/orders/{order['id']}/pay",
+            json={"fund_account_id": funds[0]["id"]},
+        )
+        assert paid.status_code == 200
+        printed = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
+        assert printed.status_code == 200
+        assert printed.json()["print_status"] == "FAILED"
+        assert [name for name, _ in captured] == ["Kitchen", "Cashier"]
+        assert all("PHIẾU THANH TOÁN" in text for _, text in captured)
+        assert all("80,000" in text for _, text in captured)
+        # Print failure cannot charge the customer a second time.
+        after = client.get(f"/api/sales/orders/{order['id']}").json()
+        assert after["status"] == "PAID"
+        assert after["total_amount"] == 80000
+        assert client.post(f"/api/sales/orders/{order['id']}/pay",
+                           json={"fund_account_id": funds[0]["id"]}).status_code == 409
+
+
+def test_same_physical_printer_is_printed_once_even_when_route_is_both(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "same-printer"))
+    captured: list[str] = []
+    monkeypatch.setattr(
+        "backend.app.pos.print_text",
+        lambda name, content: (captured.append(name) or True, None),
+    )
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        assert client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Shared Printer",
+            "cashier_printer_name": "Shared Printer",
+            "send_kitchen_targets": "BOTH",
+            "print_receipt_targets": "BOTH",
+        }).status_code == 200
+        order = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        sent = client.post(f"/api/pos/orders/{order['id']}/send-kitchen")
+        assert sent.json()["print_status"] == "PRINTED"
+        assert captured == ["Shared Printer"]
+        assert len(sent.json()["printer_results"]) == 2
