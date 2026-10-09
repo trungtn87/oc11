@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Checkbox, Input, InputNumber, message, Modal, Segmented, Spin } from "antd";
+import { Alert, AutoComplete, Button, Checkbox, Input, InputNumber, message, Modal, Segmented, Spin } from "antd";
 import {
   getPosPrintTemplates,
+  getInstalledPrinters,
+  getPosSettings,
   previewPosPrintTemplate,
   resetPosPrintTemplate,
   savePosPrintTemplate,
   testPosPrintTemplate
 } from "./api";
-import type { PosPrintTemplate, PosPrintTemplateKind } from "./types";
+import type { PosPrintTemplate, PosPrintTemplateKind, PosSettings } from "./types";
 import "./PosPrintTemplateEditor.css";
 
 const names: Record<PosPrintTemplateKind, string> = {
@@ -44,6 +46,8 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
   const [selected, setSelected] = useState<PosPrintTemplateKind>("ESTIMATE");
   const [templates, setTemplates] = useState<Record<PosPrintTemplateKind, PosPrintTemplate> | null>(null);
   const [preview, setPreview] = useState("");
+  const [installedPrinters, setInstalledPrinters] = useState<string[]>([]);
+  const [posSettings, setPosSettings] = useState<PosSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -56,10 +60,12 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
     if (!open) return;
     let canceled = false;
     setLoading(true);
-    getPosPrintTemplates()
-      .then((rows) => {
+    Promise.all([getPosPrintTemplates(), getPosSettings(), getInstalledPrinters()])
+      .then(([rows, settings, printers]) => {
         if (!canceled) {
           setTemplates(rows);
+          setPosSettings(settings);
+          setInstalledPrinters(printers);
           setDirty([]);
         }
       })
@@ -136,6 +142,18 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
   }
 
   const financial = isFinancial(selected);
+  const defaultPrinter = selected === "KITCHEN"
+    ? posSettings?.kitchen_printer_name
+    : selected === "RECEIPT" && posSettings?.print_receipt_targets === "BOTH"
+      ? [posSettings.kitchen_printer_name, posSettings.cashier_printer_name]
+          .filter(Boolean).join(" + ")
+      : selected === "RECEIPT" && posSettings?.print_receipt_targets === "KITCHEN"
+        ? posSettings.kitchen_printer_name
+        : posSettings?.cashier_printer_name;
+  const printerOptions = Array.from(new Set([
+    ...(posSettings ? [posSettings.kitchen_printer_name, posSettings.cashier_printer_name] : []),
+    ...installedPrinters
+  ].filter((name) => name.trim()))).map((value) => ({ value }));
   const visibleFields = fields.filter(({ key }) =>
     (key !== "show_prices" || financial) &&
     (key !== "show_payment" || selected === "RECEIPT")
@@ -155,6 +173,25 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
           <div className="pos-template-controls">
             <h3>Tùy chỉnh mẫu {names[selected].toLowerCase()}</h3>
             <p>Mỗi mẫu lưu riêng. Dấu * nghĩa là có thay đổi chưa lưu.</p>
+            <div className="pos-template-printer">
+              <label htmlFor="pos-template-printer">Máy in cho mẫu {names[selected].toLowerCase()}</label>
+              <AutoComplete
+                id="pos-template-printer"
+                value={template.printer_name}
+                onChange={(name) => edit("printer_name", name)}
+                options={printerOptions}
+                placeholder={"Theo mặc định: " + (defaultPrinter || "chưa cấu hình")}
+                allowClear
+                style={{ width: "100%" }}
+              />
+              <div className="pos-template-printer-help">
+                {template.printer_name
+                  ? "Phiếu này sẽ in trên: " + template.printer_name
+                  : "Đang dùng máy mặc định: " + (defaultPrinter || "chưa cấu hình máy in")}
+                . Có thể chọn máy Windows trong danh sách hoặc nhập tên máy in.
+                Xóa lựa chọn để trở về cấu hình mặc định.
+              </div>
+            </div>
             <label>Tiêu đề phiếu</label>
             <Input value={template.title_text} maxLength={80} placeholder={titles[selected]}
               onChange={(event) => edit("title_text", event.target.value)} />
