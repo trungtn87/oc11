@@ -1093,6 +1093,64 @@ body {
 
 
 /* Purchase receipts */
+/* Phiếu nhập: 9 cột nằm gọn trong vùng nội dung, không cuộn ngang cố định. */
+.purchase-receipts-table {
+  width: 100%;
+}
+
+.purchase-receipts-table .ant-table {
+  font-size: 11px;
+}
+
+.purchase-receipts-table .ant-table-container table {
+  width: 100% !important;
+  table-layout: fixed;
+}
+
+.purchase-receipts-table .ant-table-thead > tr > th,
+.purchase-receipts-table .ant-table-tbody > tr > td {
+  padding: 8px 4px;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.purchase-receipts-table .ant-table-thead > tr > th {
+  white-space: normal;
+}
+
+.purchase-receipts-table .ant-table-tbody > tr > td {
+  line-height: 1.45;
+}
+
+.purchase-receipts-table .ant-tag {
+  margin-inline-end: 0;
+  white-space: normal;
+  line-height: 17px;
+}
+
+.purchase-receipts-table .ant-btn-link {
+  max-width: 100%;
+  height: auto;
+  padding: 0 2px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.purchase-receipts-table .ant-space {
+  flex-wrap: wrap;
+  gap: 2px 4px !important;
+}
+
+.purchase-source-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.purchase-source-lines > span {
+  overflow-wrap: anywhere;
+}
+
 .purchase-toolbar {
   flex-wrap: wrap;
 }
