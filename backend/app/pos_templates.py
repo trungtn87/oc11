@@ -16,6 +16,8 @@ class PrintTemplate(BaseModel):
     total_font_pt: int = Field(default=20, ge=14, le=26)
     line_spacing: float = Field(default=1.0, ge=1.0, le=1.8)
     left_margin_mm: int = Field(default=2, ge=1, le=8)
+    # Empty means inherit the existing POS printer routing (legacy compatible).
+    printer_name: str = Field(default="", max_length=300)
     title_text: str = Field(default="", max_length=80)
     shop_name: str = Field(default="ỐC 11", max_length=80)
     shop_phone: str = Field(default="", max_length=60)
