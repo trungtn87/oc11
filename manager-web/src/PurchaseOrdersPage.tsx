@@ -706,19 +706,34 @@ export default function PurchaseOrdersPage({
     });
   };
 
+  // Cả quỹ không còn hoạt động vẫn có trong getFundAccounts, để hiển thị
+  // đúng nguồn tiền của các phiếu nhập cũ.
+  const accountNamesById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name])),
+    [accounts]
+  );
+
+  const fundName = (id: number | null, type: FundAccountType | null) => {
+    if (id !== null) {
+      return accountNamesById.get(id) ??
+        (type === "BANK" ? "Tài khoản ngân hàng" : type === "CASH" ? "Quỹ tiền mặt" : "Không rõ quỹ");
+    }
+    return "Chưa xác định";
+  };
+
   const columns: TableProps<PurchaseReceipt>["columns"] = [
     {
       title: "Ngày nhập",
       dataIndex: "receipt_time",
       key: "receipt_time",
-      width: 145,
+      width: "11%",
       render: (value: string) => formatDateTime(value)
     },
     {
       title: "Số phiếu",
       dataIndex: "receipt_code",
       key: "receipt_code",
-      width: 120,
+      width: "11%",
       render: (value: string, row) => (
         <Button type="link" className="purchase-code-link" onClick={() => void showReceipt(row)}>
           {value}
@@ -728,21 +743,23 @@ export default function PurchaseOrdersPage({
     {
       title: "Nhà cung cấp",
       dataIndex: "supplier_name",
-      key: "supplier_name"
+      key: "supplier_name",
+      width: "15%",
+      render: (value: string) => <span title={value}>{value}</span>
     },
     {
       title: "Tiền hàng",
       dataIndex: "goods_total",
       key: "goods_total",
-      width: 140,
+      width: "10%",
       align: "right",
       render: (value: number) => money(value)
     },
     {
-      title: "Phí vận chuyển",
+      title: "Phí VC",
       dataIndex: "shipping_fee",
       key: "shipping_fee",
-      width: 135,
+      width: "8%",
       align: "right",
       render: (value: number) => (value ? money(value) : "")
     },
@@ -750,15 +767,45 @@ export default function PurchaseOrdersPage({
       title: "Tổng tiền",
       dataIndex: "total_amount",
       key: "total_amount",
-      width: 145,
+      width: "11%",
       align: "right",
       render: (value: number) => <Text strong>{money(value)}</Text>
+    },
+    {
+      title: "Nguồn tiền",
+      key: "payment_sources",
+      width: "16%",
+      render: (_, row) => {
+        if (row.payment_status === "DEBT") {
+          return <Text type="secondary">Chưa thanh toán</Text>;
+        }
+
+        const goodsId = row.payment_fund_account_id;
+        const shippingId =
+          row.shipping_fee > 0 ? row.shipping_payment_fund_account_id : null;
+        if (goodsId === null && shippingId === null) {
+          return <Text type="secondary">Chưa xác định</Text>;
+        }
+
+        const goodsName = fundName(goodsId, row.payment_account_type);
+        const shippingName = fundName(shippingId, row.shipping_payment_account_type);
+        if (shippingId !== null && goodsId !== shippingId) {
+          return (
+            <div className="purchase-source-lines">
+              <span title={`Tiền hàng: ${goodsName}`}>Hàng: {goodsName}</span>
+              <span title={`Phí vận chuyển: ${shippingName}`}>VC: {shippingName}</span>
+            </div>
+          );
+        }
+        const name = goodsId !== null ? goodsName : shippingName;
+        return <span title={name}>{name}</span>;
+      }
     },
     {
       title: "Trạng thái",
       dataIndex: "payment_status",
       key: "payment_status",
-      width: 140,
+      width: "10%",
       render: (value: PurchasePaymentStatus, row) =>
         row.is_void ? (
           <Tag>Đã hủy</Tag>
@@ -771,7 +818,7 @@ export default function PurchaseOrdersPage({
     {
       title: "Thao tác",
       key: "actions",
-      width: 125,
+      width: "8%",
       render: (_, row) => {
         if (row.is_void) {
           return row.replacement_receipt_code ? (
@@ -863,12 +910,13 @@ export default function PurchaseOrdersPage({
 
       <div className="table-card">
         <Table<PurchaseReceipt>
+          className="purchase-receipts-table"
+          tableLayout="fixed"
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={receipts}
           pagination={{ pageSize: 30, showSizeChanger: false }}
-          scroll={{ x: 1100 }}
           locale={{ emptyText: "Chưa có phiếu nhập." }}
           rowClassName={(row) => (row.is_void ? "purchase-row-void" : "")}
         />
