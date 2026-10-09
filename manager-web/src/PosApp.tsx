@@ -6,7 +6,8 @@ import {
   InputNumber,
   message,
   Modal,
-  Select
+  Select,
+  Tabs
 } from "antd";
 
 import {
@@ -52,6 +53,7 @@ import type {
 } from "./types";
 import "./PosApp.css";
 import PosDashboard from "./PosDashboard";
+import PosPrintTemplateEditor from "./PosPrintTemplateEditor";
 import PosQuickActions from "./PosQuickActions";
 import type { PosQuickAction } from "./PosQuickActions";
 
@@ -121,6 +123,7 @@ export default function PosApp() {
   const [quickAction, setQuickAction] = useState<PosQuickAction>(null);
   const [dashboardRevision, setDashboardRevision] = useState(0);
   const [printerModalOpen, setPrinterModalOpen] = useState(false);
+  const [printerTab, setPrinterTab] = useState("devices");
   const [printerLoading, setPrinterLoading] = useState(false);
   const [printerSaving, setPrinterSaving] = useState(false);
   const [printerTesting, setPrinterTesting] = useState<PrinterRole | null>(null);
@@ -523,6 +526,7 @@ export default function PosApp() {
   }
 
   async function openPrinterConfig() {
+    setPrinterTab("devices");
     setMenuOpen(false);
     setPrinterModalOpen(true);
     setPrinterLoading(true);
@@ -1389,9 +1393,9 @@ export default function PosApp() {
       <Modal
         open={printerModalOpen}
         title="Cài đặt máy in POS"
-        width={550}
+        width={1040}
         onCancel={() => { if (!printerSaving) setPrinterModalOpen(false); }}
-        footer={[
+        footer={printerTab === "devices" ? [
           <Button key="close" onClick={() => setPrinterModalOpen(false)} disabled={printerSaving}>
             Đóng
           </Button>,
@@ -1399,9 +1403,10 @@ export default function PosApp() {
             disabled={printerLoading} onClick={() => void savePrinterConfig()}>
             Lưu cấu hình
           </Button>
-        ]}
+        ] : [<Button key="close" onClick={() => setPrinterModalOpen(false)}>Đóng</Button>]}
       >
-        <div className="pos-printer-settings">
+        <Tabs activeKey={printerTab} onChange={setPrinterTab} items={[
+          { key: "devices", label: "Máy in", children: <div className="pos-printer-settings">
           <div className="pos-printer-info">Chọn máy in đã cài trên Windows hoặc gõ tên máy in.
             Lưu cấu hình trước khi in thử.</div>
           <label>Máy in bếp</label>
@@ -1457,7 +1462,9 @@ export default function PosApp() {
             Phiếu thanh toán sẽ in theo lựa chọn đã lưu (mặc định là thu ngân).
             Khi in lỗi, đơn vẫn được thanh toán và có thể chọn in lại.
           </div>
-        </div>
+        </div> },
+          { key: "templates", label: "Mẫu in (4 phiếu)", children: <PosPrintTemplateEditor open={printerModalOpen && printerTab === "templates"} /> }
+        ]} />
       </Modal>
 
       <Modal
