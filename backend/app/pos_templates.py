@@ -14,6 +14,9 @@ class PrintTemplate(BaseModel):
     title_font_pt: int = Field(default=18, ge=12, le=24)
     body_font_pt: int = Field(default=12, ge=10, le=18)
     total_font_pt: int = Field(default=20, ge=14, le=26)
+    line_spacing: float = Field(default=1.0, ge=1.0, le=1.8)
+    left_margin_mm: int = Field(default=2, ge=1, le=8)
+    title_text: str = Field(default="", max_length=80)
     shop_name: str = Field(default="ỐC 11", max_length=80)
     shop_phone: str = Field(default="", max_length=60)
     shop_address: str = Field(default="", max_length=180)
@@ -106,7 +109,7 @@ def base_header(order: dict, kind: TemplateKind, tpl: PrintTemplate,
         result.append("ĐT: " + tpl.shop_phone.strip())
     if tpl.show_address and tpl.shop_address.strip():
         result.extend(_rows(tpl.shop_address.strip()))
-    result += [heading(kind), "=" * 32, "Mã đơn: " + str(order["order_code"])]
+    result += [tpl.title_text.strip() or heading(kind), "=" * 32, "Mã đơn: " + str(order["order_code"])]
     if tpl.show_table:
         if order.get("order_type") == "DINE_IN":
             result.extend(_rows("Bàn: " + str(order.get("table_name") or "")
@@ -210,7 +213,7 @@ def render_money_template(order: dict, items: list[dict],
 def with_print_style(content: str, tpl: PrintTemplate) -> str:
     """Private header decoded by print_text; no persisted changes to ticket snapshots."""
     return (f"__OC11_FONT:{tpl.title_font_pt},{tpl.body_font_pt},"
-            f"{tpl.total_font_pt}__\r\n" + content)
+            f"{tpl.total_font_pt},{tpl.line_spacing},{tpl.left_margin_mm}__\r\n" + content)
 
 
 def sample_print(kind: TemplateKind, tpl: PrintTemplate) -> str:
