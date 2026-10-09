@@ -650,17 +650,17 @@ def preview_print_template(payload: TemplatePreviewInput) -> dict:
 def test_print_template(kind: TemplateKind, payload: PrintTemplate) -> dict:
     """Use a sample only, without creating sales or kitchen tickets."""
     settings = pos_settings_output(load_settings())
-    printer_name = (
-        settings.kitchen_printer_name if kind == "KITCHEN"
-        else settings.cashier_printer_name
+    content = with_print_style(
+        "BẢN IN THỬ - KHÔNG CÓ GIÁ TRỊ\r\n" + sample_print(kind, payload),
+        payload,
     )
-    if not printer_name:
-        return {"ok": False, "printer_name": None, "error": "Chưa cấu hình máy in."}
-    ok, error = print_text(
-        printer_name, with_print_style("BẢN IN THỬ - KHÔNG CÓ GIÁ TRỊ\r\n"
-                                       + sample_print(kind, payload), payload)
-    )
-    return {"ok": ok, "printer_name": printer_name, "error": error}
+    status, error, results = dispatch_template_print(settings, kind, payload, content)
+    names = [result.printer_name for result in results if result.printer_name]
+    return {
+        "ok": status == "PRINTED",
+        "printer_name": ", ".join(names) or None,
+        "error": error,
+    }
 
 
 def powershell_quote(value: str) -> str:
@@ -887,6 +887,48 @@ def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: 
     )
 
 
+def resolve_template_printer(
+    settings: PosSettingsOutput, kind: TemplateKind, template: PrintTemplate,
+) -> str:
+    """An explicit template printer wins; empty inherits the existing POS role."""
+    configured = template.printer_name.strip()
+    if configured:
+        return configured
+    return (
+        settings.kitchen_printer_name.strip()
+        if kind == "KITCHEN" else settings.cashier_printer_name.strip()
+    )
+
+
+def dispatch_template_print(
+    settings: PosSettingsOutput, kind: TemplateKind,
+    template: PrintTemplate, content: str,
+):
+    """Route each layout to its saved printer, retaining legacy defaults."""
+    specific_name = template.printer_name.strip()
+    if not specific_name:
+        legacy_target: PrinterTarget = (
+            settings.print_receipt_targets if kind == "RECEIPT"
+            else "KITCHEN" if kind == "KITCHEN" else "CASHIER"
+        )
+        return dispatch_print(settings, legacy_target, content)
+
+    role: Literal["KITCHEN", "CASHIER"] = (
+        "KITCHEN"
+        if specific_name.casefold() == settings.kitchen_printer_name.strip().casefold()
+        else "CASHIER"
+    )
+    ok, error = print_text(specific_name, content)
+    result = PrintDestinationResult(
+        role=role, printer_name=specific_name, ok=ok, error=error
+    )
+    return (
+        "PRINTED" if ok else "FAILED",
+        None if ok else f"{specific_name}: {error or 'In lỗi'}",
+        [result],
+    )
+
+
 def build_cashier_receipt(connection, order, *, provisional: bool = False) -> str:
     kind: TemplateKind = "ESTIMATE" if provisional else "RECEIPT"
     template = get_templates(load_settings())[kind]
@@ -1009,10 +1051,9 @@ def send_order_to_kitchen(
             for role, already_ok in (
                 ("KITCHEN", kitchen_ok), ("CASHIER", check_ok)
             ):
-                printer_name = (
-                    settings.kitchen_printer_name if role == "KITCHEN"
-                    else settings.cashier_printer_name
-                ).strip()
+                kind: TemplateKind = "KITCHEN" if role == "KITCHEN" else "CHECK"
+                template = templates[kind]
+                printer_name = resolve_template_printer(settings, kind, template)
                 if already_ok:
                     result = PrintDestinationResult(
                         role=role, printer_name=printer_name or None, ok=True,
@@ -1024,8 +1065,6 @@ def send_order_to_kitchen(
                               + ("bếp." if role == "KITCHEN" else "thu ngân."),
                     )
                 else:
-                    kind: TemplateKind = "KITCHEN" if role == "KITCHEN" else "CHECK"
-                    template = templates[kind]
                     text = render_kitchen_template(
                         dict(order), ticket_items, kind, template,
                         sent_at=sent_at, batch_number=batch_number,
@@ -1099,8 +1138,8 @@ def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
             )
         content = build_cashier_receipt(connection, order)
         template = get_templates(load_settings())["RECEIPT"]
-        print_status, error, results = dispatch_print(
-            settings, settings.print_receipt_targets, with_print_style(content, template)
+        print_status, error, results = dispatch_template_print(
+            settings, "RECEIPT", template, with_print_style(content, template)
         )
         return PrintDispatchOutput(
             order_id=order_id,
@@ -1123,8 +1162,8 @@ def print_sale_estimate(order_id: int) -> PrintDispatchOutput:
             raise HTTPException(status_code=409, detail="Chỉ in tạm tính cho Order đang phục vụ.")
         content = build_cashier_receipt(connection, order, provisional=True)
         template = get_templates(load_settings())["ESTIMATE"]
-        print_status, error, results = dispatch_print(
-            settings, "CASHIER", with_print_style(content, template)
+        print_status, error, results = dispatch_template_print(
+            settings, "ESTIMATE", template, with_print_style(content, template)
         )
         return PrintDispatchOutput(
             order_id=order_id, order_code=order["order_code"],
