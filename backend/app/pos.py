@@ -577,15 +577,12 @@ def list_printers() -> list[str]:
 
 
 def pos_settings_output(settings: dict) -> PosSettingsOutput:
-    def target(key: str, default: PrinterTarget) -> PrinterTarget:
-        value = settings.get(key)
-        return value if value in ("KITCHEN", "CASHIER", "BOTH") else default
-
     return PosSettingsOutput(
         kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
         cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
         send_kitchen_targets="BOTH",
-        print_receipt_targets=target("print_receipt_targets", "CASHIER"),
+        # Phiếu thanh toán chỉ in tại thu ngân, kể cả cấu hình cũ là BẾP/CẢ HAI.
+        print_receipt_targets="CASHIER",
     )
 
 
@@ -600,7 +597,7 @@ def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
     settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
     settings["send_kitchen_targets"] = "BOTH"
-    settings["print_receipt_targets"] = payload.print_receipt_targets
+    settings["print_receipt_targets"] = "CASHIER"
     save_settings(settings)
     return pos_settings_output(settings)
 
@@ -1016,7 +1013,7 @@ def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
             )
         content = build_cashier_receipt(connection, order)
         print_status, error, results = dispatch_print(
-            settings, settings.print_receipt_targets, content
+            settings, "CASHIER", content
         )
         return PrintDispatchOutput(
             order_id=order_id,
