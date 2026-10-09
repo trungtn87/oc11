@@ -657,7 +657,8 @@ def test_print_template(kind: TemplateKind, payload: PrintTemplate) -> dict:
     if not printer_name:
         return {"ok": False, "printer_name": None, "error": "Chưa cấu hình máy in."}
     ok, error = print_text(
-        printer_name, with_print_style(sample_print(kind, payload), payload)
+        printer_name, with_print_style("BẢN IN THỬ - KHÔNG CÓ GIÁ TRỊ\r\n"
+                                       + sample_print(kind, payload), payload)
     )
     return {"ok": ok, "printer_name": printer_name, "error": error}
 
@@ -764,7 +765,7 @@ public static class Oc11Thermal80 {
 }
 '@
 $text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
-[Oc11Thermal80]::Print($args[0], $text, [float]$args[2], [float]$args[3], [float]$args[4], [float]$args[5], [float]$args[6])
+[Oc11Thermal80]::Print($args[0], $text, [float]$args[2], [float]$args[3], [float]$args[4], [float]::Parse($args[5], [System.Globalization.CultureInfo]::InvariantCulture), [float]$args[6])
 """
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8-sig", suffix=".ps1", delete=False
