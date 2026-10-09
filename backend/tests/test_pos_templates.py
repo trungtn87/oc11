@@ -46,5 +46,6 @@ def test_sample_print_printer_routing(tmp_path, monkeypatch):
             assert result.status_code == 200 and result.json()["ok"]
             assert sent[-1][0] == expected
             assert "__OC11_FONT:" in sent[-1][1]
+            assert "BẢN IN THỬ - KHÔNG CÓ GIÁ TRỊ" in sent[-1][1]
         assert "CHƯA THANH TOÁN" in sent[2][1]
         assert "ĐÃ THANH TOÁN" in sent[3][1]
