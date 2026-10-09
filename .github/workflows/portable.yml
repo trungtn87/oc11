@@ -38,6 +38,9 @@ jobs:
         working-directory: manager-web
         run: npm run build
 
+      - name: Verify large POS controls in bundled CSS
+        run: node manager-web/scripts/verify-pos-styles.mjs
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
