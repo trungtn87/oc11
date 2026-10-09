@@ -578,6 +578,19 @@ def test_paid_receipt_splits_goods_and_shipping_across_different_accounts(
             != receipt["shipping_payment_reference_code"]
         )
 
+        # Danh sách phiếu nhập (không tải items) cũng phải trả về cả hai
+        # ID nguồn tiền để giao diện hiển thị chính xác ở cột Nguồn tiền.
+        listed = client.get("/api/purchase-receipts")
+        assert listed.status_code == 200
+        in_list = next(
+            row for row in listed.json() if row["id"] == receipt["id"]
+        )
+        assert in_list["items"] == []
+        assert in_list["payment_fund_account_id"] == bank_account["id"]
+        assert in_list["payment_account_type"] == "BANK"
+        assert in_list["shipping_payment_fund_account_id"] == cash_account["id"]
+        assert in_list["shipping_payment_account_type"] == "CASH"
+
         bank_accounts = {
             row["id"]: row
             for row in client.get("/api/fund-accounts?type=BANK").json()
