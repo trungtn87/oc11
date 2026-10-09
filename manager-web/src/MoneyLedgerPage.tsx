@@ -218,7 +218,10 @@ function MoneyLedgerPage({
         to_date: toDate || undefined
       });
 
+      // API tính số dư chạy theo thứ tự thời gian tăng dần. Chỉ đảo danh
+      // sách hiển thị, giữ nguyên running_balance của từng chứng từ.
       setRows([
+        ...result.items.slice().reverse().map(transactionToRow),
         {
           key: "opening",
           transaction_time: null,
@@ -234,8 +237,7 @@ function MoneyLedgerPage({
           running_balance: result.opening_balance,
           fund_account_name: null,
           is_opening: true
-        },
-        ...result.items.map(transactionToRow)
+        }
       ]);
       setTotalIn(result.total_in);
       setTotalOut(result.total_out);
