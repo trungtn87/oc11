@@ -1033,6 +1033,27 @@ def init_db() -> None:
             """
         )
 
+        # Non-secret metadata only. Never store MISA tokens/passwords in SQLite or serve them over the LAN.
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS einvoice_integration_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                environment TEXT NOT NULL DEFAULT 'SANDBOX'
+                    CHECK (environment IN ('SANDBOX', 'PRODUCTION')),
+                company_tax_code TEXT NOT NULL DEFAULT '',
+                invoice_series TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO einvoice_integration_settings
+                (id, environment, company_tax_code, invoice_series)
+            VALUES (1, 'SANDBOX', '', '')
+            """
+        )
+
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS sales_order_revisions (

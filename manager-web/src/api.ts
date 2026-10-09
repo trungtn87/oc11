@@ -93,6 +93,84 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export type EinvoiceSettings = {
+  provider: "MISA_MEINVOICE";
+  issuance_source: "CUKCUK";
+  environment: "SANDBOX" | "PRODUCTION";
+  company_tax_code: string;
+  invoice_series: string;
+  live_enabled: false;
+  sandbox_publish_enabled: false;
+  credential_storage: string;
+  message: string;
+};
+
+export type EinvoiceOrder = {
+  sales_order_id: number;
+  order_code: string;
+  order_time: string;
+  total_amount: number;
+  sale_status: string;
+  settlement_status: string;
+  customer_name: string | null;
+  customer_tax_code: string | null;
+  invoice_id: number | null;
+  invoice_status: string;
+};
+
+export type EinvoicePreview = {
+  sales_order_id: number;
+  order_code: string;
+  order_time: string;
+  total_amount: number;
+  sale_status: string;
+  customer: {
+    id: number | null;
+    name: string | null;
+    type: string | null;
+    tax_code: string | null;
+    address: string | null;
+    email: string | null;
+    contact_name: string | null;
+  };
+  items: Array<{
+    id: number;
+    item_name_snapshot: string;
+    option_name_snapshot: string | null;
+    unit_name_snapshot: string;
+    quantity: number;
+    unit_price: number;
+    line_total: number;
+    surcharge_total: number;
+  }>;
+  order_surcharges: Array<{ name: string; amount: number }>;
+  invoice: Record<string, unknown> | null;
+  warnings: string[];
+  can_publish: false;
+};
+
+export function getEinvoiceSettings(): Promise<EinvoiceSettings> {
+  return request<EinvoiceSettings>("/api/einvoice/settings");
+}
+export function updateEinvoiceSettings(
+  payload: Pick<EinvoiceSettings, "environment" | "company_tax_code" | "invoice_series">
+): Promise<EinvoiceSettings> {
+  return request<EinvoiceSettings>("/api/einvoice/settings", {
+    method: "PUT", body: JSON.stringify(payload)
+  });
+}
+export function getEinvoiceOrders(): Promise<EinvoiceOrder[]> {
+  return request<EinvoiceOrder[]>("/api/einvoice/orders");
+}
+export function getEinvoicePreview(orderId: number): Promise<EinvoicePreview> {
+  return request<EinvoicePreview>("/api/einvoice/orders/" + orderId + "/preview");
+}
+export function requestEinvoice(orderId: number): Promise<{ id: number; status: string }> {
+  return request<{ id: number; status: string }>("/api/einvoice/orders/" + orderId + "/request", {
+    method: "POST"
+  });
+}
+
 export function getItemGroups(): Promise<ItemGroup[]> {
   return request<ItemGroup[]>("/api/item-groups");
 }
