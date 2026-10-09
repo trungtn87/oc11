@@ -80,6 +80,7 @@ import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
 import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
 import SurchargesPage from "./SurchargesPage";
+import { EinvoiceRequestsPage, EinvoiceSettingsPanel } from "./EinvoicePage";
 import { RestaurantTablesSettings } from "./RestaurantSettingsPage";
 import { oc11LogoDataUri } from "./oc11LogoData";
 import type {
@@ -155,6 +156,7 @@ const menuItems: MenuProps["items"] = [
     children: [
       { key: "sales-pos", icon: <ShoppingCartOutlined />, label: "Bán hàng" },
       { key: "sales-orders", icon: <FileTextOutlined />, label: "Đơn bán hàng" },
+      { key: "sales-einvoice", icon: <FileTextOutlined />, label: "Hóa đơn điện tử" },
       { key: "sales-surcharges", icon: <TagsOutlined />, label: "Phụ thu" }
     ]
   },
@@ -2652,6 +2654,7 @@ function PlaceholderPage({ title }: { title: string }) {
 const pageTitles: Record<string, string> = {
   "sales-pos": "Bán hàng",
   "sales-orders": "Đơn bán hàng",
+  "sales-einvoice": "Hóa đơn điện tử",
   "sales-surcharges": "Phụ thu",
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
@@ -2733,6 +2736,10 @@ function App() {
 
     if (page === "suppliers") {
       return <SuppliersPage />;
+    }
+
+    if (page === "sales-einvoice") {
+      return <EinvoiceRequestsPage />;
     }
 
     if (page === "menu-items") {
@@ -2853,6 +2860,11 @@ function App() {
               key: "backup",
               label: "Sao lưu dữ liệu",
               children: <BackupSettingsPage />
+            },
+            {
+              key: "einvoice",
+              label: "Kết nối MISA meInvoice",
+              children: <EinvoiceSettingsPanel />
             }
           ]}
         />
