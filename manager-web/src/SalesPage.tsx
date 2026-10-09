@@ -21,6 +21,7 @@ import {
   getPosCustomers,
   createPosCustomer,
   getMenuItems,
+  getSaleOrder,
   getSaleOrders,
   getSurchargePresets,
   paySaleOrder,
@@ -1211,9 +1212,13 @@ export function SalesPosPage({
 }
 
 export function SalesOrdersPage({
-  onEditOrder
+  onEditOrder,
+  initialOrderId,
+  onInitialOrderConsumed
 }: {
   onEditOrder?: (order: SaleOrder) => void;
+  initialOrderId?: number | null;
+  onInitialOrderConsumed?: () => void;
 }) {
   const [orders, setOrders] = useState<SaleOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1267,6 +1272,32 @@ export function SalesOrdersPage({
     if (period === "CUSTOM" && (!customFrom || !customTo)) return;
     void load();
   }, [statusFilter, fundAccountFilter, period, customFrom, customTo]);
+
+  // Mở trực tiếp đơn bán được liên kết từ sổ tiền, kể cả khi nằm ngoài
+  // khoảng thời gian hoặc bộ lọc hiện tại của danh sách đơn bán.
+  useEffect(() => {
+    if (!initialOrderId) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const order = await getSaleOrder(initialOrderId);
+        if (!cancelled) setSelected(order);
+      } catch (error) {
+        if (!cancelled) {
+          messageApi.error(
+            error instanceof Error ? error.message : "Không mở được đơn bán liên quan."
+          );
+        }
+      } finally {
+        if (!cancelled) onInitialOrderConsumed?.();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialOrderId]);
 
   const statusTag = (order: SaleOrder) => {
     if (order.status === "VOID") return <Tag>Đã hủy</Tag>;
