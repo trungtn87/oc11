@@ -2677,6 +2677,7 @@ function App() {
   const [page, setPage] = useState("dashboard");
   const [voucherPrefill, setVoucherPrefill] = useState<VoucherPrefill | null>(null);
   const [linkedPurchaseReceiptId, setLinkedPurchaseReceiptId] = useState<number | null>(null);
+  const [linkedSaleOrderId, setLinkedSaleOrderId] = useState<number | null>(null);
   const [editingSaleOrder, setEditingSaleOrder] = useState<SaleOrder | null>(null);
   const today = new Intl.DateTimeFormat("vi-VN").format(new Date());
 
@@ -2704,6 +2705,8 @@ function App() {
     if (page === "sales-orders") {
       return (
         <SalesOrdersPage
+          initialOrderId={linkedSaleOrderId}
+          onInitialOrderConsumed={() => setLinkedSaleOrderId(null)}
           onEditOrder={(order) => {
             setEditingSaleOrder(order);
             setPage("sales-pos");
@@ -2787,14 +2790,17 @@ function App() {
 
     if (page === "money-ledgers") {
       const openSourceDocument = (sourceType: string, sourceId: string) => {
-        if (sourceType !== "PURCHASE_RECEIPT") {
+        const documentId = Number(sourceId);
+        if (!Number.isInteger(documentId) || documentId <= 0) {
           return;
         }
 
-        const receiptId = Number(sourceId);
-        if (Number.isInteger(receiptId) && receiptId > 0) {
-          setLinkedPurchaseReceiptId(receiptId);
+        if (sourceType === "PURCHASE_RECEIPT") {
+          setLinkedPurchaseReceiptId(documentId);
           setPage("purchase-orders");
+        } else if (sourceType === "SALE") {
+          setLinkedSaleOrderId(documentId);
+          setPage("sales-orders");
         }
       };
 
