@@ -1459,7 +1459,8 @@ export default function PosApp() {
             ]}
           />
           <div className="pos-printer-info">
-            Phiếu thanh toán sẽ in theo lựa chọn đã lưu (mặc định là thu ngân).
+            Chỉ áp dụng khi mẫu Thanh toán chưa chọn máy in riêng ở tab Mẫu in.
+            Máy in riêng của từng mẫu được ưu tiên hơn cấu hình chung.
             Khi in lỗi, đơn vẫn được thanh toán và có thể chọn in lại.
           </div>
         </div> },
