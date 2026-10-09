@@ -433,61 +433,63 @@ function MoneyLedgerPage({
 
   const columns: TableProps<LedgerRow>["columns"] = [
     {
-      title: "Ngày chứng từ",
+      title: "Ngày CT",
       dataIndex: "transaction_time",
       key: "transaction_time",
-      width: 125,
+      width: "7%",
       render: (value: string | null, row) =>
         row.is_opening ? null : formatDate(value)
     },
     {
-      title: "Số phiếu thu",
+      title: "Phiếu thu",
       dataIndex: "receipt_code",
       key: "receipt_code",
-      width: 135,
+      width: "11%",
       render: (value: string | null) => value || ""
     },
     {
-      title: "Số phiếu chi",
+      title: "Phiếu chi",
       dataIndex: "payment_code",
       key: "payment_code",
-      width: 135,
+      width: "11%",
       render: (value: string | null) => value || ""
     },
     {
       title: "Loại thu/chi",
+      width: "8%",
       dataIndex: "category_name",
       key: "category_name",
-      width: 150,
       render: (value: string | null) => value || ""
     },
     {
       title: "Diễn giải",
       dataIndex: "description",
       key: "description",
+      width: "12%",
       render: (value: string, row) =>
         row.is_opening ? <Text strong>{value}</Text> : value
     },
     {
-      title: "Chứng từ liên quan",
+      title: "CT liên quan",
       key: "source_reference",
-      width: 155,
+      width: "12%",
       render: (_, row) => {
         if (row.is_opening || !row.source_type || !row.source_id) {
           return "";
         }
 
-        if (row.source_type === "PURCHASE_RECEIPT") {
+        if (row.source_type === "PURCHASE_RECEIPT" || row.source_type === "SALE") {
           return (
             <Button
               type="link"
               size="small"
               style={{ padding: 0 }}
+              title={row.source_reference_code || undefined}
               onClick={() =>
                 onOpenSourceDocument?.(row.source_type as string, row.source_id as string)
               }
             >
-              {row.source_reference_code || `Phiếu nhập #${row.source_id}`}
+              {row.source_reference_code || (row.source_type === "SALE" ? `Đơn bán #${row.source_id}` : `Phiếu nhập #${row.source_id}`)}
             </Button>
           );
         }
@@ -496,36 +498,36 @@ function MoneyLedgerPage({
       }
     },
     {
-      title: "Số tiền thu",
+      title: "Tiền thu",
       dataIndex: "amount_in",
       key: "amount_in",
-      width: 145,
+      width: "9%",
       align: "right",
       render: (value: number, row) =>
         row.is_opening || value === 0 ? "" : formatMoney(value)
     },
     {
-      title: "Số tiền chi",
+      title: "Tiền chi",
       dataIndex: "amount_out",
       key: "amount_out",
-      width: 145,
+      width: "9%",
       align: "right",
       render: (value: number, row) =>
         row.is_opening || value === 0 ? "" : formatMoney(value)
     },
     {
-      title: "Số tiền còn lại",
+      title: "Số dư",
       dataIndex: "running_balance",
       key: "running_balance",
-      width: 160,
+      width: "11%",
       align: "right",
       render: (value: number) => <Text strong>{formatMoney(value)}</Text>
     },
     {
-      title: accountLabel,
+      title: accountType === "CASH" ? "Quỹ" : "Tài khoản",
       dataIndex: "fund_account_name",
       key: "fund_account_name",
-      width: 190,
+      width: "10%",
       render: (value: string | null, row) =>
         row.is_opening ? "" : value || ""
     }
@@ -595,12 +597,13 @@ function MoneyLedgerPage({
 
       <div className="table-card">
         <Table<LedgerRow>
+          className="money-ledger-table"
+          tableLayout="fixed"
           rowKey="key"
           loading={loading}
           columns={columns}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 1505 }}
           locale={{ emptyText: "Chưa có phát sinh." }}
           summary={() => (
             <Table.Summary.Row>
