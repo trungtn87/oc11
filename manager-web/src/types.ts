@@ -694,6 +694,7 @@ export type PrinterTarget = PrinterRole | "BOTH";
 export type PosPrintTemplateKind = "KITCHEN" | "CHECK" | "ESTIMATE" | "RECEIPT";
 
 export type PosPrintTemplate = {
+  printer_name: string;
   title_font_pt: number;
   body_font_pt: number;
   total_font_pt: number;
