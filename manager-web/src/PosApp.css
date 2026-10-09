@@ -411,14 +411,37 @@
   justify-content: center;
   gap: 4px;
 }
+/* Large quantity controls for touch and cashier operation. */
 .pos-line-qty button {
-  width: 30px;
-  height: 30px;
-  border: 1px solid #ccc;
-  background: #fff;
+  box-sizing: border-box;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #9cbdd1;
+  border-radius: 7px;
+  background: #f7fbff;
+  color: #087bbb;
+  font-size: 22px;
+  font-weight: 700;
   cursor: pointer;
 }
-.pos-line-qty .ant-input-number { width: 70px; }
+.pos-line-qty button:focus-visible { outline: 2px solid #087bbb; outline-offset: 2px; }
+.pos-line-qty .ant-input-number {
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 64px;
+  height: 44px;
+  min-height: 44px;
+}
+.pos-line-qty .ant-input-number-input-wrap,
+.pos-line-qty .ant-input-number-input {
+  height: 42px;
+}
+.pos-line-qty .ant-input-number-input {
+  padding-inline: 2px;
+  text-align: center;
+  font-size: 18px;
+}
 .pos-cart-line > strong { text-align: right; }
 .pos-line-remove {
   border: 0;
@@ -555,10 +578,21 @@
 .pos-empty { padding: 28px; color: #777; }
 @media (max-width: 1050px) {
   .pos-sale-view { grid-template-columns: 43% 57%; }
-  .pos-menu-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
-  .pos-cart-columns { grid-template-columns: 1fr 130px 110px; }
-  .pos-cart-line { grid-template-columns: 1fr 130px 110px 30px; }
+  .pos-cart-columns { grid-template-columns: minmax(0, 1fr) 162px 100px; }
+  .pos-cart-line { grid-template-columns: minmax(0, 1fr) 162px 100px 34px; }
   .pos-actions { grid-template-columns: repeat(5, 1fr); }
+}
+
+/* A 1024px cashier screen still accommodates three readable dish tiles. */
+@media (max-width: 860px) {
+  .pos-menu-grid { grid-template-columns: repeat(2, minmax(105px, 1fr)); }
+  .pos-cart-columns { grid-template-columns: minmax(0, 1fr) 138px 82px; }
+  .pos-cart-line { grid-template-columns: minmax(0, 1fr) 138px 82px 30px; gap: 5px; padding-inline: 8px; }
+  .pos-line-qty button { flex-basis: 38px; width: 38px; height: 38px; font-size: 20px; }
+  .pos-line-qty .ant-input-number { flex-basis: 54px; width: 54px; min-width: 54px; height: 38px; min-height: 38px; }
+  .pos-line-qty .ant-input-number-input,
+  .pos-line-qty .ant-input-number-input-wrap { height: 36px; }
+  .pos-line-qty .ant-input-number-input { font-size: 16px; }
 }
 
 /* PC POS - table order creation */
