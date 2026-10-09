@@ -6,6 +6,8 @@ import PosApp from "./PosApp";
 import "./styles.css";
 
 const mode = new URLSearchParams(window.location.search).get("mode");
+// Manager compact-control rules must never shrink POS buttons (including portal modals).
+document.body.classList.toggle("oc11-pos-mode", mode === "pos");
 const RootApp = mode === "pos" ? PosApp : App;
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
