@@ -22,6 +22,7 @@ from .purchase_defaults import router as purchase_defaults_router
 from .purchase_receipts import router as purchase_receipts_router
 from .pos import router as pos_router
 from .sales import router as sales_router
+from .einvoice import router as einvoice_router
 from .suppliers import router as suppliers_router
 from .surcharge_presets import router as surcharge_presets_router
 from .units import router as units_router
@@ -64,6 +65,7 @@ app.include_router(purchase_defaults_router)
 app.include_router(purchase_receipts_router)
 app.include_router(pos_router)
 app.include_router(sales_router)
+app.include_router(einvoice_router)
 app.include_router(suppliers_router)
 app.include_router(surcharge_presets_router)
 app.include_router(units_router)
