@@ -420,12 +420,15 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
     monkeypatch.setattr("backend.app.pos.print_text", fake_print)
     with TestClient(app) as client:
         item_id = seed_menu(db_path)
-        assert client.put("/api/pos/settings", json={
+        configured = client.put("/api/pos/settings", json={
             "kitchen_printer_name": "Kitchen",
             "cashier_printer_name": "Cashier",
             "send_kitchen_targets": "KITCHEN",
             "print_receipt_targets": "BOTH",
-        }).status_code == 200
+        })
+        assert configured.status_code == 200
+        assert configured.json()["print_receipt_targets"] == "CASHIER"
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "CASHIER"
         order = client.post("/api/sales/orders", json={
             "order_type": "TAKEAWAY",
             "items": [{"menu_item_id": item_id, "quantity": 1}],
@@ -441,7 +444,8 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
         printed = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
         assert printed.status_code == 200
         assert printed.json()["print_status"] == "FAILED"
-        assert [name for name, _ in captured] == ["Kitchen", "Cashier"]
+        assert [name for name, _ in captured] == ["Cashier"]
+        assert [row["role"] for row in printed.json()["printer_results"]] == ["CASHIER"]
         assert all("PHIẾU THANH TOÁN" in text for _, text in captured)
         assert all("80,000" in text for _, text in captured)
         # Print failure cannot charge the customer a second time.
@@ -450,6 +454,49 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
         assert after["total_amount"] == 80000
         assert client.post(f"/api/sales/orders/{order['id']}/pay",
                            json={"fund_account_id": funds[0]["id"]}).status_code == 409
+
+
+
+def test_legacy_kitchen_receipt_setting_cannot_redirect_paid_bill(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "old-settings"))
+    captured = []
+    monkeypatch.setattr(
+        "backend.app.pos.print_text",
+        lambda name, content: (captured.append((name, content)) or True, None),
+    )
+
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        # Older POS versions could persist a kitchen-only receipt route.
+        from backend.app.settings import load_settings, save_settings
+        legacy = load_settings()
+        legacy.update({
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+            "print_receipt_targets": "KITCHEN",
+        })
+        save_settings(legacy)
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "CASHIER"
+
+        order = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        account_id = client.get("/api/fund-accounts?type=CASH").json()[0]["id"]
+        assert client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "fund_account_id": account_id,
+        }).status_code == 200
+        result = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
+        assert result.status_code == 200, result.text
+        assert result.json()["print_status"] == "PRINTED"
+        assert [r["role"] for r in result.json()["printer_results"]] == ["CASHIER"]
+        assert len(captured) == 1
+        assert captured[0][0] == "Cashier"
+        assert "PHIẾU THANH TOÁN" in captured[0][1]
 
 
 def test_same_physical_printer_is_printed_once_even_when_route_is_both(

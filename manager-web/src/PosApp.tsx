@@ -42,7 +42,6 @@ import type {
   PosCustomer,
   PosCustomerInput,
   PrinterRole,
-  PrinterTarget,
   RestaurantArea,
   RestaurantTable,
   SaleOrder,
@@ -544,7 +543,7 @@ export default function PosApp() {
     try {
       const saved = await updatePosSettings(printerSettings);
       setPrinterSettings(saved);
-      messageApi.success("Đã lưu cấu hình máy in cho cả hai chức năng.");
+      messageApi.success("Đã lưu máy in bếp và thu ngân. Phiếu thanh toán chỉ in ở thu ngân.");
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Không lưu được máy in.");
     } finally {
@@ -1441,20 +1440,12 @@ export default function PosApp() {
             (có ô tick) ở máy thu ngân. Mỗi lần chỉ in món mới.
             Nếu lỗi sẽ chỉ in bù tại máy chưa in thành công.
           </div>
-          <label>Chức năng In phiếu thanh toán in tại</label>
-          <Select
-            value={printerSettings.print_receipt_targets}
-            disabled={printerLoading}
-            onChange={(value: PrinterTarget) => setPrinterSettings((current) =>
-              ({ ...current, print_receipt_targets: value }))}
-            options={[
-              { value: "CASHIER", label: "Chỉ máy in thu ngân" },
-              { value: "KITCHEN", label: "Chỉ máy in bếp" },
-              { value: "BOTH", label: "Cả hai máy" }
-            ]}
-          />
-          <div className="pos-printer-info">Phiếu thanh toán tự in khi xác nhận Tính tiền.
-            Nếu in lỗi, đơn vẫn được thanh toán và có thể chọn in lại.</div>
+          <label>In phiếu thanh toán</label>
+          <div className="pos-printer-info">
+            Chỉ in ở máy thu ngân đã chọn ở trên (không gửi phiếu thanh toán
+            xuống máy bếp). Phiếu tự in sau khi thanh toán; nếu máy in lỗi,
+            đơn vẫn được thanh toán và có thể chọn in lại.
+          </div>
         </div>
       </Modal>
 
