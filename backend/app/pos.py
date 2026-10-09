@@ -679,14 +679,20 @@ def print_text(printer_name: str, content: str) -> tuple[bool, str | None]:
 
     # The in-band style header lets legacy print_text(name, content) mocks keep
     # their two-argument API, while each real Windows print uses its own sizes.
-    title_pt, body_pt, total_pt = (11, 9, 14)
+    title_pt, body_pt, total_pt, spacing, margin_mm = (11, 9, 14, 1.0, 2.0)
     if content.startswith("__OC11_FONT:"):
         header, separator, rest = content.partition("\r\n")
         try:
             values = header.removeprefix("__OC11_FONT:").removesuffix("__")
-            new_title, new_body, new_total = (int(part) for part in values.split(","))
-            if 12 <= new_title <= 24 and 10 <= new_body <= 18 and 14 <= new_total <= 26:
+            parts = values.split(",")
+            new_title, new_body, new_total = (int(part) for part in parts[:3])
+            new_spacing = float(parts[3]) if len(parts) >= 4 else 1.0
+            new_margin = float(parts[4]) if len(parts) >= 5 else 2.0
+            if (12 <= new_title <= 24 and 10 <= new_body <= 18
+                    and 14 <= new_total <= 26 and 1 <= new_spacing <= 1.8
+                    and 1 <= new_margin <= 8):
                 title_pt, body_pt, total_pt = new_title, new_body, new_total
+                spacing, margin_mm = new_spacing, new_margin
                 if separator:
                     content = rest
         except (ValueError, TypeError):
@@ -712,7 +718,7 @@ using System.Drawing;
 using System.Drawing.Printing;
 
 public static class Oc11Thermal80 {
-    public static void Print(string printer, string content, float titlePt, float bodyPt, float totalPt) {
+    public static void Print(string printer, string content, float titlePt, float bodyPt, float totalPt, float spacing, float margin) {
         string[] lines = content.Replace("\r\n", "\n").Split('\n');
         using (PrintDocument doc = new PrintDocument()) {
             doc.PrinterSettings.PrinterName = printer;
@@ -729,22 +735,25 @@ public static class Oc11Thermal80 {
                 doc.PrintPage += (sender, e) => {
                     e.Graphics.PageUnit = GraphicsUnit.Millimeter;
                     float y = 2.0f;
-                    foreach (string line in lines) {
+                    for (int i = 0; i < lines.Length; i++) {
+                        string line = lines[i];
                         string trimmed = line.Trim();
                         bool isHeading = trimmed == "CHẾ BIẾN" ||
                                          trimmed == "KIỂM ĐỒ" ||
                                          trimmed == "PHIẾU TẠM TÍNH" ||
-                                         trimmed == "PHIẾU THANH TOÁN";
+                                         trimmed == "PHIẾU THANH TOÁN" ||
+                                         (i + 1 < lines.Length && lines[i + 1].StartsWith("===="));
                         bool isTotal = trimmed.StartsWith("TỔNG TIỀN:");
                         Font chosen = isHeading ? heading : (isTotal ? total : body);
                         SizeF measured = e.Graphics.MeasureString(
-                            line.Length == 0 ? " " : line, chosen, new SizeF(74.0f, 1000.0f)
+                            line.Length == 0 ? " " : line, chosen, new SizeF(80.0f - margin - 2.0f, 1000.0f)
                         );
                         float lineHeight = Math.Max(4.0f, measured.Height + 0.5f);
                         e.Graphics.DrawString(
-                            line, chosen, Brushes.Black, new RectangleF(2.0f, y, 74.0f, lineHeight + 2.0f)
+                            line, chosen, Brushes.Black,
+                            new RectangleF(margin, y, 80.0f - margin - 2.0f, lineHeight + 2.0f)
                         );
-                        y += lineHeight;
+                        y += lineHeight * spacing;
                     }
                     e.HasMorePages = false;
                 };
@@ -755,7 +764,7 @@ public static class Oc11Thermal80 {
 }
 '@
 $text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
-[Oc11Thermal80]::Print($args[0], $text, [float]$args[2], [float]$args[3], [float]$args[4])
+[Oc11Thermal80]::Print($args[0], $text, [float]$args[2], [float]$args[3], [float]$args[4], [float]$args[5], [float]$args[6])
 """
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8-sig", suffix=".ps1", delete=False
@@ -766,7 +775,8 @@ $text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-File", str(script_path),
-             printer_name, str(text_path), str(title_pt), str(body_pt), str(total_pt)],
+             printer_name, str(text_path), str(title_pt), str(body_pt), str(total_pt),
+             str(spacing), str(margin_mm)],
             check=False, capture_output=True, text=True, timeout=25,
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
         )
