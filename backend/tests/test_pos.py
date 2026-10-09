@@ -1,5 +1,6 @@
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
@@ -427,8 +428,8 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
             "print_receipt_targets": "BOTH",
         })
         assert configured.status_code == 200
-        assert configured.json()["print_receipt_targets"] == "CASHIER"
-        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "CASHIER"
+        assert configured.json()["print_receipt_targets"] == "BOTH"
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "BOTH"
         order = client.post("/api/sales/orders", json={
             "order_type": "TAKEAWAY",
             "items": [{"menu_item_id": item_id, "quantity": 1}],
@@ -444,8 +445,8 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
         printed = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
         assert printed.status_code == 200
         assert printed.json()["print_status"] == "FAILED"
-        assert [name for name, _ in captured] == ["Cashier"]
-        assert [row["role"] for row in printed.json()["printer_results"]] == ["CASHIER"]
+        assert [name for name, _ in captured] == ["Kitchen", "Cashier"]
+        assert [row["role"] for row in printed.json()["printer_results"]] == ["KITCHEN", "CASHIER"]
         assert all("PHIẾU THANH TOÁN" in text for _, text in captured)
         assert all("80,000" in text for _, text in captured)
         # Print failure cannot charge the customer a second time.
@@ -457,7 +458,7 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
 
 
 
-def test_legacy_kitchen_receipt_setting_cannot_redirect_paid_bill(
+def test_legacy_kitchen_receipt_setting_is_preserved(
     tmp_path, monkeypatch
 ):
     db_path = tmp_path / "oc11.db"
@@ -480,7 +481,7 @@ def test_legacy_kitchen_receipt_setting_cannot_redirect_paid_bill(
             "print_receipt_targets": "KITCHEN",
         })
         save_settings(legacy)
-        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "CASHIER"
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "KITCHEN"
 
         order = client.post("/api/sales/orders", json={
             "order_type": "TAKEAWAY",
@@ -493,10 +494,72 @@ def test_legacy_kitchen_receipt_setting_cannot_redirect_paid_bill(
         result = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
         assert result.status_code == 200, result.text
         assert result.json()["print_status"] == "PRINTED"
-        assert [r["role"] for r in result.json()["printer_results"]] == ["CASHIER"]
+        assert [r["role"] for r in result.json()["printer_results"]] == ["KITCHEN"]
         assert len(captured) == 1
-        assert captured[0][0] == "Cashier"
+        assert captured[0][0] == "Kitchen"
         assert "PHIẾU THANH TOÁN" in captured[0][1]
+
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_names", "expected_roles"),
+    [
+        ("CASHIER", ["Cashier"], ["CASHIER"]),
+        ("KITCHEN", ["Kitchen"], ["KITCHEN"]),
+        ("BOTH", ["Kitchen", "Cashier"], ["KITCHEN", "CASHIER"]),
+    ],
+)
+def test_receipt_printer_selection_persists_and_routes_correctly(
+    tmp_path, monkeypatch, target, expected_names, expected_roles
+):
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "saved-printers"))
+    printed: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "backend.app.pos.print_text",
+        lambda name, content: (printed.append((name, content)) or True, None),
+    )
+
+    with TestClient(app) as client:
+        item_id = seed_menu(db_path)
+        # New installations default to cashier when no receipt target is set.
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == "CASHIER"
+        settings = client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+            "print_receipt_targets": target,
+        })
+        assert settings.status_code == 200
+        assert settings.json()["print_receipt_targets"] == target
+
+        # A legacy client that omits the option must not clear a saved choice.
+        legacy_save = client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+        })
+        assert legacy_save.status_code == 200
+        assert legacy_save.json()["print_receipt_targets"] == target
+        assert client.get("/api/pos/settings").json()["print_receipt_targets"] == target
+
+        from backend.app.settings import load_settings
+        assert load_settings()["print_receipt_targets"] == target
+
+        order = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        account_id = client.get("/api/fund-accounts?type=CASH").json()[0]["id"]
+        assert client.post(f"/api/sales/orders/{order['id']}/pay", json={
+            "fund_account_id": account_id,
+        }).status_code == 200
+
+        result = client.post(f"/api/pos/orders/{order['id']}/print-receipt")
+        assert result.status_code == 200, result.text
+        assert result.json()["print_status"] == "PRINTED"
+        assert [r["role"] for r in result.json()["printer_results"]] == expected_roles
+        assert [name for name, _ in printed] == expected_names
+        assert all("PHIẾU THANH TOÁN" in content for _, content in printed)
 
 
 def test_same_physical_printer_is_printed_once_even_when_route_is_both(

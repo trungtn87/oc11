@@ -136,7 +136,8 @@ class PosSettingsInput(BaseModel):
     kitchen_printer_name: str | None = Field(default="", max_length=300)
     cashier_printer_name: str | None = Field(default="", max_length=300)
     send_kitchen_targets: PrinterTarget = "BOTH"
-    print_receipt_targets: PrinterTarget = "CASHIER"
+    # Older clients may omit this field; keep the existing saved selection.
+    print_receipt_targets: PrinterTarget | None = None
 
 
 class PosSettingsOutput(BaseModel):
@@ -577,12 +578,18 @@ def list_printers() -> list[str]:
 
 
 def pos_settings_output(settings: dict) -> PosSettingsOutput:
+    # Choose cashier only if no valid setting has ever been saved.
+    saved_target = settings.get("print_receipt_targets")
+    target: PrinterTarget = (
+        saved_target
+        if saved_target in ("KITCHEN", "CASHIER", "BOTH")
+        else "CASHIER"
+    )
     return PosSettingsOutput(
         kitchen_printer_name=str(settings.get("kitchen_printer_name") or ""),
         cashier_printer_name=str(settings.get("cashier_printer_name") or ""),
         send_kitchen_targets="BOTH",
-        # Phiếu thanh toán chỉ in tại thu ngân, kể cả cấu hình cũ là BẾP/CẢ HAI.
-        print_receipt_targets="CASHIER",
+        print_receipt_targets=target,
     )
 
 
@@ -597,7 +604,8 @@ def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     settings["kitchen_printer_name"] = (payload.kitchen_printer_name or "").strip()
     settings["cashier_printer_name"] = (payload.cashier_printer_name or "").strip()
     settings["send_kitchen_targets"] = "BOTH"
-    settings["print_receipt_targets"] = "CASHIER"
+    if payload.print_receipt_targets is not None:
+        settings["print_receipt_targets"] = payload.print_receipt_targets
     save_settings(settings)
     return pos_settings_output(settings)
 
@@ -1013,7 +1021,7 @@ def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
             )
         content = build_cashier_receipt(connection, order)
         print_status, error, results = dispatch_print(
-            settings, "CASHIER", content
+            settings, settings.print_receipt_targets, content
         )
         return PrintDispatchOutput(
             order_id=order_id,
