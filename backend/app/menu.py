@@ -1372,6 +1372,64 @@ def update_menu_group(
     )
 
 
+class KitchenPrintChoice(BaseModel):
+    menu_item_id: int = Field(gt=0)
+    print_to_kitchen: bool
+
+
+class KitchenPrintBatch(BaseModel):
+    items: list[KitchenPrintChoice] = Field(min_length=1, max_length=5000)
+
+
+class KitchenPrintItem(BaseModel):
+    id: int
+    name: str
+    print_to_kitchen: bool
+
+
+@router.get("/kitchen-print-items", response_model=list[KitchenPrintItem])
+def list_kitchen_print_items() -> list[KitchenPrintItem]:
+    """Minimal list shared by Manager Web and POS."""
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, name, print_to_kitchen
+            FROM menu_items
+            ORDER BY is_active DESC, display_order ASC, name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        return [
+            KitchenPrintItem(
+                id=int(row["id"]), name=row["name"],
+                print_to_kitchen=bool(row["print_to_kitchen"]),
+            ) for row in rows
+        ]
+
+
+@router.put("/kitchen-print-items", response_model=list[KitchenPrintItem])
+def save_kitchen_print_items(payload: KitchenPrintBatch) -> list[KitchenPrintItem]:
+    """One atomic Save; reject stale/invalid IDs instead of partial updates."""
+    ids = [row.menu_item_id for row in payload.items]
+    if len(ids) != len(set(ids)):
+        raise HTTPException(status_code=422, detail="Món bị lặp trong danh sách.")
+    with connect() as connection:
+        existing = {
+            int(row["id"]) for row in connection.execute(
+                f"SELECT id FROM menu_items WHERE id IN ({','.join('?' for _ in ids)})",
+                ids,
+            )
+        }
+        if existing != set(ids):
+            raise HTTPException(status_code=404, detail="Có món không còn tồn tại. Vui lòng tải lại.")
+        connection.executemany(
+            "UPDATE menu_items SET print_to_kitchen = ? WHERE id = ?",
+            [(int(row.print_to_kitchen), row.menu_item_id) for row in payload.items],
+        )
+        connection.commit()
+    backup_database(reason="menu-kitchen-print-settings")
+    return list_kitchen_print_items()
+
+
 @router.get("/items", response_model=list[MenuItemOutput])
 def list_menu_items() -> list[MenuItemOutput]:
     refresh_menu_cost_alerts_for_items()
