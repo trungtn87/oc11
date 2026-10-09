@@ -22,3 +22,7 @@
 .pos-template-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; padding-top: 6px; border-top: 1px solid #e8edf1; }
 @media (max-width: 850px) { .pos-template-layout { grid-template-columns: 1fr; max-height: 66vh; overflow-y: auto; } .pos-template-controls, .pos-template-preview-pane { overflow: visible; } }
 @media (max-width: 480px) { .pos-template-checkboxes { grid-template-columns: 1fr; } .pos-template-actions .ant-btn { flex: 1 1 46%; } }
+
+.pos-template-printer { display: flex; flex-direction: column; gap: 6px; margin: 14px 0 15px; padding: 12px; background: #edf6ff; border: 1px solid #c4dced; border-radius: 7px; }
+.pos-template-printer > label { color: #174a69; font-size: 14px; font-weight: 700; }
+.pos-template-printer-help { color: #526779; font-size: 12px; line-height: 1.6; }
