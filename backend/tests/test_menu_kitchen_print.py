@@ -13,13 +13,39 @@ def add_drink(db_path):
         group_id, unit_id = connection.execute(
             "SELECT menu_group_id, sale_unit_id FROM menu_items LIMIT 1"
         ).fetchone()
+        # Drink has its own stock ingredient so normal stock deductions still run.
+        item_group_id = connection.execute(
+            "SELECT id FROM item_groups LIMIT 1"
+        ).fetchone()[0]
+        source = connection.execute(
+            "INSERT INTO items (name, item_group_id, default_unit_id, smallest_unit_id, is_active) "
+            "VALUES ('Nước suối tồn', ?, ?, ?, 1)",
+            (item_group_id, unit_id, unit_id),
+        )
+        inventory_id = source.lastrowid
+        connection.execute(
+            "INSERT INTO item_unit_conversions "
+            "(item_id, unit_id, quantity_in_smallest_unit, is_active) "
+            "VALUES (?, ?, 1, 1)", (inventory_id, unit_id),
+        )
+        connection.execute(
+            "INSERT INTO inventory_movements "
+            "(item_id, movement_time, quantity_delta, source_type, source_id, source_line_id) "
+            "VALUES (?, '2026-10-07T10:00:00', 50, 'STOCK_ADJUSTMENT', 'seed', 'water')",
+            (inventory_id,),
+        )
         cursor = connection.execute(
             "INSERT INTO menu_items (name, menu_group_id, sale_unit_id, base_price, is_active) "
             "VALUES ('Nước suối', ?, ?, 10000, 1)",
             (group_id, unit_id),
         )
+        drink_id = cursor.lastrowid
+        connection.execute(
+            "INSERT INTO menu_item_ingredients (menu_item_id, item_id, unit_id, quantity) "
+            "VALUES (?, ?, ?, 1)", (drink_id, inventory_id, unit_id),
+        )
         connection.commit()
-        return cursor.lastrowid
+        return drink_id
 
 
 def setup_client(tmp_path, monkeypatch):
