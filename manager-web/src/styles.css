@@ -2277,3 +2277,40 @@ body {
 .cost-alerts-table .ant-tag {
   white-space: nowrap;
 }
+
+/* Sổ tiền mặt / tiền gửi: giữ đủ 10 cột trong chiều rộng trang quản lý. */
+.money-ledger-table {
+  width: 100%;
+}
+
+.money-ledger-table .ant-table {
+  font-size: 11px;
+}
+
+.money-ledger-table .ant-table-container table {
+  width: 100% !important;
+  table-layout: fixed;
+}
+
+.money-ledger-table .ant-table-thead > tr > th,
+.money-ledger-table .ant-table-tbody > tr > td,
+.money-ledger-table .ant-table-summary > tr > td {
+  padding: 8px 4px;
+  overflow-wrap: anywhere;
+}
+
+.money-ledger-table .ant-table-tbody > tr > td {
+  line-height: 1.4;
+}
+
+.money-ledger-table .ant-table-cell .ant-btn-link {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  font-size: inherit;
+  line-height: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
