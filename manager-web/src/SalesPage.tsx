@@ -1439,9 +1439,10 @@ export function SalesOrdersPage({
     {
       title: "Mã đơn",
       dataIndex: "order_code",
-      width: 120,
+      width: 100,
       render: (value: string, row) => (
-        <Button type="link" onClick={() => setSelected(row)}>
+        <Button type="link" className="sales-order-code" title={value}
+          onClick={() => setSelected(row)}>
           {value}
         </Button>
       )
@@ -1449,53 +1450,66 @@ export function SalesOrdersPage({
     {
       title: "Thời gian",
       dataIndex: "order_time",
-      width: 150,
+      width: 125,
       render: formatDateTime
     },
     {
       title: "Khách hàng",
       dataIndex: "customer_name",
-      render: (value: string | null) => value ?? "Khách lẻ"
+      width: 120,
+      responsive: ["xl"],
+      render: (value: string | null) => (
+        <span className="sales-order-ellipsis" title={value ?? "Khách lẻ"}>
+          {value ?? "Khách lẻ"}
+        </span>
+      )
     },
     {
       title: "Tổng tiền",
       dataIndex: "total_amount",
       align: "right",
-      width: 130,
+      width: 114,
       render: (value: number) => `${money(value)} đ`
     },
     {
       title: "Thực thu",
       dataIndex: "actual_received_amount",
       align: "right",
-      width: 130,
+      width: 110,
+      responsive: ["xxl"],
       render: (value: number | null) =>
         value === null ? "—" : `${money(value)} đ`
     },
     {
-      title: "Loại quỹ thanh toán",
-      dataIndex: "fund_account_type",
-      width: 170,
-      render: (value: FundAccountType | null, row) => {
-        if (row.status === "VOID") return <Tag>Đã hủy</Tag>;
-        if (row.status === "OPEN") return <Tag>Chưa thanh toán</Tag>;
-        if (row.settlement_status === "DEBT") return <Tag color="orange">Ghi nợ</Tag>;
-        if (value === "CASH") return <Tag color="green">Tiền mặt</Tag>;
-        if (value === "BANK") return <Tag color="blue">Chuyển khoản</Tag>;
-        return <Tag>Chưa xác định</Tag>;
-      }
+      title: "Thanh toán",
+      dataIndex: "fund_account_name",
+      width: 155,
+      render: (_value: string | null, row) => (
+        <div className="sales-order-account">
+          {row.settlement_status === "DEBT" ? <Tag color="orange">Ghi nợ</Tag>
+            : row.status !== "PAID" ? <span>—</span>
+            : row.fund_account_type === "CASH" ? <Tag color="green">Tiền mặt</Tag>
+            : row.fund_account_type === "BANK" ? <Tag color="blue">Chuyển khoản</Tag>
+            : <Tag>Chưa xác định</Tag>}
+          {row.status === "PAID" && row.settlement_status !== "DEBT" && (
+            <span className="sales-order-ellipsis" title={row.fund_account_name ?? ""}>
+              {row.fund_account_name ?? "—"}
+            </span>
+          )}
+        </div>
+      )
     },
     {
-      title: "Quỹ / tài khoản",
-      dataIndex: "fund_account_name",
-      width: 170,
-      render: (value: string | null, row) =>
-        row.status === "PAID" ? (value ?? "—") : "—"
+      title: "Trạng thái",
+      dataIndex: "status",
+      width: 125,
+      render: (_, row) => statusTag(row)
     },
     {
       title: "Kho",
       dataIndex: "stock_deducted",
-      width: 100,
+      width: 80,
+      responsive: ["xxl"],
       render: (value: boolean, row) =>
         row.status === "VOID" ? (
           <Tag>Đã hoàn</Tag>
@@ -1508,7 +1522,8 @@ export function SalesOrdersPage({
     {
       title: "HĐĐT",
       dataIndex: "has_einvoice",
-      width: 110,
+      width: 95,
+      responsive: ["xl"],
       render: (value: boolean, row) =>
         value ? (
           <Tag color="blue">Đã xuất</Tag>
@@ -1520,47 +1535,23 @@ export function SalesOrdersPage({
     },
     {
       title: "Thao tác",
-      width: 210,
+      width: 130,
       render: (_, row) => (
-        <Space size={2}>
+        <div className="sales-order-actions">
           {(row.status === "OPEN" ||
             (row.status === "PAID" && row.settlement_status === "DEBT")) && (
-            <Button
-              type="link"
-              size="small"
-              onClick={() => openPayment(row)}
-            >
+            <Button type="link" size="small" onClick={() => openPayment(row)}>
               {row.settlement_status === "DEBT" && row.status === "PAID" ? "Thu nợ" : "Thanh toán"}
             </Button>
           )}
-          <Button
-            type="link"
-            size="small"
-            disabled={!row.can_edit}
-            onClick={() => onEditOrder?.(row)}
-          >
-            Sửa
-          </Button>
-          <Button
-            type="link"
-            danger
-            size="small"
-            disabled={!row.can_delete}
-            onClick={() => confirmDelete(row)}
-          >
-            Xóa
-          </Button>
-        </Space>
+          <Button type="link" size="small" disabled={!row.can_edit}
+            onClick={() => onEditOrder?.(row)}>Sửa</Button>
+          <Button type="link" danger size="small" disabled={!row.can_delete}
+            onClick={() => confirmDelete(row)}>Xóa</Button>
+        </div>
       )
-    },
-    {
-      title: "Trạng thái",
-      dataIndex: "status",
-      width: 130,
-      render: (_, row) => statusTag(row)
     }
   ];
-
   return (
     <>
       {messageContext}
@@ -1655,13 +1646,14 @@ export function SalesOrdersPage({
         </Space>
       </Card>
 
-      <div className="table-card">
+      <div className="table-card sales-orders-table">
         <Table<SaleOrder>
           rowKey="id"
           loading={loading}
+          size="small"
           columns={columns}
           dataSource={orders}
-          scroll={{ x: 1520 }}
+          scroll={{ x: "max-content" }}
           pagination={{ pageSize: 30 }}
           rowClassName={(row) =>
             row.status === "VOID" ? "sales-row-void" : ""
