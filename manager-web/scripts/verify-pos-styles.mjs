@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const assetsDir = new URL("../dist/assets/", import.meta.url).pathname;
+const assetsDir = fileURLToPath(new URL("../dist/assets/", import.meta.url));
 const styles = readdirSync(assetsDir)
   .filter((file) => file.endsWith(".css"))
   .map((file) => readFileSync(join(assetsDir, file), "utf8"))
