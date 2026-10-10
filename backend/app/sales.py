@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from collections import defaultdict, deque
 from datetime import datetime
 from typing import Literal
 
@@ -77,6 +78,7 @@ class SaleOrderItemOutput(BaseModel):
     unit_cost_snapshot: float | None
     cost_total_snapshot: float | None
     note: str | None
+    print_to_kitchen: bool
     surcharges: list[SaleSurchargeOutput] = Field(default_factory=list)
 
 
@@ -253,6 +255,7 @@ def build_line_snapshot(
             mi.name,
             mi.base_price,
             mi.is_active,
+            mi.print_to_kitchen,
             u.name AS sale_unit_name
         FROM menu_items AS mi
         JOIN units AS u ON u.id = mi.sale_unit_id
@@ -341,6 +344,7 @@ def build_line_snapshot(
         "item_name_snapshot": item["name"],
         "option_name_snapshot": option_name,
         "unit_name_snapshot": item["sale_unit_name"],
+        "print_to_kitchen": bool(item["print_to_kitchen"]),
         "quantity": quantity,
         "unit_price": unit_price,
         "line_total": line_total,
@@ -410,10 +414,16 @@ def insert_order_items(
     connection: sqlite3.Connection,
     order_id: int,
     items: list[SaleOrderItemInput],
+    previous_print_flags: dict[tuple[int, int | None], deque[bool]] | None = None,
 ) -> int:
     total = 0
     for line in items:
         snapshot = build_line_snapshot(connection, line)
+        key = (line.menu_item_id, line.menu_item_option_id)
+        existing_flags = previous_print_flags.get(key) if previous_print_flags else None
+        if existing_flags:
+            # Re-saving an open order must not pick up a later menu config edit.
+            snapshot["print_to_kitchen"] = existing_flags.popleft()
         cursor = connection.execute(
             """
             INSERT INTO sales_order_items (
@@ -428,9 +438,10 @@ def insert_order_items(
                 line_total,
                 unit_cost_snapshot,
                 cost_total_snapshot,
+                print_to_kitchen,
                 note
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order_id,
@@ -444,6 +455,7 @@ def insert_order_items(
                 snapshot["line_total"],
                 snapshot["unit_cost_snapshot"],
                 snapshot["cost_total_snapshot"],
+                int(snapshot["print_to_kitchen"]),
                 snapshot["note"],
             ),
         )
@@ -534,6 +546,7 @@ def select_order_items(
             item_name_snapshot,
             option_name_snapshot,
             unit_name_snapshot,
+            print_to_kitchen,
             quantity,
             unit_price,
             line_total,
@@ -636,6 +649,7 @@ def order_to_output(
                     else None
                 ),
                 note=item["note"],
+                print_to_kitchen=bool(item["print_to_kitchen"]),
                 surcharges=surcharges,
             )
         )
@@ -1274,6 +1288,17 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
                 note_prefix="Sửa bán hàng",
             )
 
+        # Match old line variants by menu item/option even though the update
+        # recreates sales_order_items IDs. Remaining new variants use the current
+        # menu print setting.
+        previous_print_flags: dict[tuple[int, int | None], deque[bool]] = defaultdict(deque)
+        for old_line in select_order_items(connection, order_id):
+            if old_line["menu_item_id"] is not None:
+                previous_print_flags[
+                    (int(old_line["menu_item_id"]),
+                     int(old_line["menu_item_option_id"])
+                     if old_line["menu_item_option_id"] is not None else None)
+                ].append(bool(old_line["print_to_kitchen"]))
         connection.execute(
             "DELETE FROM sales_order_items WHERE sales_order_id = ?",
             (order_id,),
@@ -1283,7 +1308,9 @@ def update_order(order_id: int, payload: SaleOrderInput) -> SaleOrderOutput:
             (order_id,),
         )
 
-        total = insert_order_items(connection, order_id, payload.items)
+        total = insert_order_items(
+            connection, order_id, payload.items, previous_print_flags
+        )
         total += insert_order_surcharges(
             connection,
             order_id,

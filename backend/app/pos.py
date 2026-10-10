@@ -723,6 +723,7 @@ def current_kitchen_items(connection, order_id: int) -> list[dict]:
             "sales_order_item_id": int(line["id"]),
             "name": line["item_name_snapshot"],
             "option": line["option_name_snapshot"],
+            "print_to_kitchen": bool(line["print_to_kitchen"]),
             "unit": line["unit_name_snapshot"],
             "quantity": float(line["quantity"]),
             "note": line["note"],
@@ -930,6 +931,12 @@ def send_order_to_kitchen(
                 (order_id, ticket_id),
             ).fetchone()[0])
             results: list[PrintDestinationResult] = []
+            # The checker receives ALL new servings; the kitchen receives only
+            # those enabled at order-line creation. Store the full ticket once.
+            kitchen_items = [
+                item for item in ticket_items
+                if item.get("print_to_kitchen", True)
+            ]
             for role, already_ok in (
                 ("KITCHEN", kitchen_ok), ("CASHIER", check_ok)
             ):
@@ -939,7 +946,15 @@ def send_order_to_kitchen(
                 ).strip()
                 if already_ok:
                     result = PrintDestinationResult(
-                        role=role, printer_name=printer_name or None, ok=True,
+                        role=role, printer_name=(printer_name or None)
+                        if (role != "KITCHEN" or kitchen_items) else None,
+                        ok=True,
+                    )
+                elif role == "KITCHEN" and not kitchen_items:
+                    # No kitchen job. Acknowledge this destination without
+                    # requiring a printer or emitting an empty slip.
+                    result = PrintDestinationResult(
+                        role=role, printer_name=None, ok=True,
                     )
                 elif not printer_name:
                     result = PrintDestinationResult(
@@ -949,7 +964,8 @@ def send_order_to_kitchen(
                     )
                 else:
                     text = render_80mm_ticket(
-                        order, ticket_items, checking=role == "CASHIER",
+                        order, kitchen_items if role == "KITCHEN" else ticket_items,
+                        checking=role == "CASHIER",
                         sent_at=sent_at, batch_number=batch_number,
                         temporary_note=temporary_note,
                     )
@@ -966,7 +982,7 @@ def send_order_to_kitchen(
                         f"UPDATE kitchen_tickets SET {col} = 1 WHERE id = ?",
                         (ticket_id,),
                     )
-                    if role == "KITCHEN":
+                    if role == "KITCHEN" and kitchen_items:
                         connection.execute(
                             """
                             UPDATE sales_orders

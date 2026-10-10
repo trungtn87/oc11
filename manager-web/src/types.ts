@@ -520,6 +520,12 @@ export type MenuItemOptionInput = {
   components: MenuComponentInput[];
 };
 
+export type KitchenPrintMenuItem = {
+  id: number;
+  name: string;
+  print_to_kitchen: boolean;
+};
+
 export type MenuItemInput = {
   name: string;
   menu_group_id: number;

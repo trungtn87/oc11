@@ -27,6 +27,7 @@ import type {
   MenuGroup,
   MenuGroupInput,
   MenuItem,
+  KitchenPrintMenuItem,
   MenuItemInput,
   CostAlert,
   CostIngredientPrice,
@@ -576,6 +577,19 @@ export function updateMenuGroup(
   return request<MenuGroup>(`/api/menu/groups/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function getKitchenPrintMenuItems(): Promise<KitchenPrintMenuItem[]> {
+  return request<KitchenPrintMenuItem[]>("/api/menu/kitchen-print-items");
+}
+
+export function saveKitchenPrintMenuItems(
+  items: Array<{ menu_item_id: number; print_to_kitchen: boolean }>
+): Promise<KitchenPrintMenuItem[]> {
+  return request<KitchenPrintMenuItem[]>("/api/menu/kitchen-print-items", {
+    method: "PUT",
+    body: JSON.stringify({ items })
   });
 }
 

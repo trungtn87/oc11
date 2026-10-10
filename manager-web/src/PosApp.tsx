@@ -52,6 +52,7 @@ import type {
 } from "./types";
 import "./PosApp.css";
 import PosDashboard from "./PosDashboard";
+import MenuKitchenPrintSettings from "./MenuKitchenPrintSettings";
 import PosQuickActions from "./PosQuickActions";
 import type { PosQuickAction } from "./PosQuickActions";
 
@@ -126,6 +127,7 @@ export default function PosApp() {
   const [quickAction, setQuickAction] = useState<PosQuickAction>(null);
   const [dashboardRevision, setDashboardRevision] = useState(0);
   const [printerModalOpen, setPrinterModalOpen] = useState(false);
+  const [kitchenSettingsOpen, setKitchenSettingsOpen] = useState(false);
   const [printerLoading, setPrinterLoading] = useState(false);
   const [printerSaving, setPrinterSaving] = useState(false);
   const [printerTesting, setPrinterTesting] = useState<PrinterRole | null>(null);
@@ -596,7 +598,13 @@ export default function PosApp() {
         kitchenNoteDrafts.current.delete(saved.table_id);
       }
       setEditingOrder({ ...saved, kitchen_sent_at: ticket.sent_at });
-      messageApi.success("Đã gửi bếp " + saved.order_code + ".");
+      const printedKitchen = ticket.printer_results.some(
+        (row) => row.role === "KITCHEN" && !!row.printer_name && row.ok
+      );
+      messageApi.success(
+        (printedKitchen ? "Đã gửi bếp và in kiểm đồ " : "Đã in phiếu kiểm đồ ")
+        + saved.order_code + "."
+      );
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
     } finally {
@@ -956,6 +964,12 @@ export default function PosApp() {
                 setQuickAction("PURCHASE");
               }}>
                 ＋ Nhập hàng nhanh
+              </button>
+              <button type="button" onClick={() => {
+                setMenuOpen(false);
+                setKitchenSettingsOpen(true);
+              }}>
+                ☑ Cấu hình in bếp
               </button>
               <button type="button" onClick={() => void openPrinterConfig()}>
                 ⚙ Cài đặt máy in
@@ -1392,6 +1406,17 @@ export default function PosApp() {
           setDashboardRevision((current) => current + 1);
         }}
       />
+
+      <Modal
+        open={kitchenSettingsOpen}
+        title="Cấu hình in bếp"
+        width={660}
+        footer={null}
+        destroyOnClose
+        onCancel={() => setKitchenSettingsOpen(false)}
+      >
+        <MenuKitchenPrintSettings inPos />
+      </Modal>
 
       <Modal
         open={printerModalOpen}
