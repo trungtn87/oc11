@@ -52,7 +52,9 @@ import type {
   PosPrintResult,
   PosCustomer,
   PosCustomerInput,
-  PrinterRole
+  PrinterRole,
+  PosPrintTemplate,
+  PosPrintTemplateKind
 } from "./types";
 
 type ApiErrorPayload = {
@@ -837,6 +839,21 @@ export function updatePosSettings(payload: PosSettings): Promise<PosSettings> {
   });
 }
 
+export function getPosPrintTemplates(): Promise<Record<PosPrintTemplateKind, PosPrintTemplate>> {
+  return request("/api/pos/print-templates");
+}
+export function savePosPrintTemplate(kind: PosPrintTemplateKind, payload: PosPrintTemplate): Promise<PosPrintTemplate> {
+  return request("/api/pos/print-templates/" + kind, { method: "PUT", body: JSON.stringify(payload) });
+}
+export function resetPosPrintTemplate(kind: PosPrintTemplateKind): Promise<PosPrintTemplate> {
+  return request("/api/pos/print-templates/" + kind, { method: "DELETE" });
+}
+export function previewPosPrintTemplate(kind: PosPrintTemplateKind, payload: PosPrintTemplate): Promise<{text: string}> {
+  return request("/api/pos/print-templates/preview", { method: "POST", body: JSON.stringify({kind, template: payload}) });
+}
+export function testPosPrintTemplate(kind: PosPrintTemplateKind, payload: PosPrintTemplate): Promise<{ok: boolean; printer_name: string | null; error: string | null}> {
+  return request("/api/pos/print-templates/" + kind + "/test", { method: "POST", body: JSON.stringify(payload) });
+}
 export function getInstalledPrinters(): Promise<string[]> {
   return request<string[]>("/api/pos/printers");
 }

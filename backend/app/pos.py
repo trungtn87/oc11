@@ -12,7 +12,12 @@ from pydantic import BaseModel, Field
 
 from .backup import backup_database
 from .database import connect
-from .pos_printing import render_80mm_ticket, unsent_items
+from .pos_printing import unsent_items
+from .pos_templates import (
+    PrintTemplate, TemplateKind, TemplatePreviewInput, default_template,
+    get_templates, put_template, render_kitchen_template, render_money_template,
+    sample_print, with_print_style,
+)
 from .sales import select_item_surcharges, select_order, select_order_items, select_order_surcharges
 from .settings import load_settings, save_settings
 
@@ -610,6 +615,54 @@ def update_pos_settings(payload: PosSettingsInput) -> PosSettingsOutput:
     return pos_settings_output(settings)
 
 
+
+@router.get("/print-templates", response_model=dict[str, PrintTemplate])
+def list_print_templates() -> dict[str, PrintTemplate]:
+    return get_templates(load_settings())
+
+
+@router.put("/print-templates/{kind}", response_model=PrintTemplate)
+def save_print_template(kind: TemplateKind, payload: PrintTemplate) -> PrintTemplate:
+    settings = load_settings()
+    put_template(settings, kind, payload)
+    save_settings(settings)
+    return payload
+
+
+@router.delete("/print-templates/{kind}", response_model=PrintTemplate)
+def reset_print_template(kind: TemplateKind) -> PrintTemplate:
+    settings = load_settings()
+    template = default_template(kind)
+    put_template(settings, kind, template)
+    save_settings(settings)
+    return template
+
+
+@router.post("/print-templates/preview")
+def preview_print_template(payload: TemplatePreviewInput) -> dict:
+    return {
+        "text": sample_print(payload.kind, payload.template),
+        "template": payload.template.model_dump(),
+    }
+
+
+@router.post("/print-templates/{kind}/test")
+def test_print_template(kind: TemplateKind, payload: PrintTemplate) -> dict:
+    """Use a sample only, without creating sales or kitchen tickets."""
+    settings = pos_settings_output(load_settings())
+    content = with_print_style(
+        "BẢN IN THỬ - KHÔNG CÓ GIÁ TRỊ\r\n" + sample_print(kind, payload),
+        payload,
+    )
+    status, error, results = dispatch_template_print(settings, kind, payload, content)
+    names = [result.printer_name for result in results if result.printer_name]
+    return {
+        "ok": status == "PRINTED",
+        "printer_name": ", ".join(names) or None,
+        "error": error,
+    }
+
+
 def powershell_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -624,6 +677,27 @@ def print_text(printer_name: str, content: str) -> tuple[bool, str | None]:
         return False, "Chưa cấu hình máy in."
     if os.name != "nt":
         return False, "In trực tiếp chỉ hỗ trợ khi chạy trên Windows."
+
+    # The in-band style header lets legacy print_text(name, content) mocks keep
+    # their two-argument API, while each real Windows print uses its own sizes.
+    title_pt, body_pt, total_pt, spacing, margin_mm = (11, 9, 14, 1.0, 2.0)
+    if content.startswith("__OC11_FONT:"):
+        header, separator, rest = content.partition("\r\n")
+        try:
+            values = header.removeprefix("__OC11_FONT:").removesuffix("__")
+            parts = values.split(",")
+            new_title, new_body, new_total = (int(part) for part in parts[:3])
+            new_spacing = float(parts[3]) if len(parts) >= 4 else 1.0
+            new_margin = float(parts[4]) if len(parts) >= 5 else 2.0
+            if (12 <= new_title <= 24 and 10 <= new_body <= 18
+                    and 14 <= new_total <= 26 and 1 <= new_spacing <= 1.8
+                    and 1 <= new_margin <= 8):
+                title_pt, body_pt, total_pt = new_title, new_body, new_total
+                spacing, margin_mm = new_spacing, new_margin
+                if separator:
+                    content = rest
+        except (ValueError, TypeError):
+            pass
 
     text_path: Path | None = None
     script_path: Path | None = None
@@ -645,30 +719,42 @@ using System.Drawing;
 using System.Drawing.Printing;
 
 public static class Oc11Thermal80 {
-    public static void Print(string printer, string content) {
+    public static void Print(string printer, string content, float titlePt, float bodyPt, float totalPt, float spacing, float margin) {
         string[] lines = content.Replace("\r\n", "\n").Split('\n');
         using (PrintDocument doc = new PrintDocument()) {
             doc.PrinterSettings.PrinterName = printer;
             if (!doc.PrinterSettings.IsValid)
                 throw new Exception("Máy in không tồn tại trên Windows: " + printer);
-            int height = Math.Min(12000, Math.Max(200, (lines.Length + 4) * 20));
+            int height = Math.Min(12000, Math.Max(250, (lines.Length + 8) * Math.Max(28, (int)(bodyPt * 3.2f))));
             doc.DefaultPageSettings.PaperSize = new PaperSize("80mm", 315, height);
             doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
             doc.OriginAtMargins = false;
             doc.PrintController = new StandardPrintController();
-            using (Font body = new Font("Consolas", 9.0f, FontStyle.Regular))
-            using (Font heading = new Font("Consolas", 11.0f, FontStyle.Bold)) {
+            using (Font body = new Font("Consolas", bodyPt, FontStyle.Regular))
+            using (Font heading = new Font("Consolas", titlePt, FontStyle.Bold))
+            using (Font total = new Font("Consolas", totalPt, FontStyle.Bold)) {
                 doc.PrintPage += (sender, e) => {
                     e.Graphics.PageUnit = GraphicsUnit.Millimeter;
                     float y = 2.0f;
-                    foreach (string line in lines) {
-                        bool isHeading = line.Trim() == "CHẾ BIẾN" ||
-                                         line.Trim() == "KIỂM ĐỒ";
-                        e.Graphics.DrawString(
-                            line, isHeading ? heading : body,
-                            Brushes.Black, 2.0f, y
+                    for (int i = 0; i < lines.Length; i++) {
+                        string line = lines[i];
+                        string trimmed = line.Trim();
+                        bool isHeading = trimmed == "CHẾ BIẾN" ||
+                                         trimmed == "KIỂM ĐỒ" ||
+                                         trimmed == "PHIẾU TẠM TÍNH" ||
+                                         trimmed == "PHIẾU THANH TOÁN" ||
+                                         (i + 1 < lines.Length && lines[i + 1].StartsWith("===="));
+                        bool isTotal = trimmed.StartsWith("TỔNG TIỀN:");
+                        Font chosen = isHeading ? heading : (isTotal ? total : body);
+                        SizeF measured = e.Graphics.MeasureString(
+                            line.Length == 0 ? " " : line, chosen, new SizeF(80.0f - margin - 2.0f, 1000.0f)
                         );
-                        y += 5.0f;
+                        float lineHeight = Math.Max(4.0f, measured.Height + 0.5f);
+                        e.Graphics.DrawString(
+                            line, chosen, Brushes.Black,
+                            new RectangleF(margin, y, 80.0f - margin - 2.0f, lineHeight + 2.0f)
+                        );
+                        y += lineHeight * spacing;
                     }
                     e.HasMorePages = false;
                 };
@@ -679,7 +765,7 @@ public static class Oc11Thermal80 {
 }
 '@
 $text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
-[Oc11Thermal80]::Print($args[0], $text)
+[Oc11Thermal80]::Print($args[0], $text, [float]$args[2], [float]$args[3], [float]$args[4], [float]::Parse($args[5], [System.Globalization.CultureInfo]::InvariantCulture), [float]$args[6])
 """
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8-sig", suffix=".ps1", delete=False
@@ -690,7 +776,8 @@ $text = [System.IO.File]::ReadAllText($args[1], [System.Text.Encoding]::UTF8)
         result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-File", str(script_path),
-             printer_name, str(text_path)],
+             printer_name, str(text_path), str(title_pt), str(body_pt), str(total_pt),
+             str(spacing), str(margin_mm)],
             check=False, capture_output=True, text=True, timeout=25,
             creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
         )
@@ -801,38 +888,68 @@ def dispatch_print(settings: PosSettingsOutput, target: PrinterTarget, content: 
     )
 
 
-def build_cashier_receipt(connection, order, *, provisional: bool = False) -> str:
-    text_lines = [
-        "ỐC 11 - PHIẾU TẠM TÍNH" if provisional else "ỐC 11 - PHIẾU THANH TOÁN",
-        "=" * 36,
-        f"Mã đơn: {order['order_code']}",
-    ]
-    if order["order_type"] == "DINE_IN":
-        text_lines.append(f"Bàn: {order['area_name'] or ''} / {order['table_name'] or ''}")
-    text_lines.extend([
-        f"Thời gian: {order['paid_at'] or order['order_time']}",
-        "-" * 36,
-    ])
-    for line in select_order_items(connection, int(order["id"])):
-        text_lines.append(
-            f"{format_quantity(float(line['quantity']))} x {line['item_name_snapshot']}"
+def resolve_template_printer(
+    settings: PosSettingsOutput, kind: TemplateKind, template: PrintTemplate,
+) -> str:
+    """An explicit template printer wins; empty inherits the existing POS role."""
+    configured = template.printer_name.strip()
+    if configured:
+        return configured
+    return (
+        settings.kitchen_printer_name.strip()
+        if kind == "KITCHEN" else settings.cashier_printer_name.strip()
+    )
+
+
+def dispatch_template_print(
+    settings: PosSettingsOutput, kind: TemplateKind,
+    template: PrintTemplate, content: str,
+):
+    """Route each layout to its saved printer, retaining legacy defaults."""
+    specific_name = template.printer_name.strip()
+    if not specific_name:
+        legacy_target: PrinterTarget = (
+            settings.print_receipt_targets if kind == "RECEIPT"
+            else "KITCHEN" if kind == "KITCHEN" else "CASHIER"
         )
-        if line["option_name_snapshot"]:
-            text_lines.append(f"  + {line['option_name_snapshot']}")
-        text_lines.append(f"  Thành tiền: {int(line['line_total']):,} đ")
-        for extra in select_item_surcharges(connection, int(line["id"])):
-            text_lines.append(f"  + {extra['name']}: {int(extra['amount']):,} đ")
-    for extra in select_order_surcharges(connection, int(order["id"])):
-        text_lines.append(f"Phụ thu {extra['name']}: {int(extra['amount']):,} đ")
-    text_lines.extend([
-        "-" * 36,
-        f"TỔNG TIỀN: {int(order['total_amount']):,} đ",
-        *([] if provisional else [f"THỰC THU: {int(order['actual_received_amount'] or 0):,} đ"]),
-        "=" * 36,
-        "Cảm ơn quý khách!",
-        "", "", "",
-    ])
-    return "\r\n".join(text_lines)
+        return dispatch_print(settings, legacy_target, content)
+
+    role: Literal["KITCHEN", "CASHIER"] = (
+        "KITCHEN"
+        if specific_name.casefold() == settings.kitchen_printer_name.strip().casefold()
+        else "CASHIER"
+    )
+    ok, error = print_text(specific_name, content)
+    result = PrintDestinationResult(
+        role=role, printer_name=specific_name, ok=ok, error=error
+    )
+    return (
+        "PRINTED" if ok else "FAILED",
+        None if ok else f"{specific_name}: {error or 'In lỗi'}",
+        [result],
+    )
+
+
+def build_cashier_receipt(connection, order, *, provisional: bool = False) -> str:
+    kind: TemplateKind = "ESTIMATE" if provisional else "RECEIPT"
+    template = get_templates(load_settings())[kind]
+    rows = []
+    for line in select_order_items(connection, int(order["id"])):
+        rows.append({
+            "name": line["item_name_snapshot"],
+            "option": line["option_name_snapshot"],
+            "quantity": float(line["quantity"]),
+            "unit_price": int(line["unit_price"]),
+            "line_total": int(line["line_total"]),
+            "note": line["note"],
+            "surcharges": [
+                dict(extra) for extra in select_item_surcharges(connection, int(line["id"]))
+            ],
+        })
+    surcharges = [
+        dict(extra) for extra in select_order_surcharges(connection, int(order["id"]))
+    ]
+    return render_money_template(dict(order), rows, surcharges, kind, template)
 
 
 @router.post("/printer/test")
@@ -931,6 +1048,7 @@ def send_order_to_kitchen(
                 (order_id, ticket_id),
             ).fetchone()[0])
             results: list[PrintDestinationResult] = []
+            templates = get_templates(load_settings())
             # The checker receives ALL new servings; the kitchen receives only
             # those enabled at order-line creation. Store the full ticket once.
             kitchen_items = [
@@ -940,10 +1058,9 @@ def send_order_to_kitchen(
             for role, already_ok in (
                 ("KITCHEN", kitchen_ok), ("CASHIER", check_ok)
             ):
-                printer_name = (
-                    settings.kitchen_printer_name if role == "KITCHEN"
-                    else settings.cashier_printer_name
-                ).strip()
+                kind: TemplateKind = "KITCHEN" if role == "KITCHEN" else "CHECK"
+                template = templates[kind]
+                printer_name = resolve_template_printer(settings, kind, template)
                 if already_ok:
                     result = PrintDestinationResult(
                         role=role, printer_name=(printer_name or None)
@@ -963,13 +1080,14 @@ def send_order_to_kitchen(
                               + ("bếp." if role == "KITCHEN" else "thu ngân."),
                     )
                 else:
-                    text = render_80mm_ticket(
-                        order, kitchen_items if role == "KITCHEN" else ticket_items,
-                        checking=role == "CASHIER",
+                    text = render_kitchen_template(
+                        dict(order),
+                        kitchen_items if role == "KITCHEN" else ticket_items,
+                        kind, template,
                         sent_at=sent_at, batch_number=batch_number,
                         temporary_note=temporary_note,
                     )
-                    ok, error = print_text(printer_name, text)
+                    ok, error = print_text(printer_name, with_print_style(text, template))
                     result = PrintDestinationResult(
                         role=role, printer_name=printer_name, ok=ok, error=error,
                     )
@@ -1036,8 +1154,9 @@ def print_sale_receipt(order_id: int) -> PrintDispatchOutput:
                 detail="Chỉ in phiếu thanh toán cho đơn đã thanh toán.",
             )
         content = build_cashier_receipt(connection, order)
-        print_status, error, results = dispatch_print(
-            settings, settings.print_receipt_targets, content
+        template = get_templates(load_settings())["RECEIPT"]
+        print_status, error, results = dispatch_template_print(
+            settings, "RECEIPT", template, with_print_style(content, template)
         )
         return PrintDispatchOutput(
             order_id=order_id,
@@ -1059,7 +1178,10 @@ def print_sale_estimate(order_id: int) -> PrintDispatchOutput:
         if order["status"] != "OPEN":
             raise HTTPException(status_code=409, detail="Chỉ in tạm tính cho Order đang phục vụ.")
         content = build_cashier_receipt(connection, order, provisional=True)
-        print_status, error, results = dispatch_print(settings, "CASHIER", content)
+        template = get_templates(load_settings())["ESTIMATE"]
+        print_status, error, results = dispatch_template_print(
+            settings, "ESTIMATE", template, with_print_style(content, template)
+        )
         return PrintDispatchOutput(
             order_id=order_id, order_code=order["order_code"],
             print_status=print_status, error_message=error, printer_results=results,
