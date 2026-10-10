@@ -527,7 +527,7 @@ export default function PurchaseOrdersPage({
         messageApi.success(
           editingReceipt.payment_status === "PAID"
             ? "Đã cập nhật phiếu và các quỹ/tài khoản thanh toán. Hàng hóa giữ nguyên."
-            : "Đã cập nhật phiếu trả nợ và đồng bộ lại tồn kho."
+            : "Đã cập nhật phiếu chưa thanh toán và đồng bộ lại tồn kho."
         );
       } else {
         const created = await createPurchaseReceipt(payload);
@@ -812,7 +812,7 @@ export default function PurchaseOrdersPage({
         ) : value === "PAID" ? (
           <Tag color="success">Đã thanh toán</Tag>
         ) : (
-          <Tag color="gold">Trả nợ</Tag>
+          <Tag color="gold">Chưa thanh toán</Tag>
         )
     },
     {
@@ -900,7 +900,7 @@ export default function PurchaseOrdersPage({
           options={[
             { value: "all", label: "Tất cả trạng thái" },
             { value: "PAID", label: "Đã thanh toán" },
-            { value: "DEBT", label: "Trả nợ" }
+            { value: "DEBT", label: "Chưa thanh toán" }
           ]}
         />
         <Button type="primary" onClick={() => void loadReceipts()}>
@@ -993,7 +993,7 @@ export default function PurchaseOrdersPage({
               >
                 <Radio.Group disabled={editingReceipt !== null}>
                   <Radio value="PAID">Đã thanh toán</Radio>
-                  <Radio value="DEBT">Trả nợ</Radio>
+                  <Radio value="DEBT">Chưa thanh toán</Radio>
                 </Radio.Group>
               </Form.Item>
 
@@ -1479,7 +1479,7 @@ export default function PurchaseOrdersPage({
                     ? "Đã hủy"
                     : viewReceipt.payment_status === "PAID"
                       ? "Đã thanh toán"
-                      : "Trả nợ"}
+                      : "Chưa thanh toán"}
                 </strong>
               </div>
               <div><Text type="secondary">Tổng tính</Text><strong>{money(viewReceipt.total_amount)} đ</strong></div>
