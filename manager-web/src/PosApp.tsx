@@ -72,6 +72,11 @@ type CartLine = {
 const money = (value: number) =>
   new Intl.NumberFormat("vi-VN").format(Math.round(value));
 
+// Search with or without Vietnamese accents (including đ/d).
+const normalizeMenuSearch = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d").replace(/Đ/g, "D").toLocaleLowerCase("vi");
+
 function defaultPosition(index: number) {
   return {
     x: 4 + (index % 5) * 19,
@@ -232,11 +237,11 @@ export default function PosApp() {
   }, [menuItems]);
 
   const filteredMenu = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase("vi");
+    const term = normalizeMenuSearch(search.trim());
     return menuItems.filter(
       (item) =>
         (groupId === null || item.menu_group_id === groupId) &&
-        (!term || item.name.toLocaleLowerCase("vi").includes(term))
+        (!term || normalizeMenuSearch(item.name).includes(term))
     );
   }, [menuItems, groupId, search]);
 
@@ -1115,6 +1120,8 @@ export default function PosApp() {
                 allowClear
                 placeholder="Tìm món trong thực đơn..."
                 value={search}
+                onFocus={() => setSearch("")}
+                onClick={() => setSearch("")}
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>

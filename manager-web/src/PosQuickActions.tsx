@@ -59,6 +59,14 @@ function marketAccount(accounts: FundAccount[], type: "CASH" | "BANK"): FundAcco
   return accounts.find((account) => account.id === id && account.type === type && account.is_active);
 }
 
+function defaultPurchaseAccount(accounts: FundAccount[]): FundAccount | undefined {
+  const active = accounts.filter((account) => account.is_active);
+  return active.find((account) => account.type === "CASH" && account.is_default)
+    ?? active.find((account) => account.is_default)
+    ?? active.find((account) => account.type === "CASH")
+    ?? active[0];
+}
+
 function shopCashAccount(accounts: FundAccount[]): FundAccount | undefined {
   const cash = accounts.filter(
     (account) => account.is_active && account.type === "CASH" && account.id !== MARKET_CASH_ID
@@ -87,7 +95,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
   const [defaults, setDefaults] = useState<ItemPurchaseDefault[]>([]);
   const [transferAmount, setTransferAmount] = useState<number | null>(null);
   const [supplierId, setSupplierId] = useState<number>();
-  const [paymentType, setPaymentType] = useState<"CASH" | "BANK">("CASH");
+  const [paymentFundAccountId, setPaymentFundAccountId] = useState<number>();
   const [lines, setLines] = useState<QuickLine[]>([]);
 
   useEffect(() => {
@@ -96,7 +104,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
     setLoading(true);
     setTransferAmount(null);
     setSupplierId(undefined);
-    setPaymentType("CASH");
+    setPaymentFundAccountId(undefined);
     setLines([{ key: ++nextLineId.current }]);
     requestId.current = makeRequestId();
     void (async () => {
@@ -110,6 +118,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
           ]);
           if (!cancelled) {
             setAccounts(funds);
+            setPaymentFundAccountId(defaultPurchaseAccount(funds)?.id);
             setSuppliers(suppliersResult);
             setItems(itemsResult.filter((item) => item.is_active));
             setDefaults(defaultsResult);
@@ -128,7 +137,8 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
 
   const source = shopCashAccount(accounts);
   const destination = marketAccount(accounts, "CASH");
-  const paymentAccount = marketAccount(accounts, paymentType);
+  const purchaseAccounts = accounts.filter((account) => account.is_active);
+  const paymentAccount = purchaseAccounts.find((account) => account.id === paymentFundAccountId);
   const total = lines.reduce((sum, line) =>
     sum + roundLineTotal((line.quantity ?? 0) * (line.unit_price ?? 0)), 0
   );
@@ -211,7 +221,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
       return;
     }
     if (!paymentAccount) {
-      messageApi.error("Không tìm thấy quỹ/tài khoản đã cấu hình trên app Android. Kiểm tra ID 3 (Đi chợ) hoặc ID 1 (BIDV).");
+      messageApi.error("Hãy chọn quỹ hoặc tài khoản ngân hàng đang hoạt động để thanh toán.");
       return;
     }
     if (lines.length === 0 || lines.some((line) =>
@@ -241,7 +251,7 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
         shipping_fee: 0,
         actual_paid_amount: null,
         payment_status: "PAID",
-        payment: { account_type: paymentType, fund_account_id: paymentAccount.id },
+        payment: { account_type: paymentAccount.type, fund_account_id: paymentAccount.id },
         shipping_payment: null,
         replaces_receipt_id: null,
         items: lines.map((line) => ({
@@ -349,24 +359,35 @@ export default function PosQuickActions({ action, onClose, onSaved }: Props) {
               </label>
               <div className="pos-quick-payment">
                 <span>Thanh toán</span>
-                <div className="pos-quick-payment-options">
-                  <Button type={paymentType === "CASH" ? "primary" : "default"}
-                    onClick={() => setPaymentType("CASH")} disabled={saving || loading}>
-                    Quỹ đi chợ
-                  </Button>
-                  <Button type={paymentType === "BANK" ? "primary" : "default"}
-                    onClick={() => setPaymentType("BANK")} disabled={saving || loading}>
-                    BIDV
-                  </Button>
-                </div>
+                <Select<number>
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Chọn quỹ / tài khoản thanh toán"
+                  aria-label="Nguồn thanh toán phiếu nhập"
+                  value={paymentFundAccountId}
+                  onChange={setPaymentFundAccountId}
+                  disabled={saving || loading || purchaseAccounts.length === 0}
+                  options={[
+                    {
+                      label: "TIỀN MẶT",
+                      options: purchaseAccounts.filter((account) => account.type === "CASH")
+                        .map((account) => ({ value: account.id, label: account.name }))
+                    },
+                    {
+                      label: "TÀI KHOẢN NGÂN HÀNG",
+                      options: purchaseAccounts.filter((account) => account.type === "BANK")
+                        .map((account) => ({ value: account.id, label: account.name }))
+                    }
+                  ]}
+                />
               </div>
             </div>
             {!loading && !paymentAccount && (
-              <div className="pos-quick-warning">Không tìm thấy quỹ thanh toán {paymentType === "CASH" ? "Đi chợ (ID 3)" : "BIDV (ID 1)"} đang hoạt động.</div>
+              <div className="pos-quick-warning">Không có quỹ/tài khoản đang hoạt động. Hãy kiểm tra danh sách nguồn tiền trên Web quản lý.</div>
             )}
             {paymentAccount && (
               <div className="pos-quick-payment-balance">
-                {paymentAccount.name}: {formatMoney(paymentAccount.current_balance)} đ
+                Số dư {paymentAccount.name}: {formatMoney(paymentAccount.current_balance)} đ
               </div>
             )}
             <div className="pos-quick-list-header">

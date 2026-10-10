@@ -2161,6 +2161,44 @@ body {
   width: 180px;
 }
 
+/* Keep the sales order list readable at the portable app's window size. */
+.sales-orders-table .ant-table-thead > tr > th,
+.sales-orders-table .ant-table-tbody > tr > td {
+  padding: 8px 6px;
+}
+.sales-orders-table .ant-table-cell { min-width: 0; }
+.sales-orders-table .ant-tag { margin-inline-end: 0; white-space: nowrap; }
+.sales-orders-table .sales-order-code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  white-space: nowrap;
+  padding-inline: 0;
+}
+.sales-orders-table .sales-order-account {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+.sales-orders-table .sales-order-ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sales-orders-table .sales-order-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 4px;
+}
+.sales-orders-table .sales-order-actions .ant-btn-link { padding-inline: 2px; }
+
 .sales-order-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
