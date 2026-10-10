@@ -448,7 +448,8 @@ def test_cashier_receipt_print_routing_is_separate_from_payment(
         assert [name for name, _ in captured] == ["Kitchen", "Cashier"]
         assert [row["role"] for row in printed.json()["printer_results"]] == ["KITCHEN", "CASHIER"]
         assert all("PHIẾU THANH TOÁN" in text for _, text in captured)
-        assert all("80,000" in text for _, text in captured)
+        # 80 mm receipts now use vi-VN grouping (dot instead of comma).
+        assert all("80.000" in text for _, text in captured)
         # Print failure cannot charge the customer a second time.
         after = client.get(f"/api/sales/orders/{order['id']}").json()
         assert after["status"] == "PAID"

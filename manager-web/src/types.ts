@@ -697,6 +697,33 @@ export type RestaurantTableInput = {
 export type PrinterRole = "KITCHEN" | "CASHIER";
 export type PrinterTarget = PrinterRole | "BOTH";
 
+export type PosPrintTemplateKind = "KITCHEN" | "CHECK" | "ESTIMATE" | "RECEIPT";
+
+export type PosPrintTemplate = {
+  printer_name: string;
+  title_font_pt: number;
+  body_font_pt: number;
+  total_font_pt: number;
+  line_spacing: number;
+  left_margin_mm: number;
+  title_text: string;
+  shop_name: string;
+  shop_phone: string;
+  shop_address: string;
+  footer_text: string;
+  show_shop_name: boolean;
+  show_phone: boolean;
+  show_address: boolean;
+  show_table: boolean;
+  show_time: boolean;
+  show_options: boolean;
+  show_notes: boolean;
+  show_surcharges: boolean;
+  show_prices: boolean;
+  show_payment: boolean;
+  show_footer: boolean;
+};
+
 export type PosSettings = {
   kitchen_printer_name: string;
   cashier_printer_name: string;
