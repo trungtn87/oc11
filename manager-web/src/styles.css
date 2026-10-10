@@ -1486,20 +1486,20 @@ body {
 }
 
 
-/* Compact UI completion: finish the 15% reduction across Ant Design controls/sidebar */
+/* Compact Manager UI only. POS uses its own large touch targets; keep portal dialogs separate. */
 .main-menu > .ant-menu-item,
 .main-menu > .ant-menu-submenu > .ant-menu-submenu-title {
   font-size: 12px;
 }
 
-.ant-btn:not(.ant-btn-link):not(.sidebar-toggle) {
+body:not(.oc11-pos-mode) .ant-btn:not(.ant-btn-link):not(.sidebar-toggle) {
   min-height: 27px;
   height: 27px;
   padding-block: 2px;
   padding-inline: 13px;
 }
 
-.ant-btn.ant-btn-icon-only:not(.sidebar-toggle) {
+body:not(.oc11-pos-mode) .ant-btn.ant-btn-icon-only:not(.sidebar-toggle) {
   width: 27px;
   min-width: 27px;
   padding-inline: 0;
@@ -1511,70 +1511,70 @@ body {
   padding-inline: 7px;
 }
 
-.ant-input:not(textarea),
-.ant-input-affix-wrapper,
-.ant-input-number,
-.ant-picker {
+body:not(.oc11-pos-mode) .ant-input:not(textarea),
+body:not(.oc11-pos-mode) .ant-input-affix-wrapper,
+body:not(.oc11-pos-mode) .ant-input-number,
+body:not(.oc11-pos-mode) .ant-picker {
   min-height: 27px;
 }
 
-.ant-input-affix-wrapper {
+body:not(.oc11-pos-mode) .ant-input-affix-wrapper {
   padding-block: 2px;
   padding-inline: 9px;
 }
 
-.ant-input-number-input {
+body:not(.oc11-pos-mode) .ant-input-number-input {
   height: 25px;
   padding-inline: 9px;
 }
 
-.ant-select-single {
+body:not(.oc11-pos-mode) .ant-select-single {
   height: 27px;
 }
 
-.ant-select-single .ant-select-selector {
+body:not(.oc11-pos-mode) .ant-select-single .ant-select-selector {
   min-height: 27px !important;
   height: 27px !important;
   padding-inline: 9px !important;
 }
 
-.ant-select-single .ant-select-selection-item,
-.ant-select-single .ant-select-selection-placeholder {
+body:not(.oc11-pos-mode) .ant-select-single .ant-select-selection-item,
+body:not(.oc11-pos-mode) .ant-select-single .ant-select-selection-placeholder {
   line-height: 25px !important;
 }
 
-.ant-input-search .ant-input-group .ant-input,
-.ant-input-search .ant-input-group .ant-input-affix-wrapper,
-.ant-input-search .ant-input-search-button {
+body:not(.oc11-pos-mode) .ant-input-search .ant-input-group .ant-input,
+body:not(.oc11-pos-mode) .ant-input-search .ant-input-group .ant-input-affix-wrapper,
+body:not(.oc11-pos-mode) .ant-input-search .ant-input-search-button {
   min-height: 27px;
   height: 27px;
 }
 
-.ant-pagination .ant-pagination-item,
-.ant-pagination .ant-pagination-prev,
-.ant-pagination .ant-pagination-next {
+body:not(.oc11-pos-mode) .ant-pagination .ant-pagination-item,
+body:not(.oc11-pos-mode) .ant-pagination .ant-pagination-prev,
+body:not(.oc11-pos-mode) .ant-pagination .ant-pagination-next {
   min-width: 27px;
   height: 27px;
   line-height: 25px;
 }
 
-.ant-pagination .ant-pagination-prev .ant-pagination-item-link,
-.ant-pagination .ant-pagination-next .ant-pagination-item-link {
+body:not(.oc11-pos-mode) .ant-pagination .ant-pagination-prev .ant-pagination-item-link,
+body:not(.oc11-pos-mode) .ant-pagination .ant-pagination-next .ant-pagination-item-link {
   min-width: 27px;
   height: 27px;
 }
 
-.ant-checkbox-inner {
+body:not(.oc11-pos-mode) .ant-checkbox-inner {
   width: 14px;
   height: 14px;
 }
 
-.ant-radio-inner {
+body:not(.oc11-pos-mode) .ant-radio-inner {
   width: 14px;
   height: 14px;
 }
 
-.ant-tag {
+body:not(.oc11-pos-mode) .ant-tag {
   line-height: 19px;
   padding-inline: 6px;
 }
