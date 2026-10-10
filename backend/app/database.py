@@ -479,6 +479,8 @@ def init_db() -> None:
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1
                     CHECK (is_active IN (0, 1)),
+                print_to_kitchen INTEGER NOT NULL DEFAULT 1
+                    CHECK (print_to_kitchen IN (0, 1)),
                 note TEXT,
                 FOREIGN KEY (menu_group_id) REFERENCES menu_groups(id),
                 FOREIGN KEY (sale_unit_id) REFERENCES units(id)
@@ -501,6 +503,12 @@ def init_db() -> None:
         if "reference_cost" not in menu_item_columns:
             connection.execute(
                 "ALTER TABLE menu_items ADD COLUMN reference_cost REAL"
+            )
+        if "print_to_kitchen" not in menu_item_columns:
+            connection.execute(
+                "ALTER TABLE menu_items "
+                "ADD COLUMN print_to_kitchen INTEGER NOT NULL DEFAULT 1 "
+                "CHECK (print_to_kitchen IN (0, 1))"
             )
 
         connection.execute(
@@ -884,6 +892,8 @@ def init_db() -> None:
                         cost_total_snapshot IS NULL
                         OR cost_total_snapshot >= 0
                     ),
+                print_to_kitchen INTEGER NOT NULL DEFAULT 1
+                    CHECK (print_to_kitchen IN (0, 1)),
                 note TEXT,
                 FOREIGN KEY (sales_order_id)
                     REFERENCES sales_orders(id) ON DELETE CASCADE,
@@ -894,6 +904,17 @@ def init_db() -> None:
             )
             """
         )
+        sales_item_columns = {
+            row["name"] for row in connection.execute(
+                "PRAGMA table_info(sales_order_items)"
+            ).fetchall()
+        }
+        if "print_to_kitchen" not in sales_item_columns:
+            connection.execute(
+                "ALTER TABLE sales_order_items "
+                "ADD COLUMN print_to_kitchen INTEGER NOT NULL DEFAULT 1 "
+                "CHECK (print_to_kitchen IN (0, 1))"
+            )
         connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_sales_order_items_order

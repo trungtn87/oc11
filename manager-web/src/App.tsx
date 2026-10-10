@@ -78,6 +78,7 @@ import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
 import MenuItemsPage from "./MenuItemsPage";
+import MenuKitchenPrintSettings from "./MenuKitchenPrintSettings";
 import { SalesOrdersPage, SalesPosPage } from "./SalesPage";
 import SurchargesPage from "./SurchargesPage";
 import { EinvoiceRequestsPage, EinvoiceSettingsPanel } from "./EinvoicePage";
@@ -179,6 +180,11 @@ const menuItems: MenuProps["items"] = [
         key: "menu-items",
         icon: <BarsOutlined />,
         label: "Món thực đơn"
+      },
+      {
+        key: "menu-kitchen-print",
+        icon: <FileTextOutlined />,
+        label: "Cấu hình in bếp"
       },
       {
         key: "menu-groups",
@@ -2659,6 +2665,7 @@ const pageTitles: Record<string, string> = {
   "item-list": "Danh sách hàng hóa",
   "units": "Đơn vị tính",
   "menu-items": "Món thực đơn",
+  "menu-kitchen-print": "Cấu hình in bếp",
   "menu-groups": "Nhóm thực đơn",
   "menu-cost": "Kiểu chế biến & Cost",
   "purchase-orders": "Phiếu nhập",
@@ -2744,6 +2751,10 @@ function App() {
 
     if (page === "menu-items") {
       return <MenuItemsPage />;
+    }
+
+    if (page === "menu-kitchen-print") {
+      return <MenuKitchenPrintSettings />;
     }
 
     if (page === "menu-groups") {
