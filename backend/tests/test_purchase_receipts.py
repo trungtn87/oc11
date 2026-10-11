@@ -621,6 +621,99 @@ def test_paid_receipt_splits_goods_and_shipping_across_different_accounts(
     ]
 
 
+def test_goods_paid_amount_is_not_reduced_by_separate_shipping_fee(
+    tmp_path, monkeypatch
+):
+    """Regression for NK000035: 3,675,000 goods + 120,000 shipping."""
+    db_path = tmp_path / "oc11.db"
+    monkeypatch.setenv("OC11_DB_PATH", str(db_path))
+    with TestClient(app) as client:
+        supplier = create_supplier(client)
+        item, unit = create_item(client)
+        cash = create_funded_cash_account(
+            client, name="Quỹ đi chợ", amount=5_000_000
+        )
+        bank = client.post(
+            "/api/fund-accounts",
+            json={"name": "HDK", "type": "BANK", "is_active": True},
+        ).json()
+        opening = client.post(
+            "/api/fund-transactions",
+            json={
+                "account_type": "BANK",
+                "fund_account_id": bank["id"],
+                "direction": "IN",
+                "transaction_type": "OPENING_BALANCE",
+                "transaction_time": "2026-10-05T07:10",
+                "amount": 5_000_000,
+                "description": "Số dư đầu kỳ HDK",
+            },
+        )
+        assert opening.status_code == 201
+
+        payload = receipt_payload(
+            supplier["id"],
+            item["id"],
+            unit["id"],
+            quantity=15,
+            unit_price=245_000,
+            shipping_fee=120_000,
+            payment_status="PAID",
+            payment={"account_type": "BANK", "fund_account_id": bank["id"]},
+        )
+        payload["goods_paid_amount"] = 3_675_000
+        payload["shipping_payment"] = {
+            "account_type": "CASH",
+            "fund_account_id": cash["id"],
+        }
+
+        created = client.post("/api/purchase-receipts", json=payload)
+        assert created.status_code == 201, created.text
+        receipt = created.json()
+        assert receipt["goods_total"] == 3_675_000
+        assert receipt["shipping_fee"] == 120_000
+        assert receipt["total_amount"] == 3_795_000
+        assert receipt["goods_paid_amount"] == 3_675_000
+        assert receipt["actual_paid_amount"] == 3_795_000
+
+        def check_accounts(expected_shipping_amount):
+            banks = {r["id"]: r for r in client.get("/api/fund-accounts?type=BANK").json()}
+            cashes = {r["id"]: r for r in client.get("/api/fund-accounts?type=CASH").json()}
+            assert banks[bank["id"]]["current_balance"] == 1_325_000
+            assert cashes[cash["id"]]["current_balance"] == 5_000_000 - expected_shipping_amount
+
+            with sqlite3.connect(db_path) as connection:
+                transactions = connection.execute(
+                    """
+                    SELECT source_component, fund_account_id, amount
+                    FROM fund_transactions
+                    WHERE source_type = 'PURCHASE_RECEIPT'
+                      AND source_id = ? AND is_void = 0
+                    ORDER BY id
+                    """,
+                    (str(receipt["id"]),),
+                ).fetchall()
+            assert transactions == [
+                ("GOODS", bank["id"], 3_675_000),
+                ("SHIPPING", cash["id"], expected_shipping_amount),
+            ]
+
+        check_accounts(120_000)
+
+        # Editing the already-paid receipt must not subtract the fee again.
+        payload["shipping_fee"] = 130_000
+        updated = client.put(f"/api/purchase-receipts/{receipt['id']}", json=payload)
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["goods_paid_amount"] == 3_675_000
+        assert updated.json()["actual_paid_amount"] == 3_805_000
+        check_accounts(130_000)
+
+        # Total-paid legacy field and goods-only field are mutually exclusive.
+        invalid_payload = dict(payload, actual_paid_amount=3_805_000)
+        rejected = client.post("/api/purchase-receipts", json=invalid_payload)
+        assert rejected.status_code == 422
+
+
 def test_paid_receipt_uses_actual_paid_amount_for_rounded_payment(
     tmp_path,
     monkeypatch,
