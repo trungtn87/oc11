@@ -32,6 +32,7 @@ class PurchaseReceiptInput(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     shipping_fee: int = Field(default=0, ge=0)
     actual_paid_amount: int | None = Field(default=None, ge=0)
+    goods_paid_amount: int | None = Field(default=None, ge=0)
     payment_status: str
     payment: PurchasePaymentInput | None = None
     shipping_payment: PurchasePaymentInput | None = None
@@ -65,6 +66,7 @@ class PurchaseReceiptOutput(BaseModel):
     shipping_fee: int
     total_amount: int
     actual_paid_amount: int | None
+    goods_paid_amount: int | None
     payment_status: str
     payment_reference_code: str | None
     payment_fund_account_id: int | None
@@ -114,16 +116,32 @@ def resolve_actual_paid_amount(
     payment_status: str,
     total_amount: int,
     requested_amount: int | None,
+    *,
+    goods_paid_amount: int | None = None,
+    shipping_fee: int = 0,
 ) -> int | None:
+    # Legacy clients send actual_paid_amount = total amount including shipping.
+    # New clients can send goods_paid_amount = amount withdrawn for goods;
+    # shipping_fee is then added exactly once to the total payment.
+    if requested_amount is not None and goods_paid_amount is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Chỉ nhập một trong tiền thực trả tổng hoặc tiền thực trả hàng.",
+        )
+
     if payment_status != "PAID":
-        if requested_amount is not None:
+        if requested_amount is not None or goods_paid_amount is not None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Phiếu trả nợ chưa có tiền thực trả.",
+                detail="Phiếu chưa thanh toán không có tiền thực trả.",
             )
         return None
 
-    actual_paid = total_amount if requested_amount is None else int(requested_amount)
+    actual_paid = (
+        int(goods_paid_amount) + shipping_fee
+        if goods_paid_amount is not None
+        else (total_amount if requested_amount is None else int(requested_amount))
+    )
     if total_amount > 0 and actual_paid <= 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -703,6 +721,13 @@ def row_to_output(
                 else None
             )
         ),
+        goods_paid_amount=(
+            (
+                (row["actual_paid_amount"] if row["actual_paid_amount"] is not None
+                 else row["total_amount"]) - row["shipping_fee"]
+            )
+            if row["payment_status"] == "PAID" else None
+        ),
         payment_status=row["payment_status"],
         payment_reference_code=row["payment_reference_code"],
         payment_fund_account_id=payment["fund_account_id"] if payment else None,
@@ -865,6 +890,8 @@ def create_purchase_receipt(payload: PurchaseReceiptInput) -> PurchaseReceiptOut
             payment_status,
             total_amount,
             payload.actual_paid_amount,
+            goods_paid_amount=payload.goods_paid_amount,
+            shipping_fee=payload.shipping_fee,
         )
         receipt_code = next_receipt_code(connection)
 
@@ -1047,6 +1074,8 @@ def update_purchase_receipt(
                 existing_status,
                 new_total_amount,
                 payload.actual_paid_amount,
+                goods_paid_amount=payload.goods_paid_amount,
+                shipping_fee=payload.shipping_fee,
             )
             existing_shipping_payment = select_payment_info(
                 connection,
@@ -1229,6 +1258,8 @@ def update_purchase_receipt(
                 existing_status,
                 total_amount,
                 payload.actual_paid_amount,
+                goods_paid_amount=payload.goods_paid_amount,
+                shipping_fee=payload.shipping_fee,
             )
 
             old_item_ids = [
