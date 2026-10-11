@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -95,6 +95,7 @@ export default function InventoryStockPage() {
   const [groups, setGroups] = useState<ItemGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const stockRequestVersion = useRef(0);
   const [groupFilter, setGroupFilter] = useState<number | "all">("all");
   const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>("TRACKED");
   const [trackingSavingId, setTrackingSavingId] = useState<number | null>(null);
@@ -122,6 +123,7 @@ export default function InventoryStockPage() {
   const [messageApi, messageContext] = message.useMessage();
 
   const loadStock = async () => {
+    const requestVersion = ++stockRequestVersion.current;
     try {
       setLoading(true);
       const data = await getInventoryStock({
@@ -130,34 +132,35 @@ export default function InventoryStockPage() {
         as_of: asOf || undefined,
         tracking: trackingFilter
       });
-      setStocks(data);
+      if (requestVersion === stockRequestVersion.current) {
+        setStocks(data);
+      }
     } catch (error) {
-      messageApi.error(
-        error instanceof Error ? error.message : "Không tải được tồn kho."
-      );
+      if (requestVersion === stockRequestVersion.current) {
+        messageApi.error(
+          error instanceof Error ? error.message : "Không tải được tồn kho."
+        );
+      }
     } finally {
-      setLoading(false);
+      if (requestVersion === stockRequestVersion.current) {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const [nextGroups, nextStock] = await Promise.all([
-          getItemGroups(),
-          getInventoryStock({ tracking: "TRACKED" })
-        ]);
-        setGroups(nextGroups);
-        setStocks(nextStock);
-      } catch (error) {
-        messageApi.error(
-          error instanceof Error ? error.message : "Không tải được dữ liệu tồn kho."
-        );
-      } finally {
-        setLoading(false);
-      }
-    })();
+    void getItemGroups().then(setGroups).catch((error) => {
+      messageApi.error(
+        error instanceof Error ? error.message : "Không tải được nhóm hàng."
+      );
+    });
   }, []);
+
+  // Search/filter automatically after a short pause; Enter still searches immediately.
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void loadStock(), 300);
+    return () => window.clearTimeout(timeout);
+  }, [search, groupFilter, trackingFilter, asOf]);
 
   const loadHistory = async (
     itemId: number,
@@ -611,14 +614,7 @@ export default function InventoryStockPage() {
               setGroupFilter("all");
               setTrackingFilter("TRACKED");
               setAsOf("");
-              void (async () => {
-                try {
-                  setLoading(true);
-                  setStocks(await getInventoryStock({ tracking: "TRACKED" }));
-                } finally {
-                  setLoading(false);
-                }
-              })();
+              // Filter effect refreshes the list with the default values.
             }}
           >
             Bỏ lọc
