@@ -1,4 +1,5 @@
 import sqlite3
+import unicodedata
 from typing import Literal
 from datetime import date, datetime, time
 
@@ -105,6 +106,15 @@ def clean_text(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def normalize_stock_search(value: str) -> str:
+    # SQLite's NOCASE/LIKE only folds ASCII; normalize Vietnamese in Python.
+    decomposed = unicodedata.normalize("NFD", value.casefold().replace("đ", "d"))
+    without_marks = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    return " ".join(without_marks.split())
 
 
 def normalize_datetime(
@@ -324,9 +334,7 @@ def list_inventory_stock(
         conditions.append("i.item_group_id = ?")
         params.append(group_id)
 
-    if search and search.strip():
-        conditions.append("i.name LIKE ? COLLATE NOCASE")
-        params.append(f"%{search.strip()}%")
+    normalized_search = normalize_stock_search(search or "")
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -361,6 +369,8 @@ def list_inventory_stock(
 
         result: list[InventoryStockItem] = []
         for row in rows:
+            if normalized_search and normalized_search not in normalize_stock_search(row["name"]):
+                continue
             purchase = last_purchase(
                 connection,
                 row["id"],

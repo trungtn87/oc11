@@ -77,6 +77,45 @@ def create_purchase(
     return response.json()
 
 
+def test_stock_search_supports_vietnamese_and_accentless_queries(tmp_path, monkeypatch):
+    monkeypatch.setenv("OC11_DB_PATH", str(tmp_path / "oc11.db"))
+
+    with TestClient(app) as client:
+        group, _, lon, beer, _ = setup_inventory_master(client)
+        snail = client.post(
+            "/api/items",
+            json={
+                "name": "Ốc hương",
+                "item_group_id": group["id"],
+                "default_unit_id": lon["id"],
+                "smallest_unit_id": lon["id"],
+                "note": None,
+                "is_active": True,
+                "conversions": [],
+            },
+        )
+        assert snail.status_code == 201
+        snail_id = snail.json()["id"]
+
+        for query, expected_id in [
+            ("bia ha noi", beer["id"]),
+            ("BIA HÀ NỘI", beer["id"]),
+            ("oc huong", snail_id),
+            ("ỐC HƯƠNG", snail_id),
+            ("  OC   HUONG  ", snail_id),
+        ]:
+            response = client.get(
+                "/api/inventory/stock",
+                params={"search": query, "tracking": "TRACKED"},
+            )
+            assert response.status_code == 200
+            assert [row["item_id"] for row in response.json()] == [expected_id]
+
+        not_found = client.get("/api/inventory/stock", params={"search": "tom hum"})
+        assert not_found.status_code == 200
+        assert not_found.json() == []
+
+
 def test_stock_list_uses_smallest_unit_and_latest_purchase_price(
     tmp_path,
     monkeypatch,
