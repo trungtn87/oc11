@@ -24,6 +24,7 @@ import {
   getSaleOrders,
   getSurchargePresets,
   getPosSettings,
+  getPosKitchenStatus,
   paySaleOrder,
   printSaleOrderCancellation,
   printSaleOrderEstimate,
@@ -34,6 +35,7 @@ import {
   updateSaleOrder,
   voidSaleOrder
 } from "./api";
+import type { PosKitchenStatus } from "./api";
 import type {
   FundAccount,
   FundAccountType,
@@ -146,6 +148,7 @@ export default function PosApp() {
   const [editingOrder, setEditingOrder] = useState<SaleOrder | null>(null);
   const [tableId, setTableId] = useState<number | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [kitchenStatus, setKitchenStatus] = useState<PosKitchenStatus | null>(null);
   const [dirty, setDirty] = useState(false);
   const [optionItem, setOptionItem] = useState<MenuItem | null>(null);
   const [noteLineKey, setNoteLineKey] = useState<string | null>(null);
@@ -257,6 +260,48 @@ export default function PosApp() {
     [cart, editingOrder]
   );
 
+  // Derive unsent servings from acknowledged tickets, not volatile row IDs.
+  const hasKitchenPending = useMemo(() => {
+    if (!cart.length || kitchenStatus === null) return false;
+    if (kitchenStatus.retry_pending) return true;
+    const sent = new Map<string, number>();
+    const current = new Map<string, number>();
+    const keyFor = (name: string, option: string | null) =>
+      JSON.stringify([name.trim(), (option ?? "").trim()]);
+    for (const item of kitchenStatus.sent_items) {
+      const key = keyFor(item.name, item.option);
+      sent.set(key, (sent.get(key) ?? 0) + item.quantity);
+    }
+    for (const item of cart) {
+      const key = keyFor(item.name, item.optionName);
+      current.set(key, (current.get(key) ?? 0) + item.quantity);
+    }
+    return [...current].some(([key, count]) => count > (sent.get(key) ?? 0) + 0.000001);
+  }, [cart, kitchenStatus]);
+
+  const checkoutItems = useMemo(() => {
+    if (!checkoutOrder) return [];
+    const grouped = new Map<string, SaleOrder["items"][number]>();
+    for (const item of checkoutOrder.items) {
+      // Preserve annotated or surcharged rows; group plain matching dishes.
+      if (item.note || item.surcharges.length) {
+        grouped.set(`line-${item.id}`, item);
+        continue;
+      }
+      const key = JSON.stringify([
+        item.menu_item_id, item.menu_item_option_id,
+        item.item_name_snapshot, item.option_name_snapshot, item.unit_price
+      ]);
+      const previous = grouped.get(key);
+      grouped.set(key, previous
+        ? { ...previous, quantity: previous.quantity + item.quantity,
+            line_total: previous.line_total + item.line_total,
+            total_with_surcharges: previous.total_with_surcharges + item.total_with_surcharges }
+        : item);
+    }
+    return [...grouped.values()];
+  }, [checkoutOrder]);
+
   const selectedTable = tables.find((table) => table.id === tableId);
 
   function changeKitchenNote(value: string) {
@@ -271,6 +316,7 @@ export default function PosApp() {
     setEditingOrder(null);
     setTableId(table.id);
     setCart([]);
+    setKitchenStatus({ sent_items: [], retry_pending: false });
     setKitchenNote(kitchenNoteDrafts.current.get(table.id) ?? "");
     setSelectedLineKey(null);
     setDirty(false);
@@ -282,7 +328,9 @@ export default function PosApp() {
   async function openExisting(orderId: number) {
     setBusy(true);
     try {
-      const order = await getSaleOrder(orderId);
+      const [order, status] = await Promise.all([
+        getSaleOrder(orderId), getPosKitchenStatus(orderId)
+      ]);
       if (order.status !== "OPEN" || order.order_type !== "DINE_IN") {
         messageApi.warning("Order này không còn đang phục vụ.");
         await refresh();
@@ -295,6 +343,7 @@ export default function PosApp() {
       }
 
       setEditingOrder(order);
+      setKitchenStatus(status);
       setTableId(order.table_id);
       setCart(
         order.items.map((item) => ({
@@ -338,40 +387,23 @@ export default function PosApp() {
   }
 
   function addItem(item: MenuItem, option: MenuItemOption | null = null) {
-    const optionId = option?.id ?? null;
+    // Every tap creates an independent Order line, including repeated dishes.
     const unitPrice = option?.sale_price ?? item.base_price;
-    setCart((current) => {
-      // Only merge identical plain lines. Keep annotated lines independent.
-      const identical = current.find(
-        (line) =>
-          line.menuItemId === item.id &&
-          line.optionId === optionId &&
-          !line.note &&
-          line.surcharges.length === 0
-      );
-      if (identical) {
-        return current.map((line) =>
-          line.key === identical.key
-            ? { ...line, quantity: line.quantity + 1 }
-            : line
-        );
+    newLineSequence += 1;
+    setCart((current) => [
+      ...current,
+      {
+        key: `new-${newLineSequence}`,
+        menuItemId: item.id,
+        optionId: option?.id ?? null,
+        name: item.name,
+        optionName: option?.service_option_name ?? null,
+        unitPrice,
+        quantity: 1,
+        note: "",
+        surcharges: []
       }
-      newLineSequence += 1;
-      return [
-        ...current,
-        {
-          key: `new-${newLineSequence}`,
-          menuItemId: item.id,
-          optionId,
-          name: item.name,
-          optionName: option?.service_option_name ?? null,
-          unitPrice,
-          quantity: 1,
-          note: "",
-          surcharges: []
-        }
-      ];
-    });
+    ]);
     setDirty(true);
     setOptionItem(null);
   }
@@ -581,6 +613,7 @@ export default function PosApp() {
   }
 
   async function performSendKitchen() {
+    if (!hasKitchenPending) return;
     const saved = await saveOrder(false);
     if (!saved) return;
     setBusy(true);
@@ -613,6 +646,13 @@ export default function PosApp() {
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "Không gửi được bếp.");
     } finally {
+      // Refresh the acknowledged quantities even after a partial printer error.
+      try {
+        setKitchenStatus(await getPosKitchenStatus(saved.id));
+      } catch {
+        setKitchenStatus(null);
+        messageApi.warning("Không kiểm tra được trạng thái gửi bếp. Hãy mở lại Order.");
+      }
       setBusy(false);
     }
   }
@@ -1287,7 +1327,7 @@ export default function PosApp() {
                 <strong>{money(total)} đ</strong>
               </div>
               <div className="pos-create-actions">
-                <Button className="pos-kitchen-button" disabled={busy || !cart.length}
+                <Button className="pos-kitchen-button" disabled={busy || !hasKitchenPending}
                   loading={busy} onClick={sendKitchen}>Gửi bếp</Button>
                 <Button danger disabled={busy} onClick={backToMap}>Huỷ</Button>
                 <Button className="pos-save-order" disabled={!cart.length} loading={busy}
@@ -1570,7 +1610,7 @@ export default function PosApp() {
             </header>
             <div className="pos-checkout-items">
               <div className="pos-checkout-heading"><b>Món</b><b>SL</b><b>Thành tiền</b></div>
-              {checkoutOrder.items.map((line) => (
+              {checkoutItems.map((line) => (
                 <div className="pos-checkout-item" key={line.id}>
                   <div>
                     <strong>{line.item_name_snapshot}</strong>
