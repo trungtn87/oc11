@@ -974,6 +974,60 @@ def test_kitchen_printer(
     return {"ok": ok, "printer_name": printer_name or None, "error": error}
 
 
+class KitchenSentQuantity(BaseModel):
+    name: str
+    option: str | None
+    quantity: float
+
+
+class KitchenStatusOutput(BaseModel):
+    sent_items: list[KitchenSentQuantity]
+    retry_pending: bool
+
+
+@router.get("/orders/{order_id}/kitchen-status", response_model=KitchenStatusOutput)
+def get_order_kitchen_status(order_id: int) -> KitchenStatusOutput:
+    """Read-only summary matching the same snapshots used by Gửi bếp."""
+    with connect() as connection:
+        order = select_order(connection, order_id)
+        if order is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn bán.")
+        if order["status"] != "OPEN":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Order không còn đang phục vụ.",
+            )
+
+        sent: dict[tuple[str, str], float] = {}
+        for snapshot in printed_kitchen_snapshots(connection, order_id):
+            for item in snapshot.get("items", []):
+                key = (
+                    str(item.get("name") or "").strip(),
+                    str(item.get("option") or "").strip(),
+                )
+                sent[key] = sent.get(key, 0.0) + float(item["quantity"])
+
+        retry = connection.execute(
+            """
+            SELECT 1 FROM kitchen_tickets
+            WHERE sales_order_id = ? AND print_status = 'FAILED'
+              AND kitchen_print_ok IS NOT NULL
+              AND check_print_ok IS NOT NULL
+              AND (kitchen_print_ok = 1 OR check_print_ok = 1)
+            LIMIT 1
+            """, (order_id,),
+        ).fetchone()
+        return KitchenStatusOutput(
+            sent_items=[
+                KitchenSentQuantity(
+                    name=name, option=option or None, quantity=quantity
+                )
+                for (name, option), quantity in sent.items()
+            ],
+            retry_pending=retry is not None,
+        )
+
+
 @router.post("/orders/{order_id}/send-kitchen", response_model=KitchenSendOutput)
 def send_order_to_kitchen(
     order_id: int, payload: KitchenSendInput | None = None,

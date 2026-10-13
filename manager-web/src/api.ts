@@ -866,6 +866,15 @@ export function testPosPrinter(role: PrinterRole): Promise<{
   return request(`/api/pos/printer/test?role=${role}`, { method: "POST" });
 }
 
+export type PosKitchenStatus = {
+  sent_items: Array<{ name: string; option: string | null; quantity: number }>;
+  retry_pending: boolean;
+};
+
+export function getPosKitchenStatus(orderId: number): Promise<PosKitchenStatus> {
+  return request<PosKitchenStatus>(`/api/pos/orders/${orderId}/kitchen-status`);
+}
+
 export function sendSaleOrderToKitchen(
   orderId: number,
   temporaryNote = ""
