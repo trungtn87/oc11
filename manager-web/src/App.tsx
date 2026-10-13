@@ -71,6 +71,7 @@ import {
 } from "./api";
 import { BankAccountsPage, CashFundsPage } from "./FundAccountsPage";
 import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
+import FundVouchersPage from "./FundVouchersPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import ConsumptionPage from "./ConsumptionPage";
@@ -223,6 +224,7 @@ const menuItems: MenuProps["items"] = [
     children: [
       { key: "fund-accounts", icon: <WalletOutlined />, label: "Quỹ tiền mặt & tài khoản ngân hàng" },
       { key: "money-ledgers", icon: <FileTextOutlined />, label: "Sổ tiền mặt - Sổ tiền gửi" },
+      { key: "fund-vouchers", icon: <AuditOutlined />, label: "Sổ thu chi" },
       { key: "cash-categories", icon: <TagsOutlined />, label: "Loại thu/chi" }
     ]
   },
@@ -2674,6 +2676,7 @@ const pageTitles: Record<string, string> = {
   "stock-sales": "Kho tiêu thụ",
   "fund-accounts": "Quỹ tiền mặt & tài khoản ngân hàng",
   "money-ledgers": "Sổ tiền mặt - Sổ tiền gửi",
+  "fund-vouchers": "Sổ thu chi",
   "cash-categories": "Loại thu/chi",
   "report-revenue": "Báo cáo doanh thu",
   "report-stock": "Báo cáo tồn kho",
@@ -2849,6 +2852,24 @@ function App() {
               )
             }
           ]}
+        />
+      );
+    }
+
+    if (page === "fund-vouchers") {
+      return (
+        <FundVouchersPage
+          onOpenSourceDocument={(sourceType, sourceId) => {
+            const documentId = Number(sourceId);
+            if (!Number.isInteger(documentId) || documentId <= 0) return;
+            if (sourceType === "PURCHASE_RECEIPT") {
+              setLinkedPurchaseReceiptId(documentId);
+              setPage("purchase-orders");
+            } else if (sourceType === "SALE") {
+              setLinkedSaleOrderId(documentId);
+              setPage("sales-orders");
+            }
+          }}
         />
       );
     }
