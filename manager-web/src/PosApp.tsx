@@ -317,6 +317,7 @@ export default function PosApp() {
       setDirty(false);
       setSearch("");
       setGroupId(null);
+      setCheckoutOrder(null);
       setView("SALE");
     } catch (error) {
       messageApi.error(
@@ -1593,8 +1594,8 @@ export default function PosApp() {
               <div className="pos-checkout-total"><b>Tổng tiền</b>
                 <strong>{money(checkoutOrder.total_amount)} đ</strong></div>
               <div className="pos-checkout-actions">
-                <Button danger disabled={busy}
-                  onClick={() => confirmCancelOrder(checkoutOrder)}>Hủy order</Button>
+                <Button disabled={busy} loading={busy}
+                  onClick={() => void openExisting(checkoutOrder.id)}>Quay lại Order</Button>
                 <Button disabled={busy} loading={busy} onClick={() => void printEstimate()}>
                   In tạm tính
                 </Button>
