@@ -122,3 +122,86 @@ def test_failed_destination_only_is_retried_no_duplicate_kitchen(
         assert [x[0] for x in calls] == ["Kitchen", "Cashier", "Cashier"]
         assert client.post(url).json()["print_status"] == "NO_NEW_ITEMS"
         assert len(calls) == 3
+
+
+def test_kitchen_status_tracks_separate_order_rows_and_only_new_servings(tmp_path, monkeypatch):
+    monkeypatch.setenv("OC11_DB_PATH", str(tmp_path / "oc11.db"))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "settings"))
+    printed = []
+    monkeypatch.setattr(
+        "backend.app.pos.print_text",
+        lambda name, text: (printed.append((name, text)) or True, None),
+    )
+    with TestClient(app) as client:
+        item_id = seed_menu(tmp_path / "oc11.db")
+        client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen",
+            "cashier_printer_name": "Cashier",
+        })
+        base = {"order_type": "TAKEAWAY", "items": [
+            {"menu_item_id": item_id, "quantity": 1},
+        ]}
+        created = client.post("/api/sales/orders", json=base)
+        assert created.status_code == 201, created.text
+        order_id = created.json()["id"]
+        status_url = f"/api/pos/orders/{order_id}/kitchen-status"
+        send_url = f"/api/pos/orders/{order_id}/send-kitchen"
+
+        initial = client.get(status_url)
+        assert initial.status_code == 200
+        assert initial.json() == {"sent_items": [], "retry_pending": False}
+
+        first = client.post(send_url)
+        assert first.json()["print_status"] == "PRINTED"
+        after_first = client.get(status_url).json()
+        assert len(after_first["sent_items"]) == 1
+        assert after_first["sent_items"][0]["quantity"] == 1
+        assert after_first["retry_pending"] is False
+
+        # A second identical tap stays a separate database row.
+        edited = client.put(f"/api/sales/orders/{order_id}", json={
+            **base, "settlement_target": "OPEN",
+            "items": [
+                {"menu_item_id": item_id, "quantity": 1},
+                {"menu_item_id": item_id, "quantity": 1},
+            ],
+        })
+        assert edited.status_code == 200, edited.text
+        assert len(edited.json()["items"]) == 2
+        assert client.get(status_url).json()["sent_items"][0]["quantity"] == 1
+
+        second = client.post(send_url)
+        assert second.json()["print_status"] == "PRINTED"
+        assert len(printed) == 4
+        assert client.get(status_url).json()["sent_items"][0]["quantity"] == 2
+        assert client.post(send_url).json()["print_status"] == "NO_NEW_ITEMS"
+        assert len(printed) == 4
+
+
+def test_kitchen_status_reports_partial_print_retry(tmp_path, monkeypatch):
+    monkeypatch.setenv("OC11_DB_PATH", str(tmp_path / "oc11.db"))
+    monkeypatch.setenv("OC11_DATA_DIR", str(tmp_path / "settings"))
+    printer_failed = {"cashier": True}
+
+    def print_once(name, text):
+        return (False, "Offline") if name == "Cashier" and printer_failed["cashier"] else (True, None)
+
+    monkeypatch.setattr("backend.app.pos.print_text", print_once)
+    with TestClient(app) as client:
+        item_id = seed_menu(tmp_path / "oc11.db")
+        client.put("/api/pos/settings", json={
+            "kitchen_printer_name": "Kitchen", "cashier_printer_name": "Cashier",
+        })
+        created = client.post("/api/sales/orders", json={
+            "order_type": "TAKEAWAY",
+            "items": [{"menu_item_id": item_id, "quantity": 1}],
+        }).json()
+        order_id = created["id"]
+        client.post(f"/api/pos/orders/{order_id}/send-kitchen")
+        status_url = f"/api/pos/orders/{order_id}/kitchen-status"
+        pending = client.get(status_url)
+        assert pending.status_code == 200
+        assert pending.json()["retry_pending"] is True
+        printer_failed["cashier"] = False
+        assert client.post(f"/api/pos/orders/{order_id}/send-kitchen").json()["print_status"] == "PRINTED"
+        assert client.get(status_url).json()["retry_pending"] is False
