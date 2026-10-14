@@ -141,6 +141,10 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
     }
   }
 
+  const previewLines = preview.split(/\r?\n/);
+  const receiptRows = previewLines
+    .filter((line) => line.startsWith("__OC11_TABLE_ROW__\t"))
+    .map((line) => line.split("\t").slice(1));
   const financial = isFinancial(selected);
   const defaultPrinter = selected === "KITCHEN"
     ? posSettings?.kitchen_printer_name
@@ -254,10 +258,28 @@ export default function PosPrintTemplateEditor({ open }: { open: boolean }) {
               {previewLoading && <Spin size="small" />}
             </div>
             <div className="pos-template-paper">
-              {preview.split(/\r?\n/).map((line, i) => {
+              {previewLines.map((line, i) => {
                 const normalized = line.trim();
+                if (normalized === "__OC11_TABLE_START__") {
+                  return <table key={i} className="pos-template-cashier-table">
+                    <colgroup>
+                      <col style={{ width: "5%" }} /><col style={{ width: "39%" }} />
+                      <col style={{ width: "8%" }} /><col style={{ width: "18%" }} />
+                      <col style={{ width: "9%" }} /><col style={{ width: "21%" }} />
+                    </colgroup>
+                    <thead><tr><th>#</th><th>Tên món</th><th>SL</th><th>ĐG</th><th>%KM</th><th>TT</th></tr></thead>
+                    <tbody>{receiptRows.map((cells, row) => <tr key={row}>
+                      {Array.from({ length: 6 }, (_, col) =>
+                        <td key={col}>{cells[col] || "\u00a0"}</td>
+                      )}
+                    </tr>)}</tbody>
+                  </table>;
+                }
+                if (normalized === "__OC11_TABLE_END__" ||
+                    line.startsWith("__OC11_TABLE_ROW__\t")) return null;
                 const titleLine = normalized === (template.title_text.trim() || titles[selected]);
-                const totalLine = normalized.startsWith("TỔNG TIỀN:");
+                const totalLine = normalized.startsWith("TỔNG TIỀN:") ||
+                  normalized.startsWith("TỔNG THANH TOÁN:");
                 const fontSize = titleLine ? template.title_font_pt
                   : totalLine ? template.total_font_pt : template.body_font_pt;
                 return <div key={i} className={titleLine ? "pos-template-paper-title" : ""}

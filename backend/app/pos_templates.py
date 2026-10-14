@@ -165,36 +165,58 @@ def render_kitchen_template(order: dict, items: list[dict], kind: TemplateKind,
     return "\r\n".join(lines)
 
 
+def _table_cell(value: object) -> str:
+    """Protect the tab-delimited printer protocol while keeping complete dish names."""
+    return " ".join(str(value or "").split())
+
+
+def _table_money(value: int | float) -> str:
+    return f"{round(value):,}".replace(",", ".")
+
+
 def render_money_template(order: dict, items: list[dict],
                           surcharges: list[dict], kind: TemplateKind,
                           tpl: PrintTemplate) -> str:
     if kind not in ("ESTIMATE", "RECEIPT"):
         raise ValueError("Not a cashier template")
     lines = base_header(order, kind, tpl)
-    for item in items:
-        lines.extend(_rows(str(item["name"])))
-        if tpl.show_options and item.get("option"):
-            lines.extend(_rows("  + " + str(item["option"])))
-        if tpl.show_prices:
-            unit_price = item.get("unit_price", 0)
-            lines.extend(_rows("  " + quantity(float(item["quantity"]))
-                               + " x " + plain_money(unit_price)))
-        else:
-            lines.append("  SL: " + quantity(float(item["quantity"])))
-        lines.append("  Thành tiền: " + plain_money(item["line_total"]))
-        if tpl.show_surcharges:
-            for extra in item.get("surcharges") or []:
-                lines.extend(_rows("  + " + str(extra["name"]) + ": "
-                                   + plain_money(extra["amount"])))
+    # The 80mm Windows renderer turns these rows into a real ruled table.
+    # The web preview understands the same markers, so print/preview stay aligned.
+    lines.append("__OC11_TABLE_START__")
+    goods_total = 0
+    for number, item in enumerate(items, 1):
+        name = _table_cell(item["name"])
+        option = _table_cell(item.get("option"))
+        if tpl.show_options and option and option.casefold() not in name.casefold():
+            name += " " + option
+
+        item_extras = item.get("surcharges") or [] if tpl.show_surcharges else []
+        extra_amount = sum(int(extra["amount"]) for extra in item_extras)
+        if item_extras:
+            names = ", ".join(_table_cell(extra["name"]) for extra in item_extras)
+            name += " (+" + names + ")"
         if tpl.show_notes and item.get("note"):
-            lines.extend(_rows("  * " + str(item["note"])))
-        lines.append("-" * 32)
+            name += " (" + _table_cell(item["note"]) + ")"
+
+        row_total = int(item["line_total"]) + extra_amount
+        goods_total += row_total
+        columns = [
+            str(number), name, quantity(float(item["quantity"])),
+            _table_money(item.get("unit_price", 0)) if tpl.show_prices else "",
+            "",  # No item discount percentage exists in the current POS data.
+            _table_money(row_total),
+        ]
+        lines.append("__OC11_TABLE_ROW__\t" + "\t".join(columns))
+    lines.append("__OC11_TABLE_END__")
+
     if tpl.show_surcharges:
         for extra in surcharges:
             lines.extend(_rows("Phụ thu " + str(extra["name"]) + ": "
                                + plain_money(extra["amount"])))
-    lines.append("TỔNG TIỀN: " + plain_money(order["total_amount"]))
+    lines.append("Tiền hàng: " + plain_money(goods_total))
+    lines.append("TỔNG THANH TOÁN: " + plain_money(order["total_amount"]))
     if kind == "ESTIMATE":
+        lines.append("Còn phải thu: " + plain_money(order["total_amount"]))
         lines.append("CHƯA THANH TOÁN")
     else:
         if tpl.show_payment:
@@ -210,7 +232,6 @@ def render_money_template(order: dict, items: list[dict],
         lines += _rows(tpl.footer_text.strip())
     lines += ["=" * 32, "", "", ""]
     return "\r\n".join(lines)
-
 
 def with_print_style(content: str, tpl: PrintTemplate) -> str:
     """Private header decoded by print_text; no persisted changes to ticket snapshots."""

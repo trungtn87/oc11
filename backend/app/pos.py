@@ -719,6 +719,56 @@ using System.Drawing;
 using System.Drawing.Printing;
 
 public static class Oc11Thermal80 {
+    private static float DrawCashierTableRow(
+        Graphics graphics, float left, float width, float top,
+        string[] columns, Font font, bool heading) {
+        // Fits 80mm paper: # / dish / qty / unit price / discount / total.
+        float[] edge = { 0f, 0.05f, 0.44f, 0.52f, 0.70f, 0.79f, 1f };
+        float rowHeight = heading ? 8.4f : 7.0f;
+        if (!heading) {
+            float nameWidth = width * (edge[2] - edge[1]) - 0.9f;
+            SizeF nameSize = graphics.MeasureString(
+                columns[1], font, new SizeF(nameWidth, 120f));
+            rowHeight = Math.Max(rowHeight, nameSize.Height + 1.4f);
+        }
+        using (Pen solid = new Pen(Color.FromArgb(115, 115, 115), 0.13f))
+        using (Pen dotted = new Pen(Color.FromArgb(130, 130, 130), 0.10f)) {
+            dotted.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+            graphics.DrawLine(solid, left, top, left + width, top);
+            graphics.DrawLine(heading ? solid : dotted,
+                              left, top + rowHeight, left + width, top + rowHeight);
+            for (int n = 0; n < edge.Length; n++) {
+                float x = left + width * edge[n];
+                graphics.DrawLine(solid, x, top, x, top + rowHeight);
+            }
+        }
+        for (int n = 0; n < 6; n++) {
+            float x = left + width * edge[n] + 0.30f;
+            float w = width * (edge[n + 1] - edge[n]) - 0.60f;
+            string value = columns[n] ?? "";
+            using (StringFormat format = new StringFormat()) {
+                format.LineAlignment = StringAlignment.Center;
+                format.Alignment = heading || n == 0 || n == 2 || n == 4
+                    ? StringAlignment.Center
+                    : n == 1 ? StringAlignment.Near : StringAlignment.Far;
+                if (n != 1) {
+                    format.FormatFlags = StringFormatFlags.NoWrap;
+                    format.Trimming = StringTrimming.EllipsisCharacter;
+                }
+                using (Font small = new Font("Arial", Math.Max(6f, font.Size - 1.3f),
+                                             heading ? FontStyle.Bold : FontStyle.Regular)) {
+                    Font chosen = font;
+                    if (n != 1 && graphics.MeasureString(value, font).Width > w) {
+                        chosen = small;
+                    }
+                    graphics.DrawString(value, chosen, Brushes.Black,
+                        new RectangleF(x, top + 0.2f, w, rowHeight - 0.4f), format);
+                }
+            }
+        }
+        return top + rowHeight;
+    }
+
     public static void Print(string printer, string content, float titlePt, float bodyPt, float totalPt, float spacing, float margin) {
         string[] lines = content.Replace("\r\n", "\n").Split('\n');
         using (PrintDocument doc = new PrintDocument()) {
@@ -732,19 +782,40 @@ public static class Oc11Thermal80 {
             doc.PrintController = new StandardPrintController();
             using (Font body = new Font("Consolas", bodyPt, FontStyle.Regular))
             using (Font heading = new Font("Consolas", titlePt, FontStyle.Bold))
-            using (Font total = new Font("Consolas", totalPt, FontStyle.Bold)) {
+            using (Font total = new Font("Consolas", totalPt, FontStyle.Bold))
+            using (Font table = new Font("Arial", Math.Min(9.0f, Math.Max(7.0f, bodyPt * 0.7f)))) {
                 doc.PrintPage += (sender, e) => {
                     e.Graphics.PageUnit = GraphicsUnit.Millimeter;
                     float y = 2.0f;
                     for (int i = 0; i < lines.Length; i++) {
                         string line = lines[i];
                         string trimmed = line.Trim();
+                        if (trimmed == "__OC11_TABLE_START__") {
+                            y = DrawCashierTableRow(e.Graphics, margin, 78.0f - margin, y,
+                                new string[] { "#", "Tên món", "SL", "ĐG", "%KM", "TT" },
+                                table, true);
+                            continue;
+                        }
+                        if (line.StartsWith("__OC11_TABLE_ROW__\t")) {
+                            string[] fields = line.Split('\t');
+                            if (fields.Length == 7) {
+                                y = DrawCashierTableRow(e.Graphics, margin, 78.0f - margin, y,
+                                    new string[] { fields[1], fields[2], fields[3],
+                                                   fields[4], fields[5], fields[6] },
+                                    table, false);
+                            }
+                            continue;
+                        }
+                        if (trimmed == "__OC11_TABLE_END__") {
+                            y += 2.0f;
+                            continue;
+                        }
                         bool isHeading = trimmed == "CHẾ BIẾN" ||
                                          trimmed == "KIỂM ĐỒ" ||
                                          trimmed == "PHIẾU TẠM TÍNH" ||
                                          trimmed == "PHIẾU THANH TOÁN" ||
                                          (i + 1 < lines.Length && lines[i + 1].StartsWith("===="));
-                        bool isTotal = trimmed.StartsWith("TỔNG TIỀN:");
+                        bool isTotal = trimmed.StartsWith("TỔNG TIỀN:") || trimmed.StartsWith("TỔNG THANH TOÁN:");
                         Font chosen = isHeading ? heading : (isTotal ? total : body);
                         SizeF measured = e.Graphics.MeasureString(
                             line.Length == 0 ? " " : line, chosen, new SizeF(80.0f - margin - 2.0f, 1000.0f)

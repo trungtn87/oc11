@@ -201,3 +201,57 @@ def test_template_printer_mapping_respects_kitchen_menu_exclusions(tmp_path, mon
         assert [name for name, _ in sent] == [
             "Bep tuy chon", "Thu ngan tuy chon", "Thu ngan tuy chon"
         ]
+
+
+
+def test_cukcuk_style_table_has_one_row_per_dish_on_both_cashier_slips():
+    from backend.app.pos_templates import default_template, render_money_template
+
+    order = {
+        "order_code": "BH000070", "order_type": "DINE_IN", "table_name": "Bàn 1",
+        "area_name": "Tầng 1", "order_time": "2026-10-14T20:09:00",
+        "paid_at": "2026-10-14T20:09:00", "total_amount": 640000,
+    }
+    dishes = [
+        {"name": "Tôm", "option": "Hoàng bào", "quantity": 1,
+         "unit_price": 250000, "line_total": 250000, "surcharges": []},
+        {"name": "Ốc hương", "option": "Bơ tỏi", "quantity": 1,
+         "unit_price": 150000, "line_total": 150000, "surcharges": []},
+        {"name": "Mực trứng", "option": "Hấp", "quantity": 1,
+         "unit_price": 240000, "line_total": 240000, "surcharges": []},
+    ]
+    for kind in ("ESTIMATE", "RECEIPT"):
+        slip = render_money_template(order, dishes, [], kind, default_template(kind))
+        rows = [line.split("\t")[1:] for line in slip.splitlines()
+                if line.startswith("__OC11_TABLE_ROW__\t")]
+        assert len(rows) == len(dishes)
+        assert rows == [
+            ["1", "Tôm Hoàng bào", "1", "250.000", "", "250.000"],
+            ["2", "Ốc hương Bơ tỏi", "1", "150.000", "", "150.000"],
+            ["3", "Mực trứng Hấp", "1", "240.000", "", "240.000"],
+        ]
+        assert slip.count("__OC11_TABLE_START__") == 1
+        assert slip.count("__OC11_TABLE_END__") == 1
+        assert "Thành tiền:" not in slip
+        assert "TỔNG THANH TOÁN: 640.000 đ" in slip
+
+
+def test_cukcuk_table_keeps_item_surcharges_and_notes_on_same_row():
+    from backend.app.pos_templates import default_template, render_money_template
+
+    order = {"order_code": "BH000071", "order_type": "TAKEAWAY",
+             "total_amount": 190000}
+    dish = {"name": "Ốc hương", "option": "Bơ tỏi", "quantity": 1,
+            "unit_price": 150000, "line_total": 150000, "note": "Ít cay",
+            "surcharges": [{"name": "Phụ thu", "amount": 10000}]}
+    template = default_template("ESTIMATE").model_copy(update={"show_notes": True})
+    slip = render_money_template(order, [dish],
+                                 [{"name": "Đóng hộp", "amount": 30000}],
+                                 "ESTIMATE", template)
+    rows = [line.split("\t")[1:] for line in slip.splitlines()
+            if line.startswith("__OC11_TABLE_ROW__\t")]
+    assert rows == [["1", "Ốc hương Bơ tỏi (+Phụ thu) (Ít cay)",
+                     "1", "150.000", "", "160.000"]]
+    assert "Phụ thu Đóng hộp: 30.000 đ" in slip
+    assert "Tiền hàng: 160.000 đ" in slip
+    assert "TỔNG THANH TOÁN: 190.000 đ" in slip
