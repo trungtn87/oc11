@@ -68,6 +68,15 @@ class FundTransactionCreateOutput(BaseModel):
     reference_codes: list[str]
 
 
+class FundTransactionUpdateInput(BaseModel):
+    fund_account_id: int
+    transaction_time: str
+    category_id: int
+    amount: int = Field(gt=0)
+    description: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=1000)
+
+
 def normalize_account_type(value: str) -> str:
     normalized = value.strip().upper()
     if normalized not in {"CASH", "BANK"}:
@@ -561,6 +570,138 @@ def create_fund_transaction(
         created_ids=created_ids,
         reference_codes=reference_codes,
     )
+
+
+
+def editable_voucher(connection: sqlite3.Connection, transaction_id: int) -> sqlite3.Row:
+    """Manual NORMAL vouchers only. Linked financial documents remain immutable here."""
+    row = connection.execute(
+        """
+        SELECT id, fund_account_id, transaction_time, transaction_type,
+               category_id, direction, amount, group_id, source_type,
+               source_id, source_component, is_void
+        FROM fund_transactions
+        WHERE id = ?
+        """,
+        (transaction_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiếu thu/chi.")
+    if row["is_void"]:
+        raise HTTPException(status_code=409, detail="Phiếu này đã bị hủy.")
+    if (
+        row["transaction_type"] != "NORMAL"
+        or row["group_id"]
+        or row["source_type"]
+        or row["source_id"]
+        or row["source_component"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Phiếu phát sinh từ nghiệp vụ khác hoặc giao dịch đặc biệt. Hãy sửa tại chứng từ nguồn.",
+        )
+    return row
+
+
+def ensure_nonnegative_balance(account: sqlite3.Row, next_balance: int) -> None:
+    if next_balance < 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sửa/xóa phiếu sẽ khiến quỹ '{account['name']}' âm. Cần xử lý các phát sinh liên quan trước.",
+        )
+
+
+@router.put("/{transaction_id}")
+def update_fund_voucher(
+    transaction_id: int, payload: FundTransactionUpdateInput
+) -> dict[str, bool]:
+    try:
+        datetime.fromisoformat(payload.transaction_time)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Ngày chứng từ không hợp lệ.")
+
+    with connect() as connection:
+        # Lock before reading balances so edit and other writes cannot interleave.
+        connection.execute("BEGIN IMMEDIATE")
+        voucher = editable_voucher(connection, transaction_id)
+        get_category(connection, payload.category_id, voucher["direction"])
+        old_account = get_account(connection, voucher["fund_account_id"])
+        new_account = get_account(connection, payload.fund_account_id)
+        if (
+            old_account["id"] != new_account["id"]
+            and not bool(new_account["is_active"])
+        ):
+            raise HTTPException(status_code=409, detail="Quỹ/tài khoản mới đã ngừng sử dụng.")
+
+        old_delta = voucher["amount"] if voucher["direction"] == "IN" else -voucher["amount"]
+        new_delta = payload.amount if voucher["direction"] == "IN" else -payload.amount
+
+        if old_account["id"] == new_account["id"]:
+            updated_balance = int(old_account["current_balance"]) - old_delta + new_delta
+            ensure_nonnegative_balance(old_account, updated_balance)
+            connection.execute(
+                "UPDATE fund_accounts SET current_balance = ? WHERE id = ?",
+                (updated_balance, old_account["id"]),
+            )
+        else:
+            old_balance = int(old_account["current_balance"]) - old_delta
+            new_balance = int(new_account["current_balance"]) + new_delta
+            ensure_nonnegative_balance(old_account, old_balance)
+            ensure_nonnegative_balance(new_account, new_balance)
+            connection.execute(
+                "UPDATE fund_accounts SET current_balance = ? WHERE id = ?",
+                (old_balance, old_account["id"]),
+            )
+            connection.execute(
+                "UPDATE fund_accounts SET current_balance = ? WHERE id = ?",
+                (new_balance, new_account["id"]),
+            )
+
+        connection.execute(
+            """
+            UPDATE fund_transactions
+            SET fund_account_id = ?, transaction_time = ?, category_id = ?,
+                amount = ?, description = ?, note = ?
+            WHERE id = ? AND is_void = 0
+            """,
+            (
+                payload.fund_account_id,
+                payload.transaction_time,
+                payload.category_id,
+                payload.amount,
+                clean_text(payload.description),
+                clean_text(payload.note),
+                transaction_id,
+            ),
+        )
+        connection.commit()
+
+    backup_database(reason="fund-voucher-updated")
+    return {"updated": True}
+
+
+@router.delete("/{transaction_id}")
+def void_fund_voucher(transaction_id: int) -> dict[str, bool]:
+    # Never physically remove a financial record: void it and reverse its effect.
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        voucher = editable_voucher(connection, transaction_id)
+        account = get_account(connection, voucher["fund_account_id"])
+        delta = voucher["amount"] if voucher["direction"] == "IN" else -voucher["amount"]
+        new_balance = int(account["current_balance"]) - delta
+        ensure_nonnegative_balance(account, new_balance)
+        connection.execute(
+            "UPDATE fund_accounts SET current_balance = ? WHERE id = ?",
+            (new_balance, account["id"]),
+        )
+        connection.execute(
+            "UPDATE fund_transactions SET is_void = 1 WHERE id = ?",
+            (transaction_id,),
+        )
+        connection.commit()
+
+    backup_database(reason="fund-voucher-voided")
+    return {"deleted": True}
 
 
 @router.get("", response_model=FundTransactionListOutput)

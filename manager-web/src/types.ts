@@ -160,6 +160,15 @@ export type FundTransactionCreateOutput = {
   reference_codes: string[];
 };
 
+export type FundTransactionUpdateInput = {
+  fund_account_id: number;
+  transaction_time: string;
+  category_id: number;
+  amount: number;
+  description?: string | null;
+  note?: string | null;
+};
+
 
 export type FundTransactionCategory = {
   id: number;

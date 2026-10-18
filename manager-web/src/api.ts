@@ -5,6 +5,7 @@ import type {
   FundAccountType,
   FundTransactionCreateInput,
   FundTransactionCreateOutput,
+  FundTransactionUpdateInput,
   FundTransactionList,
   FundTransactionCategory,
   FundTransactionCategoryInput,
@@ -370,6 +371,23 @@ export function createFundTransaction(
   return request<FundTransactionCreateOutput>("/api/fund-transactions", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+
+export function updateFundTransaction(
+  id: number,
+  payload: FundTransactionUpdateInput
+): Promise<{ updated: boolean }> {
+  return request<{ updated: boolean }>(`/api/fund-transactions/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteFundTransaction(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/fund-transactions/${id}`, {
+    method: "DELETE"
   });
 }
 
