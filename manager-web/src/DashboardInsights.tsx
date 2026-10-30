@@ -28,8 +28,35 @@ export default function DashboardInsights({
 
   // Outstanding order totals are provisional: open orders can also have DEBT settlement_status.
   // They must not be presented as a reconciled customer receivables ledger.
-  const unsettledOrders = orders.filter((order) => order.status !== "VOID" && order.settlement_status === "DEBT");
+  // A sale is genuinely owed only after it is closed as DEBT, not while the table is OPEN.
+  const unsettledOrders = orders.filter((order) => order.status === "PAID" && order.settlement_status === "DEBT");
+  const openOrders = orders.filter((order) => order.status === "OPEN");
   const unpaidPurchases = receipts.filter((receipt) => !receipt.is_void && receipt.payment_status === "DEBT");
+  const customerDebt = unsettledOrders.reduce((sum, order) => sum + order.total_amount, 0);
+  const supplierDebt = unpaidPurchases.reduce((sum, receipt) => sum + receipt.total_amount, 0);
+  const paidSales = sales.filter((order) => order.status === "PAID");
+  // Real cash receipts are taken from the ledger by transaction date: includes
+  // collections of earlier debt without incorrectly attributing them to today's sales.
+  const salesCash = transactions
+    .filter((entry) => within(entry.transaction_time) &&
+      entry.transaction_type === "NORMAL" && entry.direction === "IN" && entry.source_type === "SALE");
+  const saleCashTotal = salesCash.reduce((sum, entry) => sum + entry.amount, 0);
+  const cashTotal = salesCash.filter((entry) => entry.account_type === "CASH")
+    .reduce((sum, entry) => sum + entry.amount, 0);
+  const bankTotal = saleCashTotal - cashTotal;
+
+  // Snapshot-based gross profit (not net/operating profit). Never treat missing
+  // costs as zero or purchases as expenses, and do not use current stock pricing.
+  const costLines = paidSales.flatMap((order) => order.items);
+  const costComplete = paidSales.length > 0 &&
+    paidSales.every((order) => order.items.length > 0) &&
+    costLines.every((item) => item.cost_total_snapshot != null &&
+      Number.isFinite(item.cost_total_snapshot));
+  const settledRevenue = paidSales.reduce((sum, order) => sum + order.total_amount, 0);
+  const costOfSales = costComplete
+    ? costLines.reduce((sum, item) => sum + Number(item.cost_total_snapshot), 0)
+    : null;
+  const grossProfit = costOfSales === null ? null : settledRevenue - costOfSales;
 
   const daily = new Map<string, { date: string; amount: number; count: number }>();
   for (const order of sales) {
@@ -53,6 +80,18 @@ export default function DashboardInsights({
     }
   }
   const topItems = [...items.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
+  // Cost completeness is independently checked for each dish. These are gross
+  // profit estimates from line snapshots, not operational net profit.
+  const dishes = new Map<string, { key: string; name: string; sales: number; cost: number; complete: boolean }>();
+  for (const order of paidSales) for (const item of order.items) {
+    const key = String(item.menu_item_id ?? item.item_name_snapshot);
+    const current = dishes.get(key) ?? { key, name: item.item_name_snapshot, sales: 0, cost: 0, complete: true };
+    current.sales += item.total_with_surcharges;
+    if (item.cost_total_snapshot == null || !Number.isFinite(item.cost_total_snapshot)) current.complete = false;
+    else current.cost += item.cost_total_snapshot;
+    dishes.set(key, current);
+  }
+  const dishPerformance = [...dishes.values()].sort((a, b) => b.sales - a.sales).slice(0, 5);
 
   const byFund = accounts.map((account) => ({
     key: account.id, name: account.name, type: account.type === "CASH" ? "Tiền mặt" : "Ngân hàng",
@@ -62,6 +101,14 @@ export default function DashboardInsights({
   const paymentsOut = movements.filter((item) => item.direction === "OUT").reduce((sum, item) => sum + item.amount, 0);
   const emptyStock = stock.filter((item) => item.is_stock_tracked && item.stock_quantity <= 0);
   const negativeStock = emptyStock.filter((item) => item.stock_quantity < 0);
+  const stockValuations = stock.filter((item) => item.is_stock_tracked && item.stock_quantity > 0);
+  const stockValueComplete = stockValuations.every((item) =>
+    item.last_purchase_price_per_smallest_unit !== null &&
+    Number.isFinite(item.last_purchase_price_per_smallest_unit));
+  const stockValuation = stockValueComplete
+    ? stockValuations.reduce((sum, item) =>
+        sum + item.stock_quantity * Number(item.last_purchase_price_per_smallest_unit), 0)
+    : null;
 
   const navigate = (label: string, key: string) => <Button size="small" onClick={() => onNavigate(key)}>{label}</Button>;
 
@@ -73,10 +120,13 @@ export default function DashboardInsights({
             <Row gutter={[12, 12]}>
               <Col xs={12}><Statistic title="Đơn trong kỳ" value={sales.length} /></Col>
               <Col xs={12}><Statistic title="Doanh thu đơn" value={revenue} formatter={(v) => money(Number(v))} /></Col>
-              <Col xs={12}><Statistic title="Đơn chưa tất toán (toàn kỳ)" value={unsettledOrders.length} /></Col>
+              <Col xs={12}><Statistic title="Đơn đang phục vụ" value={openOrders.length} /></Col>
               <Col xs={12}><Statistic title="Mặt hàng hết/âm tồn" value={emptyStock.length} valueStyle={emptyStock.length ? { color: "#cf1322" } : undefined} /></Col>
             </Row>
-            <Text type="secondary">Doanh thu đơn là tổng giá trị đơn chưa hủy, không phải số tiền đã thu. Đơn chưa tất toán có thể gồm đơn đang phục vụ.</Text>
+            <Space direction="vertical" size={3} style={{ marginTop: 10 }}>
+              <Text strong>Thực thu bán hàng trong kỳ: {money(saleCashTotal)}</Text>
+              <Text type="secondary">Lấy từ phiếu thu nguồn SALE theo ngày phát sinh; bao gồm thu nợ cũ. Doanh thu đơn và thực thu không cùng thời điểm ghi nhận.</Text>
+            </Space>
           </Card>
         </Col>
         <Col xs={24} lg={12}>
@@ -90,6 +140,12 @@ export default function DashboardInsights({
                   <Text style={{ textAlign: "right" }}>{money(day.amount)}</Text>
                 </div>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có đơn bán trong kỳ" />}
+            </div>
+            <div style={{ marginTop: 10, marginBottom: 8 }}>
+              <Space wrap>
+                <Tag>Tiền mặt: {money(cashTotal)}</Tag>
+                <Tag>Chuyển khoản: {money(bankTotal)}</Tag>
+              </Space>
             </div>
             <Text strong>Món bán nhiều (theo số lượng)</Text>
             <Table size="small" pagination={false} rowKey="name" dataSource={topItems} columns={[
@@ -120,7 +176,11 @@ export default function DashboardInsights({
               <Col xs={12}><Statistic title="Đơn bán chưa tất toán" value={unsettledOrders.length} /></Col>
               <Col xs={12}><Statistic title="Phiếu nhập chưa thanh toán" value={unpaidPurchases.length} /></Col>
             </Row>
-            <Text type="secondary">Đây là số chứng từ theo trạng thái hiện hành, không phải số dư công nợ đã đối soát. Chưa tính nợ quá hạn hoặc số tiền còn nợ khi thiếu lịch sử thanh toán chi tiết.</Text>
+            <div style={{ marginTop: 12, marginBottom: 8 }}>
+              <Statistic title="Giá trị đơn ghi nợ đang mở" value={customerDebt} formatter={(v) => money(Number(v))} />
+              <Statistic title="Giá trị phiếu nhập chưa thanh toán" value={supplierDebt} formatter={(v) => money(Number(v))} />
+            </div>
+            <Text type="secondary">Chỉ tính đơn đã đóng và ghi nợ; không tính bàn đang phục vụ. Hai tổng trên là giá trị chứng từ chưa thanh toán theo trạng thái hiện hành, chưa phải sổ công nợ đối soát theo từng lần trả. Chưa có căn cứ tính quá hạn.</Text>
             <div style={{ marginTop: 12 }}>{navigate("Mở danh sách đơn bán", "sales-orders")}</div>
           </Card>
         </Col>
@@ -139,17 +199,30 @@ export default function DashboardInsights({
                 </div>
               ))}
             </div>
-            <Text type="secondary">Danh sách tồn hiển thị theo đơn vị nhỏ nhất của API; mở Tồn kho để xem đơn vị hiển thị nghiệp vụ.</Text>
+            <div style={{ marginTop: 10 }}>
+              <Text strong>Giá trị tồn ước tính theo giá nhập gần nhất: {stockValuation === null ? "Chưa đủ dữ liệu giá" : money(stockValuation)}</Text>
+            </div>
+            <Text type="secondary">Không phải giá vốn kế toán. Chỉ tính tồn dương có giá nhập; khi thiếu giá sẽ không tính tổng. Mở Tồn kho để xem đơn vị tính nhập gần nhất.</Text>
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card title="6. Báo cáo quản trị" loading={loading}>
             <Space wrap>{navigate("Đơn bán hàng", "sales-orders")}{navigate("Sổ tiền", "money-ledgers")}{navigate("Nhập hàng", "purchase-orders")}</Space>
+            <Row gutter={[12, 12]} style={{ marginTop: 16 }}>
+              <Col xs={12}><Statistic title="Doanh thu đơn đã đóng trong kỳ" value={settledRevenue} formatter={(v) => money(Number(v))} /></Col>
+              <Col xs={12}><Statistic title="Giá vốn snapshot" value={costOfSales === null ? "Chưa đủ dữ liệu" : money(costOfSales)} /></Col>
+              <Col xs={24}><Statistic title="Lãi gộp theo snapshot" value={grossProfit === null ? "Chưa đủ dữ liệu" : money(grossProfit)} /></Col>
+            </Row>
+            <Text type="secondary">Lãi gộp = tổng đơn đã đóng − giá vốn snapshot của tất cả món. Không phải lợi nhuận ròng; chưa trừ chi phí vận hành, thuế và các khoản điều chỉnh. Thiếu một giá vốn sẽ không hiển thị tổng.</Text>
             <div style={{ marginTop: 16 }}>
-              <Tag>Chưa đủ dữ liệu đối soát</Tag>
-              <Text>Lợi nhuận thực tế, hòa vốn, dự báo dòng tiền và nợ quá hạn chưa được hiển thị để tránh số liệu sai.</Text>
+              <Text strong>Hiệu quả món đã bán (giá vốn snapshot)</Text>
+              <Table size="small" pagination={false} rowKey="key" dataSource={dishPerformance} columns={[
+                { title: "Món", dataIndex: "name", ellipsis: true },
+                { title: "Doanh thu", dataIndex: "sales", align: "right", render: money },
+                { title: "Lãi gộp", align: "right", render: (_, item) => item.complete ? money(item.sales - item.cost) : "Thiếu giá vốn" }
+              ]} />
             </div>
-            <div style={{ marginTop: 12 }}><Text type="secondary">Báo cáo hiện có là tổng hợp đọc dữ liệu; không phát sinh thu chi hoặc thay đổi chứng từ.</Text></div>
+            <div style={{ marginTop: 12 }}><Tag>Chưa đủ dữ liệu đối soát</Tag><Text>Lợi nhuận ròng, hòa vốn, dự báo dòng tiền và nợ quá hạn chưa có nguồn dữ liệu đầy đủ để tính an toàn.</Text></div>
           </Card>
         </Col>
       </Row>
