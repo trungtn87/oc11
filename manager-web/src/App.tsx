@@ -74,6 +74,7 @@ import { BankLedgerPage, CashLedgerPage } from "./MoneyLedgerPage";
 import FundTransactionCategoriesPage from "./FundTransactionCategoriesPage";
 import InventoryStockPage from "./InventoryStockPage";
 import ConsumptionPage from "./ConsumptionPage";
+import DashboardInsights from "./DashboardInsights";
 import PurchaseOrdersPage from "./PurchaseOrdersPage";
 import CostRecipesPage from "./CostRecipesPage";
 import MenuGroupsPage from "./MenuGroupsPage";
@@ -789,6 +790,18 @@ function Dashboard({ onNavigate }: { onNavigate: (key: string) => void }) {
           </Card>
         </Col>
       </Row>
+
+      <DashboardInsights
+        from={range.from}
+        to={range.to}
+        orders={salesOrders}
+        receipts={purchaseReceipts}
+        accounts={fundAccounts}
+        transactions={fundTransactions}
+        stock={inventoryStock}
+        loading={loading}
+        onNavigate={onNavigate}
+      />
 
       <Row gutter={[14, 14]} className="dashboard-bottom">
         <Col xs={24}>
